@@ -12,7 +12,7 @@ export function rand(n: number): Uint8Array {
 export async function deriveKeyPBKDF2(
   password: string,
   salt: Uint8Array
-): Promise<CryptoKey & { _salt?: Uint8Array }> {
+): Promise<{ key: CryptoKey; salt: Uint8Array }> {
   const enc = new TextEncoder();
   const baseKey = await crypto.subtle.importKey(
     "raw",
@@ -33,12 +33,13 @@ export async function deriveKeyPBKDF2(
     false,
     ["encrypt", "decrypt"]
   );
-  // Store salt reference on key for convenience
-  return Object.assign(key, { _salt: salt } as any);
+  // Return key and salt as plain object (safe - no mutation of CryptoKey)
+  return { key, salt };
 }
 
 export async function encryptGCM(
-  key: CryptoKey & { _salt?: Uint8Array },
+  key: CryptoKey,
+  salt: Uint8Array,
   data: Uint8Array
 ): Promise<{ iv: Uint8Array; ct: Uint8Array; salt: Uint8Array }> {
   const iv = rand(12);
@@ -49,7 +50,7 @@ export async function encryptGCM(
       data as BufferSource
     )
   );
-  return { iv, ct, salt: (key as any)._salt as Uint8Array };
+  return { iv, ct, salt };
 }
 
 export async function decryptGCM(

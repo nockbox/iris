@@ -38,9 +38,10 @@ export class Vault {
     const words = (mnemonic || generateMnemonic()).trim();
     const addr = deriveAddress(words, 0);
 
-    const key = await deriveKeyPBKDF2(password, rand(16));
+    const { key, salt: keySalt } = await deriveKeyPBKDF2(password, rand(16));
     const { iv, ct, salt } = await encryptGCM(
       key,
+      keySalt,
       new TextEncoder().encode(words)
     );
 
@@ -80,7 +81,7 @@ export class Vault {
     }
 
     try {
-      const key = await deriveKeyPBKDF2(password, new Uint8Array(enc.salt));
+      const { key } = await deriveKeyPBKDF2(password, new Uint8Array(enc.salt));
       const pt = await decryptGCM(
         key,
         new Uint8Array(enc.iv),
