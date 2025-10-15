@@ -37,7 +37,7 @@ export function BackupScreen() {
         Never share them with anyone. This is the ONLY way to recover your wallet.
       </Alert>
 
-      <div className="flex-1 overflow-y-auto mb-4">
+      <div className="flex-1 overflow-y-auto no-scrollbar mb-4">
         <div className="grid grid-cols-2 gap-2">
           {words.map((word, index) => (
             <div

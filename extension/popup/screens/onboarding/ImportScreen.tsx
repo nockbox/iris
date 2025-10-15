@@ -174,7 +174,7 @@ export function ImportScreen() {
       </p>
 
       {/* 24-word grid */}
-      <div className="flex-1 overflow-y-auto mb-4">
+      <div className="flex-1 overflow-y-auto no-scrollbar mb-4">
         <div className="grid grid-cols-2 gap-2">
           {words.map((word, index) => (
             <div key={index} className="flex items-center gap-2">

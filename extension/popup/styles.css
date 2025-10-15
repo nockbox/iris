@@ -87,3 +87,13 @@ body {
   margin-bottom: 0.25rem;
   color: var(--color-text-secondary);
 }
+
+/* Hide scrollbar while keeping scroll functionality */
+.no-scrollbar {
+  -ms-overflow-style: none;  /* IE and Edge */
+  scrollbar-width: none;  /* Firefox */
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;  /* Chrome, Safari, Opera */
+}

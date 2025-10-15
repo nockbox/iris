@@ -109,7 +109,7 @@ export function AccountSelector() {
       {isOpen && (
         <div className="absolute top-full left-0 right-0 mt-2 bg-gray-800 rounded-lg shadow-xl border border-gray-700 overflow-hidden z-50">
           {/* Account list */}
-          <div className="max-h-64 overflow-y-auto">
+          <div className="max-h-64 overflow-y-auto no-scrollbar">
             {wallet.accounts.map((account) => (
               <button
                 key={account.index}
