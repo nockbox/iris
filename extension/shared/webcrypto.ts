@@ -3,6 +3,9 @@
  * Uses PBKDF2 for key derivation and AES-GCM for encryption
  */
 
+/** PBKDF2 iteration count (OWASP recommends 600k+ for SHA-256, we use 310k for UX balance) */
+export const PBKDF2_ITERATIONS = 310_000;
+
 export function rand(n: number): Uint8Array {
   const u = new Uint8Array(n);
   crypto.getRandomValues(u);
@@ -25,7 +28,7 @@ export async function deriveKeyPBKDF2(
     {
       name: "PBKDF2",
       salt: salt as BufferSource,
-      iterations: 200_000,
+      iterations: PBKDF2_ITERATIONS,
       hash: "SHA-256",
     },
     baseKey,
@@ -39,9 +42,8 @@ export async function deriveKeyPBKDF2(
 
 export async function encryptGCM(
   key: CryptoKey,
-  salt: Uint8Array,
   data: Uint8Array
-): Promise<{ iv: Uint8Array; ct: Uint8Array; salt: Uint8Array }> {
+): Promise<{ iv: Uint8Array; ct: Uint8Array }> {
   const iv = rand(12);
   const ct = new Uint8Array(
     await crypto.subtle.encrypt(
@@ -50,7 +52,7 @@ export async function encryptGCM(
       data as BufferSource
     )
   );
-  return { iv, ct, salt };
+  return { iv, ct };
 }
 
 export async function decryptGCM(

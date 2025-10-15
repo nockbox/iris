@@ -26,18 +26,18 @@ scheduleAlarm();
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     lastActivity = Date.now();
-    const { payload, id } = msg || {};
+    const { payload } = msg || {};
 
     switch (payload?.method) {
       // Provider methods (called from injected provider via content script)
       case PROVIDER_METHODS.REQUEST_ACCOUNTS:
-        if (await vault.isLocked()) {
+        if (vault.isLocked()) {
           return sendResponse({ error: ERROR_CODES.LOCKED });
         }
-        return sendResponse([await vault.getAddress()]);
+        return sendResponse([vault.getAddress()]);
 
       case PROVIDER_METHODS.SIGN_MESSAGE:
-        if (await vault.isLocked()) {
+        if (vault.isLocked()) {
           return sendResponse({ error: ERROR_CODES.LOCKED });
         }
         return sendResponse({
@@ -45,10 +45,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         });
 
       case PROVIDER_METHODS.SEND_TRANSACTION:
-        if (await vault.isLocked()) {
+        if (vault.isLocked()) {
           return sendResponse({ error: ERROR_CODES.LOCKED });
         }
-        const { to, amount } = payload.params ?? {};
+        const { to } = payload.params ?? {};
         if (!isNockAddress(to)) {
           return sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
         }
@@ -79,15 +79,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       case INTERNAL_METHODS.GET_STATE:
         return sendResponse({
-          locked: await vault.isLocked(),
+          locked: vault.isLocked(),
           address: await vault.getAddressSafe(),
-          accounts: await vault.getAccounts(),
+          accounts: vault.getAccounts(),
           currentAccount: vault.getCurrentAccount(),
         });
 
       case INTERNAL_METHODS.GET_ACCOUNTS:
         return sendResponse({
-          accounts: await vault.getAccounts(),
+          accounts: vault.getAccounts(),
           currentAccount: vault.getCurrentAccount(),
         });
 
@@ -105,7 +105,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return sendResponse({ error: ERROR_CODES.METHOD_NOT_SUPPORTED });
     }
   })();
-  return true; // Required to use sendResponse asynchronously
+  // Required: tells Chrome we'll call sendResponse asynchronously from the IIFE
+  return true;
 });
 
 /**

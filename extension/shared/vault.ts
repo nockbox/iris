@@ -2,22 +2,35 @@
  * Vault: manages encrypted mnemonic storage and wallet state
  */
 
-import { encryptGCM, decryptGCM, deriveKeyPBKDF2, rand } from "./webcrypto";
+import { encryptGCM, decryptGCM, deriveKeyPBKDF2, rand, PBKDF2_ITERATIONS } from "./webcrypto";
 import { generateMnemonic, deriveAddress, validateMnemonic } from "./wallet-crypto";
 import { ERROR_CODES, STORAGE_KEYS } from "./constants";
 import { Account } from "./types";
 
-interface EncryptedData {
-  iv: number[];
-  ct: number[];
-  salt: number[];
+/**
+ * Versioned encrypted vault format
+ * Explicitly separates PBKDF2 (key derivation) from AES-GCM (encryption) parameters
+ */
+interface EncryptedVaultV1 {
+  version: 1;
+  kdf: {
+    name: 'PBKDF2';
+    hash: 'SHA-256';
+    iterations: number;
+    salt: number[];  // PBKDF2 salt for key derivation
+  };
+  cipher: {
+    alg: 'AES-GCM';
+    iv: number[];    // AES-GCM initialization vector (12 bytes)
+    ct: number[];    // Ciphertext (includes authentication tag)
+  };
 }
 
 interface VaultState {
   locked: boolean;
   accounts: Account[];
   currentAccountIndex: number;
-  enc: EncryptedData | null;
+  enc: EncryptedVaultV1 | null;
 }
 
 export class Vault {
@@ -56,18 +69,30 @@ export class Vault {
       index: 0,
     };
 
-    const { key, salt: keySalt } = await deriveKeyPBKDF2(password, rand(16));
-    const { iv, ct, salt } = await encryptGCM(
+    // Generate PBKDF2 salt and derive encryption key
+    const kdfSalt = rand(16);
+    const { key } = await deriveKeyPBKDF2(password, kdfSalt);
+
+    // Encrypt mnemonic with AES-GCM
+    const { iv, ct } = await encryptGCM(
       key,
-      keySalt,
       new TextEncoder().encode(words)
     );
 
-    // Store as arrays for chrome.storage compatibility
-    const encData: EncryptedData = {
-      iv: Array.from(iv), // Initialization Vector
-      ct: Array.from(ct), // Ciphertext
-      salt: Array.from(salt),
+    // Store in versioned format (arrays for chrome.storage compatibility)
+    const encData: EncryptedVaultV1 = {
+      version: 1,
+      kdf: {
+        name: 'PBKDF2',
+        hash: 'SHA-256',
+        iterations: PBKDF2_ITERATIONS,
+        salt: Array.from(kdfSalt),  // PBKDF2 salt
+      },
+      cipher: {
+        alg: 'AES-GCM',
+        iv: Array.from(iv),  // AES-GCM IV (12 bytes)
+        ct: Array.from(ct),  // Ciphertext + auth tag
+      },
     };
 
     await chrome.storage.local.set({
@@ -76,8 +101,11 @@ export class Vault {
       [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: 0,
     });
 
+    // Keep wallet unlocked after setup for smooth onboarding UX
+    // Auto-lock timer will handle locking after inactivity
+    this.mnemonic = words;
     this.state = {
-      locked: true,
+      locked: false,
       accounts: [firstAccount],
       currentAccountIndex: 0,
       enc: encData
@@ -98,7 +126,7 @@ export class Vault {
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
     ]);
     const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as
-      | EncryptedData
+      | EncryptedVaultV1
       | undefined;
     const accounts = (stored[STORAGE_KEYS.ACCOUNTS] as Account[] | undefined) || [];
     const currentAccountIndex = (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
@@ -108,11 +136,17 @@ export class Vault {
     }
 
     try {
-      const { key } = await deriveKeyPBKDF2(password, new Uint8Array(enc.salt));
+      // Re-derive key using stored KDF parameters
+      const { key } = await deriveKeyPBKDF2(
+        password,
+        new Uint8Array(enc.kdf.salt)
+      );
+
+      // Decrypt mnemonic
       const pt = await decryptGCM(
         key,
-        new Uint8Array(enc.iv),
-        new Uint8Array(enc.ct)
+        new Uint8Array(enc.cipher.iv),
+        new Uint8Array(enc.cipher.ct)
       ).catch(() => null);
 
       if (!pt) {
@@ -149,7 +183,7 @@ export class Vault {
   /**
    * Returns whether the vault is currently locked
    */
-  async isLocked(): Promise<boolean> {
+  isLocked(): boolean {
     return this.state.locked;
   }
 
@@ -164,7 +198,7 @@ export class Vault {
   /**
    * Gets the current address (only when unlocked)
    */
-  async getAddress(): Promise<string> {
+  getAddress(): string {
     const account = this.getCurrentAccount();
     return account?.address || "";
   }
@@ -172,7 +206,7 @@ export class Vault {
   /**
    * Gets all accounts
    */
-  async getAccounts(): Promise<Account[]> {
+  getAccounts(): Account[] {
     return this.state.accounts;
   }
 
