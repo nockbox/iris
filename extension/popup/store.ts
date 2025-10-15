@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import { INTERNAL_METHODS } from '../shared/constants';
+import { Account } from '../shared/types';
 import { send } from './utils/messaging';
 
 /**
@@ -29,15 +30,6 @@ export type Screen =
 
   // System
   | 'locked';
-
-/**
- * Account information
- */
-interface Account {
-  name: string;
-  address: string;
-  index: number;
-}
 
 /**
  * Wallet state synced from background service worker

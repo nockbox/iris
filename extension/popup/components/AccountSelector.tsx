@@ -6,12 +6,7 @@ import { useState, useRef, useEffect } from 'react';
 import { useStore } from '../store';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS } from '../../shared/constants';
-
-interface Account {
-  name: string;
-  address: string;
-  index: number;
-}
+import { Account } from '../../shared/types';
 
 export function AccountSelector() {
   const { wallet, syncWallet } = useStore();

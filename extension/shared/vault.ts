@@ -5,17 +5,12 @@
 import { encryptGCM, decryptGCM, deriveKeyPBKDF2, rand } from "./webcrypto";
 import { generateMnemonic, deriveAddress, validateMnemonic } from "./wallet-crypto";
 import { ERROR_CODES, STORAGE_KEYS } from "./constants";
+import { Account } from "./types";
 
 interface EncryptedData {
   iv: number[];
   ct: number[];
   salt: number[];
-}
-
-interface Account {
-  name: string;
-  address: string;
-  index: number;
 }
 
 interface VaultState {

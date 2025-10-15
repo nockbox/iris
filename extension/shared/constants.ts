@@ -95,9 +95,6 @@ export const STORAGE_KEYS = {
 
   /** Current active account index */
   CURRENT_ACCOUNT_INDEX: "currentAccountIndex",
-
-  /** @deprecated Legacy address field - use ACCOUNTS instead */
-  ADDRESS: "address",
 } as const;
 
 /**
@@ -135,25 +132,3 @@ export const UI_CONSTANTS = {
   /** Number of words in BIP-39 mnemonic */
   MNEMONIC_WORD_COUNT: 24,
 } as const;
-
-/**
- * Type for all valid RPC method names
- */
-export type RPCMethod = (typeof RPC_METHODS)[keyof typeof RPC_METHODS];
-
-/**
- * Type for provider method names only
- */
-export type ProviderMethod =
-  (typeof PROVIDER_METHODS)[keyof typeof PROVIDER_METHODS];
-
-/**
- * Type for internal method names only
- */
-export type InternalMethod =
-  (typeof INTERNAL_METHODS)[keyof typeof INTERNAL_METHODS];
-
-/**
- * Type for all valid error codes
- */
-export type ErrorCode = (typeof ERROR_CODES)[keyof typeof ERROR_CODES];
