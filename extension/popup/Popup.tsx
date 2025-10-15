@@ -16,7 +16,7 @@ import { ImportScreen } from './screens/onboarding/ImportScreen';
 import { HomeScreen } from './screens/main/HomeScreen';
 import { SendScreen } from './screens/transactions/SendScreen';
 import { ReceiveScreen } from './screens/transactions/ReceiveScreen';
-import { SettingsScreen } from './screens/settings/SettingsScreen';
+import { SettingsScreen } from './screens/SettingsScreen';
 
 export function Popup() {
   const { currentScreen, initialize } = useStore();

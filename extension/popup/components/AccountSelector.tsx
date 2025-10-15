@@ -5,6 +5,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { useStore } from '../store';
 import { send } from '../utils/messaging';
+import { truncateAddress } from '../utils/format';
 import { INTERNAL_METHODS } from '../../shared/constants';
 import { Account } from '../../shared/types';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
@@ -82,9 +83,7 @@ export function AccountSelector() {
   }
 
   const currentAccount = wallet.currentAccount;
-  const truncatedAddress = currentAccount?.address
-    ? `${currentAccount.address.slice(0, 6)}...${currentAccount.address.slice(-6)}`
-    : '';
+  const truncatedAddress = truncateAddress(currentAccount?.address);
 
   return (
     <div className="relative" ref={dropdownRef}>
@@ -122,7 +121,7 @@ export function AccountSelector() {
                 <div className="text-left flex-1 min-w-0">
                   <div className="font-semibold text-sm">{account.name}</div>
                   <div className="text-xs text-gray-400 truncate">
-                    {`${account.address.slice(0, 6)}...${account.address.slice(-6)}`}
+                    {truncateAddress(account.address)}
                   </div>
                 </div>
                 {currentAccount?.index === account.index && (
