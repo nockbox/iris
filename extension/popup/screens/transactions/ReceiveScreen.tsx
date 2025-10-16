@@ -2,29 +2,17 @@
  * Receive Screen - Display address for receiving NOCK
  */
 
-import { useState } from 'react';
 import { useStore } from '../../store';
 import { ScreenContainer } from '../../components/ScreenContainer';
 import { ChevronLeftIcon } from '../../components/icons/ChevronLeftIcon';
 import { CopyIcon } from '../../components/icons/CopyIcon';
+import { useCopyToClipboard } from '../../hooks/useCopyToClipboard';
 
 export function ReceiveScreen() {
   const { navigate, wallet } = useStore();
-  const [copied, setCopied] = useState(false);
+  const { copied, copyToClipboard } = useCopyToClipboard();
 
   const address = wallet.currentAccount?.address || '';
-
-  async function handleCopyAddress() {
-    if (!address) return;
-
-    try {
-      await navigator.clipboard.writeText(address);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (err) {
-      console.error('Failed to copy address:', err);
-    }
-  }
 
   return (
     <ScreenContainer className="flex flex-col">
@@ -48,7 +36,7 @@ export function ReceiveScreen() {
 
         {/* Copy button */}
         <button
-          onClick={handleCopyAddress}
+          onClick={() => copyToClipboard(address)}
           className="w-full bg-yellow-500 hover:bg-yellow-600 text-black font-semibold py-3 px-4 rounded-lg transition-colors flex items-center justify-center gap-2"
         >
           <CopyIcon />
