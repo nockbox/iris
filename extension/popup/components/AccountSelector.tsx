@@ -2,34 +2,32 @@
  * AccountSelector - Dropdown for switching accounts and creating new ones
  */
 
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef } from 'react';
 import { useStore } from '../store';
 import { send } from '../utils/messaging';
 import { truncateAddress } from '../utils/format';
+import { useAutoFocus } from '../hooks/useAutoFocus';
+import { useClickOutside } from '../hooks/useClickOutside';
 import { INTERNAL_METHODS } from '../../shared/constants';
 import { Account } from '../../shared/types';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { PlusIcon } from './icons/PlusIcon';
 import { UploadIcon } from './icons/UploadIcon';
+import { EditIcon } from './icons/EditIcon';
 
 export function AccountSelector() {
   const { wallet, syncWallet, navigate } = useStore();
   const [isOpen, setIsOpen] = useState(false);
+  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingName, setEditingName] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const editInputRef = useAutoFocus<HTMLInputElement>({ when: editingIndex !== null, select: true });
 
   // Close dropdown when clicking outside
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false);
-      }
-    }
-
-    if (isOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-      return () => document.removeEventListener('mousedown', handleClickOutside);
-    }
-  }, [isOpen]);
+  useClickOutside(dropdownRef, () => {
+    setIsOpen(false);
+    setEditingIndex(null);
+  }, isOpen);
 
   async function handleSwitchAccount(index: number) {
     const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
@@ -82,6 +80,60 @@ export function AccountSelector() {
     setIsOpen(false);
   }
 
+  function startEditing(account: Account, event: React.MouseEvent) {
+    event.stopPropagation(); // Prevent switching accounts
+    setEditingIndex(account.index);
+    setEditingName(account.name);
+  }
+
+  function cancelEditing() {
+    setEditingIndex(null);
+    setEditingName('');
+  }
+
+  async function saveRename() {
+    if (editingIndex === null || !editingName.trim()) {
+      cancelEditing();
+      return;
+    }
+
+    const result = await send<{ ok?: boolean; error?: string }>(
+      INTERNAL_METHODS.RENAME_ACCOUNT,
+      [editingIndex, editingName.trim()]
+    );
+
+    if (result?.ok) {
+      // Update wallet state with new name
+      const updatedAccounts = wallet.accounts.map((acc) =>
+        acc.index === editingIndex ? { ...acc, name: editingName.trim() } : acc
+      );
+      const updatedCurrentAccount =
+        wallet.currentAccount?.index === editingIndex
+          ? { ...wallet.currentAccount, name: editingName.trim() }
+          : wallet.currentAccount;
+
+      syncWallet({
+        ...wallet,
+        accounts: updatedAccounts,
+        currentAccount: updatedCurrentAccount,
+      });
+    } else if (result?.error) {
+      alert(`Failed to rename account: ${result.error}`);
+    }
+
+    cancelEditing();
+  }
+
+  function handleEditKeyDown(event: React.KeyboardEvent) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      saveRename();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      cancelEditing();
+    }
+  }
+
   const currentAccount = wallet.currentAccount;
   const truncatedAddress = truncateAddress(currentAccount?.address);
 
@@ -110,24 +162,49 @@ export function AccountSelector() {
           {/* Account list */}
           <div className="max-h-64 overflow-y-auto no-scrollbar">
             {wallet.accounts.map((account) => (
-              <button
+              <div
                 key={account.index}
-                onClick={() => handleSwitchAccount(account.index)}
-                className={`w-full flex items-center gap-2 p-3 hover:bg-gray-700 transition-colors ${
+                className={`w-full flex items-center gap-2 p-3 ${
+                  editingIndex !== account.index ? 'hover:bg-gray-700 cursor-pointer' : ''
+                } transition-colors ${
                   currentAccount?.index === account.index ? 'bg-gray-700' : ''
                 }`}
+                onClick={() => editingIndex !== account.index && handleSwitchAccount(account.index)}
               >
                 <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex-shrink-0" />
                 <div className="text-left flex-1 min-w-0">
-                  <div className="font-semibold text-sm">{account.name}</div>
-                  <div className="text-xs text-gray-400 truncate">
-                    {truncateAddress(account.address)}
-                  </div>
+                  {editingIndex === account.index ? (
+                    <input
+                      ref={editInputRef}
+                      type="text"
+                      value={editingName}
+                      onChange={(e) => setEditingName(e.target.value)}
+                      onKeyDown={handleEditKeyDown}
+                      onBlur={saveRename}
+                      className="bg-gray-900 border border-blue-500 rounded px-2 py-1 text-sm w-full focus:outline-none"
+                      placeholder="Account name"
+                    />
+                  ) : (
+                    <>
+                      <div className="font-semibold text-sm flex items-center gap-2">
+                        {account.name}
+                        <button
+                          onClick={(e) => startEditing(account, e)}
+                          className="text-gray-400 hover:text-white transition-colors"
+                        >
+                          <EditIcon className="w-3 h-3" />
+                        </button>
+                      </div>
+                      <div className="text-xs text-gray-400 truncate">
+                        {truncateAddress(account.address)}
+                      </div>
+                    </>
+                  )}
                 </div>
-                {currentAccount?.index === account.index && (
+                {currentAccount?.index === account.index && editingIndex !== account.index && (
                   <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0" />
                 )}
-              </button>
+              </div>
             ))}
           </div>
 
