@@ -9,6 +9,7 @@ import { useStore } from '../../store';
 import { send } from '../../utils/messaging';
 import { ScreenContainer } from '../../components/ScreenContainer';
 import { Alert } from '../../components/Alert';
+import { PasswordInput } from '../../components/PasswordInput';
 
 export function CreateScreen() {
   const [password, setPassword] = useState('');
@@ -75,26 +76,24 @@ export function CreateScreen() {
         Choose a strong password to encrypt your wallet
       </p>
 
-      <input
-        type="password"
-        placeholder="Password"
-        className="input-field my-2"
+      <PasswordInput
         value={password}
-        onChange={(e) => {
-          setPassword(e.target.value);
-          setError(''); // Clear error on input
+        onChange={(value) => {
+          setPassword(value);
+          setError('');
         }}
+        placeholder="Password"
+        className="my-2"
       />
 
-      <input
-        type="password"
-        placeholder="Confirm Password"
-        className="input-field my-2"
+      <PasswordInput
         value={confirmPassword}
-        onChange={(e) => {
-          setConfirmPassword(e.target.value);
-          setError(''); // Clear error on input
+        onChange={(value) => {
+          setConfirmPassword(value);
+          setError('');
         }}
+        placeholder="Confirm Password"
+        className="my-2"
         onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
       />
 

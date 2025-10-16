@@ -7,6 +7,7 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { ScreenContainer } from '../components/ScreenContainer';
 import { Alert } from '../components/Alert';
+import { PasswordInput } from '../components/PasswordInput';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS, ERROR_CODES } from '../../shared/constants';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
@@ -71,15 +72,14 @@ export function RecoveryPhraseScreen() {
           Enter your password to reveal your 24-word secret recovery phrase.
         </p>
 
-        <input
-          type="password"
-          placeholder="Password"
-          className="input-field my-2"
+        <PasswordInput
           value={password}
-          onChange={(e) => {
-            setPassword(e.target.value);
+          onChange={(value) => {
+            setPassword(value);
             setError('');
           }}
+          placeholder="Password"
+          className="my-2"
           onKeyDown={(e) => e.key === 'Enter' && handleReveal()}
           autoFocus
         />

@@ -2,8 +2,8 @@
  * Onboarding Start Screen - Create new or import wallet
  */
 
-import { useStore } from '../../store';
-import { ScreenContainer } from '../../components/ScreenContainer';
+import { useStore } from "../../store";
+import { ScreenContainer } from "../../components/ScreenContainer";
 
 export function StartScreen() {
   const { navigate } = useStore();
@@ -17,17 +17,17 @@ export function StartScreen() {
       </p>
 
       <button
-        onClick={() => navigate('onboarding-create')}
+        onClick={() => navigate("onboarding-create")}
         className="btn-primary my-2"
       >
         Create New Wallet
       </button>
 
       <button
-        onClick={() => navigate('onboarding-import')}
+        onClick={() => navigate("onboarding-import")}
         className="btn-secondary my-2"
       >
-        Import Existing Wallet
+        I Have a Wallet
       </button>
     </ScreenContainer>
   );

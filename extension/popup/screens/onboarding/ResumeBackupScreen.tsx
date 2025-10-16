@@ -9,6 +9,7 @@ import { send } from '../../utils/messaging';
 import { INTERNAL_METHODS, ERROR_CODES } from '../../../shared/constants';
 import { ScreenContainer } from '../../components/ScreenContainer';
 import { Alert } from '../../components/Alert';
+import { PasswordInput } from '../../components/PasswordInput';
 
 export function ResumeBackupScreen() {
   const [password, setPassword] = useState('');
@@ -58,15 +59,14 @@ export function ResumeBackupScreen() {
         <strong>Important:</strong> Without backing up your recovery phrase, you risk losing access to your wallet if you forget your password.
       </Alert>
 
-      <input
-        type="password"
-        placeholder="Password"
-        className="input-field my-2"
+      <PasswordInput
         value={password}
-        onChange={(e) => {
-          setPassword(e.target.value);
+        onChange={(value) => {
+          setPassword(value);
           setError('');
         }}
+        placeholder="Password"
+        className="my-2"
         onKeyDown={(e) => e.key === 'Enter' && handleContinue()}
         autoFocus
       />

@@ -8,6 +8,7 @@ import { useStore } from "../../store";
 import { send } from "../../utils/messaging";
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { Alert } from "../../components/Alert";
+import { PasswordInput } from "../../components/PasswordInput";
 
 export function LockedScreen() {
   const [password, setPassword] = useState("");
@@ -57,16 +58,16 @@ export function LockedScreen() {
       <h2 className="text-xl font-semibold mb-4">Fort Nock</h2>
 
       <div>
-        <input
-          type="password"
-          placeholder="Password"
-          className="input-field my-2"
+        <PasswordInput
           value={password}
-          onChange={(e) => {
-            setPassword(e.target.value);
-            setError(""); // Clear error on input
+          onChange={(value) => {
+            setPassword(value);
+            setError("");
           }}
+          placeholder="Password"
+          className="my-2"
           onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
+          autoFocus
         />
 
         {error && (

@@ -6,6 +6,7 @@ import { useState, useRef } from "react";
 import { useStore } from "../../store";
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { Alert } from "../../components/Alert";
+import { PasswordInput } from "../../components/PasswordInput";
 import { useAutoFocus } from "../../hooks/useAutoFocus";
 import { markOnboardingComplete } from "../../../shared/onboarding";
 import {
@@ -142,26 +143,24 @@ export function ImportScreen() {
           Choose a strong password to encrypt your wallet
         </p>
 
-        <input
-          type="password"
-          placeholder="Password"
-          className="input-field my-2"
+        <PasswordInput
           value={password}
-          onChange={(e) => {
-            setPassword(e.target.value);
+          onChange={(value) => {
+            setPassword(value);
             setError("");
           }}
+          placeholder="Password"
+          className="my-2"
         />
 
-        <input
-          type="password"
-          placeholder="Confirm Password"
-          className="input-field my-2"
+        <PasswordInput
           value={confirmPassword}
-          onChange={(e) => {
-            setConfirmPassword(e.target.value);
+          onChange={(value) => {
+            setConfirmPassword(value);
             setError("");
           }}
+          placeholder="Confirm Password"
+          className="my-2"
           onKeyDown={(e) => e.key === "Enter" && handleImport()}
         />
 
