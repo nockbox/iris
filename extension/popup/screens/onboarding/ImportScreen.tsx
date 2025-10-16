@@ -7,6 +7,7 @@ import { useStore } from "../../store";
 import { ScreenContainer } from "../../components/ScreenContainer";
 import { Alert } from "../../components/Alert";
 import { useAutoFocus } from "../../hooks/useAutoFocus";
+import { markOnboardingComplete } from "../../../shared/onboarding";
 import {
   INTERNAL_METHODS,
   UI_CONSTANTS,
@@ -113,7 +114,9 @@ export function ImportScreen() {
         setError(`Error: ${result.error}`);
       }
     } else {
-      // Successfully imported
+      // Successfully imported - mark onboarding complete (user already has their seed)
+      await markOnboardingComplete();
+
       const firstAccount = {
         name: "Account 1",
         address: result.address || "",

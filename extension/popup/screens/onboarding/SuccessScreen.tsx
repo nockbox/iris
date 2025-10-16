@@ -2,11 +2,18 @@
  * Onboarding Success Screen - Wallet created successfully
  */
 
+import { useEffect } from 'react';
 import { useStore } from '../../store';
+import { markOnboardingComplete } from '../../../shared/onboarding';
 import { ScreenContainer } from '../../components/ScreenContainer';
 
 export function SuccessScreen() {
   const { navigate } = useStore();
+
+  // Mark onboarding as complete when user reaches this screen
+  useEffect(() => {
+    markOnboardingComplete();
+  }, []);
 
   return (
     <ScreenContainer>

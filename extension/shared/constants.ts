@@ -113,6 +113,9 @@ export const STORAGE_KEYS = {
 
   /** Auto-lock timeout in minutes */
   AUTO_LOCK_MINUTES: "autoLockMinutes",
+
+  /** Onboarding state - tracks whether seed phrase backup is complete */
+  ONBOARDING_STATE: "onboardingState",
 } as const;
 
 /**

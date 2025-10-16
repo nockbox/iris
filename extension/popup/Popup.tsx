@@ -16,6 +16,7 @@ import { BackupScreen } from "./screens/onboarding/BackupScreen";
 import { VerifyScreen } from "./screens/onboarding/VerifyScreen";
 import { SuccessScreen } from "./screens/onboarding/SuccessScreen";
 import { ImportScreen } from "./screens/onboarding/ImportScreen";
+import { ResumeBackupScreen } from "./screens/onboarding/ResumeBackupScreen";
 import { HomeScreen } from "./screens/main/HomeScreen";
 import { SendScreen } from "./screens/transactions/SendScreen";
 import { ReceiveScreen } from "./screens/transactions/ReceiveScreen";
@@ -75,6 +76,8 @@ export function Popup() {
       return <SuccessScreen />;
     case "onboarding-import":
       return <ImportScreen />;
+    case "onboarding-resume-backup":
+      return <ResumeBackupScreen />;
 
     // Main app
     case "home":

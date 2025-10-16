@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { INTERNAL_METHODS, UI_CONSTANTS } from '../../../shared/constants';
+import { setOnboardingInProgress } from '../../../shared/onboarding';
 import { useStore } from '../../store';
 import { send } from '../../utils/messaging';
 import { ScreenContainer } from '../../components/ScreenContainer';
@@ -44,6 +45,9 @@ export function CreateScreen() {
     if (result?.error) {
       setError(`Error: ${result.error}`);
     } else {
+      // Mark onboarding as in-progress (backup not yet complete)
+      await setOnboardingInProgress();
+
       // Store mnemonic temporarily for backup/verification flow
       setOnboardingMnemonic(result.mnemonic || '');
       // After setup, we have the first account (Account 1)

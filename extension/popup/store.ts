@@ -4,6 +4,7 @@
 
 import { create } from 'zustand';
 import { INTERNAL_METHODS } from '../shared/constants';
+import { hasIncompleteOnboarding } from '../shared/onboarding';
 import { Account } from '../shared/types';
 import { send } from './utils/messaging';
 
@@ -18,6 +19,7 @@ export type Screen =
   | 'onboarding-verify'
   | 'onboarding-success'
   | 'onboarding-import'
+  | 'onboarding-resume-backup'
 
   // Main app screens
   | 'home'
@@ -144,12 +146,20 @@ export const useStore = create<AppStore>((set, get) => ({
       if (!walletState.address) {
         // No vault exists - start onboarding
         initialScreen = 'onboarding-start';
-      } else if (walletState.locked) {
-        // Vault exists but locked
-        initialScreen = 'locked';
       } else {
-        // Vault unlocked - go to home
-        initialScreen = 'home';
+        // Check if user has incomplete onboarding (created wallet but didn't complete backup)
+        const incompleteOnboarding = await hasIncompleteOnboarding();
+
+        if (incompleteOnboarding) {
+          // User needs to complete their backup - show resume screen
+          initialScreen = 'onboarding-resume-backup';
+        } else if (walletState.locked) {
+          // Vault exists but locked
+          initialScreen = 'locked';
+        } else {
+          // Vault unlocked - go to home
+          initialScreen = 'home';
+        }
       }
 
       set({
