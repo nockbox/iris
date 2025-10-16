@@ -56,6 +56,9 @@ export const INTERNAL_METHODS = {
 
   /** Get auto-lock timeout setting */
   GET_AUTO_LOCK: "wallet:getAutoLock",
+
+  /** Get wallet balance from blockchain */
+  GET_BALANCE: "wallet:getBalance",
 } as const;
 
 /**

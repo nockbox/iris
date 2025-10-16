@@ -2,28 +2,29 @@
  * Popup UI: Main router component
  */
 
-import { useEffect } from 'react';
-import { useStore } from './store';
-import { send } from './utils/messaging';
-import { INTERNAL_METHODS } from '../shared/constants';
-import { Account } from '../shared/types';
+import { useEffect } from "react";
+import { useStore } from "./store";
+import { send } from "./utils/messaging";
+import { INTERNAL_METHODS } from "../shared/constants";
+import { Account } from "../shared/types";
 
 // Screen components
-import { LockedScreen } from './screens/system/LockedScreen';
-import { StartScreen } from './screens/onboarding/StartScreen';
-import { CreateScreen } from './screens/onboarding/CreateScreen';
-import { BackupScreen } from './screens/onboarding/BackupScreen';
-import { VerifyScreen } from './screens/onboarding/VerifyScreen';
-import { SuccessScreen } from './screens/onboarding/SuccessScreen';
-import { ImportScreen } from './screens/onboarding/ImportScreen';
-import { HomeScreen } from './screens/main/HomeScreen';
-import { SendScreen } from './screens/transactions/SendScreen';
-import { ReceiveScreen } from './screens/transactions/ReceiveScreen';
-import { SettingsScreen } from './screens/SettingsScreen';
-import { RecoveryPhraseScreen } from './screens/RecoveryPhraseScreen';
+import { LockedScreen } from "./screens/system/LockedScreen";
+import { StartScreen } from "./screens/onboarding/StartScreen";
+import { CreateScreen } from "./screens/onboarding/CreateScreen";
+import { BackupScreen } from "./screens/onboarding/BackupScreen";
+import { VerifyScreen } from "./screens/onboarding/VerifyScreen";
+import { SuccessScreen } from "./screens/onboarding/SuccessScreen";
+import { ImportScreen } from "./screens/onboarding/ImportScreen";
+import { HomeScreen } from "./screens/main/HomeScreen";
+import { SendScreen } from "./screens/transactions/SendScreen";
+import { ReceiveScreen } from "./screens/transactions/ReceiveScreen";
+import { SettingsScreen } from "./screens/SettingsScreen";
+import { RecoveryPhraseScreen } from "./screens/RecoveryPhraseScreen";
 
 export function Popup() {
-  const { currentScreen, initialize, wallet, syncWallet, navigate } = useStore();
+  const { currentScreen, initialize, wallet, syncWallet, navigate } =
+    useStore();
 
   // Initialize app on mount
   useEffect(() => {
@@ -34,7 +35,7 @@ export function Popup() {
   useEffect(() => {
     const interval = setInterval(async () => {
       // Only poll if we're not already on the locked screen
-      if (currentScreen === 'locked') return;
+      if (currentScreen === "locked") return;
 
       const state = await send<{
         locked: boolean;
@@ -50,8 +51,9 @@ export function Popup() {
           address: state.address || null,
           accounts: state.accounts || [],
           currentAccount: state.currentAccount || null,
+          balance: wallet.balance || 0, // Preserve balance
         });
-        navigate('locked');
+        navigate("locked");
       }
     }, 2000); // Check every 2 seconds
 
@@ -61,35 +63,35 @@ export function Popup() {
   // Simple router - render screen based on current state
   switch (currentScreen) {
     // Onboarding
-    case 'onboarding-start':
+    case "onboarding-start":
       return <StartScreen />;
-    case 'onboarding-create':
+    case "onboarding-create":
       return <CreateScreen />;
-    case 'onboarding-backup':
+    case "onboarding-backup":
       return <BackupScreen />;
-    case 'onboarding-verify':
+    case "onboarding-verify":
       return <VerifyScreen />;
-    case 'onboarding-success':
+    case "onboarding-success":
       return <SuccessScreen />;
-    case 'onboarding-import':
+    case "onboarding-import":
       return <ImportScreen />;
 
     // Main app
-    case 'home':
+    case "home":
       return <HomeScreen />;
-    case 'settings':
+    case "settings":
       return <SettingsScreen />;
-    case 'recovery-phrase':
+    case "recovery-phrase":
       return <RecoveryPhraseScreen />;
 
     // Transactions
-    case 'send':
+    case "send":
       return <SendScreen />;
-    case 'receive':
+    case "receive":
       return <ReceiveScreen />;
 
     // System
-    case 'locked':
+    case "locked":
       return <LockedScreen />;
 
     // Default fallback

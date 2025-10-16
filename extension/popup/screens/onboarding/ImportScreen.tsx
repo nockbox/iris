@@ -2,21 +2,27 @@
  * Onboarding Import Screen - Import wallet from mnemonic
  */
 
-import { useState, useRef } from 'react';
-import { useStore } from '../../store';
-import { ScreenContainer } from '../../components/ScreenContainer';
-import { Alert } from '../../components/Alert';
-import { useAutoFocus } from '../../hooks/useAutoFocus';
-import { INTERNAL_METHODS, UI_CONSTANTS, ERROR_CODES } from '../../../shared/constants';
-import { send } from '../../utils/messaging';
+import { useState, useRef } from "react";
+import { useStore } from "../../store";
+import { ScreenContainer } from "../../components/ScreenContainer";
+import { Alert } from "../../components/Alert";
+import { useAutoFocus } from "../../hooks/useAutoFocus";
+import {
+  INTERNAL_METHODS,
+  UI_CONSTANTS,
+  ERROR_CODES,
+} from "../../../shared/constants";
+import { send } from "../../utils/messaging";
 
 export function ImportScreen() {
   const { navigate, syncWallet, setOnboardingMnemonic } = useStore();
-  const [words, setWords] = useState<string[]>(Array(UI_CONSTANTS.MNEMONIC_WORD_COUNT).fill(''));
-  const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [error, setError] = useState('');
-  const [step, setStep] = useState<'mnemonic' | 'password'>('mnemonic');
+  const [words, setWords] = useState<string[]>(
+    Array(UI_CONSTANTS.MNEMONIC_WORD_COUNT).fill("")
+  );
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [error, setError] = useState("");
+  const [step, setStep] = useState<"mnemonic" | "password">("mnemonic");
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const firstInputRef = useAutoFocus<HTMLInputElement>(); // Auto-focus first input on mount
 
@@ -25,10 +31,10 @@ export function ImportScreen() {
     const newWords = [...words];
     newWords[index] = trimmedValue;
     setWords(newWords);
-    setError('');
+    setError("");
 
     // Auto-advance to next field on space or completed word
-    if (value.endsWith(' ') || (trimmedValue && value.length > 2)) {
+    if (value.endsWith(" ") || (trimmedValue && value.length > 2)) {
       const nextIndex = index + 1;
       if (nextIndex < UI_CONSTANTS.MNEMONIC_WORD_COUNT) {
         inputRefs.current[nextIndex]?.focus();
@@ -36,13 +42,16 @@ export function ImportScreen() {
     }
   }
 
-  function handleKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
+  function handleKeyDown(
+    index: number,
+    e: React.KeyboardEvent<HTMLInputElement>
+  ) {
     // Backspace on empty field goes to previous
-    if (e.key === 'Backspace' && !words[index] && index > 0) {
+    if (e.key === "Backspace" && !words[index] && index > 0) {
       inputRefs.current[index - 1]?.focus();
     }
     // Enter advances to next field
-    if (e.key === 'Enter') {
+    if (e.key === "Enter") {
       e.preventDefault();
       const nextIndex = index + 1;
       if (nextIndex < UI_CONSTANTS.MNEMONIC_WORD_COUNT) {
@@ -54,46 +63,52 @@ export function ImportScreen() {
   }
 
   function handleContinue() {
-    const mnemonic = words.join(' ').trim();
+    const mnemonic = words.join(" ").trim();
 
-    if (words.some(w => !w)) {
-      setError('Please enter all 24 words');
+    if (words.some((w) => !w)) {
+      setError("Please enter all 24 words");
       return;
     }
 
     // Store mnemonic and move to password setup
     setOnboardingMnemonic(mnemonic);
-    setStep('password');
+    setStep("password");
   }
 
   async function handleImport() {
-    const mnemonic = words.join(' ').trim();
+    const mnemonic = words.join(" ").trim();
 
     // Validate password
     if (!password) {
-      setError('Please enter a password');
+      setError("Please enter a password");
       return;
     }
 
     if (password.length < UI_CONSTANTS.MIN_PASSWORD_LENGTH) {
-      setError(`Password must be at least ${UI_CONSTANTS.MIN_PASSWORD_LENGTH} characters`);
+      setError(
+        `Password must be at least ${UI_CONSTANTS.MIN_PASSWORD_LENGTH} characters`
+      );
       return;
     }
 
     if (password !== confirmPassword) {
-      setError('Passwords do not match');
+      setError("Passwords do not match");
       return;
     }
 
     // Import wallet (setup with existing mnemonic)
-    const result = await send<{ ok?: boolean; address?: string; mnemonic?: string; error?: string }>(
-      INTERNAL_METHODS.SETUP,
-      [password, mnemonic]
-    );
+    const result = await send<{
+      ok?: boolean;
+      address?: string;
+      mnemonic?: string;
+      error?: string;
+    }>(INTERNAL_METHODS.SETUP, [password, mnemonic]);
 
     if (result?.error) {
       if (result.error === ERROR_CODES.INVALID_MNEMONIC) {
-        setError('Invalid recovery phrase. Please check your words and try again.');
+        setError(
+          "Invalid recovery phrase. Please check your words and try again."
+        );
       } else {
         setError(`Error: ${result.error}`);
       }
@@ -109,13 +124,14 @@ export function ImportScreen() {
         address: result.address || null,
         accounts: [firstAccount],
         currentAccount: firstAccount,
+        balance: 0,
       });
       setOnboardingMnemonic(null);
-      navigate('home');
+      navigate("home");
     }
   }
 
-  if (step === 'password') {
+  if (step === "password") {
     return (
       <ScreenContainer>
         <h2 className="text-xl font-semibold mb-4">Encrypt Your Wallet</h2>
@@ -130,7 +146,7 @@ export function ImportScreen() {
           value={password}
           onChange={(e) => {
             setPassword(e.target.value);
-            setError('');
+            setError("");
           }}
         />
 
@@ -141,9 +157,9 @@ export function ImportScreen() {
           value={confirmPassword}
           onChange={(e) => {
             setConfirmPassword(e.target.value);
-            setError('');
+            setError("");
           }}
-          onKeyDown={(e) => e.key === 'Enter' && handleImport()}
+          onKeyDown={(e) => e.key === "Enter" && handleImport()}
         />
 
         {error && (
@@ -156,7 +172,10 @@ export function ImportScreen() {
           Import Wallet
         </button>
 
-        <button onClick={() => setStep('mnemonic')} className="btn-secondary my-2">
+        <button
+          onClick={() => setStep("mnemonic")}
+          className="btn-secondary my-2"
+        >
           Back
         </button>
       </ScreenContainer>
@@ -206,13 +225,16 @@ export function ImportScreen() {
 
       <button
         onClick={handleContinue}
-        disabled={words.some(w => !w)}
+        disabled={words.some((w) => !w)}
         className="btn-primary my-2 disabled:opacity-50 disabled:cursor-not-allowed"
       >
         Continue
       </button>
 
-      <button onClick={() => navigate('onboarding-start')} className="btn-secondary my-2">
+      <button
+        onClick={() => navigate("onboarding-start")}
+        className="btn-secondary my-2"
+      >
         Back
       </button>
     </ScreenContainer>

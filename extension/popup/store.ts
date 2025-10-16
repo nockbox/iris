@@ -40,6 +40,7 @@ interface WalletState {
   address: string | null;
   accounts: Account[];
   currentAccount: Account | null;
+  balance: number;
 }
 
 /**
@@ -64,6 +65,9 @@ interface AppStore {
 
   // Initialize app - checks vault status and navigates appropriately
   initialize: () => Promise<void>;
+
+  // Fetch balance from blockchain
+  fetchBalance: () => Promise<void>;
 }
 
 /**
@@ -79,6 +83,7 @@ export const useStore = create<AppStore>((set, get) => ({
     address: null,
     accounts: [],
     currentAccount: null,
+    balance: 0,
   },
 
   onboardingMnemonic: null,
@@ -130,6 +135,7 @@ export const useStore = create<AppStore>((set, get) => ({
         address: state.address || null,
         accounts: state.accounts || [],
         currentAccount: state.currentAccount || null,
+        balance: 0, // Will be fetched separately
       };
 
       // Determine initial screen
@@ -150,10 +156,30 @@ export const useStore = create<AppStore>((set, get) => ({
         wallet: walletState,
         currentScreen: initialScreen,
       });
+
+      // Fetch balance if wallet is unlocked
+      if (!walletState.locked && walletState.address) {
+        get().fetchBalance();
+      }
     } catch (error) {
       console.error('Failed to initialize app:', error);
       // Default to locked screen on error
       set({ currentScreen: 'locked' });
+    }
+  },
+
+  // Fetch balance from blockchain
+  fetchBalance: async () => {
+    try {
+      const result = await send<{ balance: number }>(INTERNAL_METHODS.GET_BALANCE);
+      set({
+        wallet: {
+          ...get().wallet,
+          balance: result.balance || 0,
+        },
+      });
+    } catch (error) {
+      console.error('Failed to fetch balance:', error);
     }
   },
 }));

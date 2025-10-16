@@ -2,24 +2,24 @@
  * Locked Screen - Unlock wallet with password
  */
 
-import { useState } from 'react';
-import { INTERNAL_METHODS, ERROR_CODES } from '../../../shared/constants';
-import { useStore } from '../../store';
-import { send } from '../../utils/messaging';
-import { ScreenContainer } from '../../components/ScreenContainer';
-import { Alert } from '../../components/Alert';
+import { useState } from "react";
+import { INTERNAL_METHODS, ERROR_CODES } from "../../../shared/constants";
+import { useStore } from "../../store";
+import { send } from "../../utils/messaging";
+import { ScreenContainer } from "../../components/ScreenContainer";
+import { Alert } from "../../components/Alert";
 
 export function LockedScreen() {
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const { navigate, syncWallet } = useStore();
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const { navigate, syncWallet, wallet } = useStore();
 
   async function handleUnlock() {
     // Clear previous errors
-    setError('');
+    setError("");
 
     if (!password) {
-      setError('Please enter a password');
+      setError("Please enter a password");
       return;
     }
 
@@ -28,16 +28,17 @@ export function LockedScreen() {
       address?: string;
       accounts?: Array<{ name: string; address: string; index: number }>;
       error?: string;
-    }>(
-      INTERNAL_METHODS.UNLOCK,
-      [password]
-    );
+    }>(INTERNAL_METHODS.UNLOCK, [password]);
 
     if (result?.error) {
-      setError(result.error === ERROR_CODES.BAD_PASSWORD ? 'Incorrect password' : `Error: ${result.error}`);
-      setPassword(''); // Clear password on error
+      setError(
+        result.error === ERROR_CODES.BAD_PASSWORD
+          ? "Incorrect password"
+          : `Error: ${result.error}`
+      );
+      setPassword(""); // Clear password on error
     } else {
-      setPassword('');
+      setPassword("");
       const accounts = result.accounts || [];
       const currentAccount = accounts[0] || null;
       syncWallet({
@@ -45,8 +46,9 @@ export function LockedScreen() {
         address: result.address || null,
         accounts,
         currentAccount,
+        balance: wallet.balance || 0,
       });
-      navigate('home');
+      navigate("home");
     }
   }
 
@@ -62,9 +64,9 @@ export function LockedScreen() {
           value={password}
           onChange={(e) => {
             setPassword(e.target.value);
-            setError(''); // Clear error on input
+            setError(""); // Clear error on input
           }}
-          onKeyDown={(e) => e.key === 'Enter' && handleUnlock()}
+          onKeyDown={(e) => e.key === "Enter" && handleUnlock()}
         />
 
         {error && (

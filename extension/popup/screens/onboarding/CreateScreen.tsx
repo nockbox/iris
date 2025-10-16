@@ -57,6 +57,7 @@ export function CreateScreen() {
         address: result.address || null,
         accounts: [firstAccount],
         currentAccount: firstAccount,
+        balance: 0, // New wallet starts with 0 balance
       });
       navigate('onboarding-backup');
     }

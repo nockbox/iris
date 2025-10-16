@@ -165,9 +165,9 @@ export function SettingsScreen() {
               <span className="text-gray-400 text-sm">Version</span>
               <span className="text-sm">{manifest.version}</span>
             </div>
-            <div className="flex justify-between items-center">
+            <div className="flex flex-col gap-1">
               <span className="text-gray-400 text-sm">Extension ID</span>
-              <span className="text-sm font-mono text-xs">{extensionId || 'Loading...'}</span>
+              <span className="text-xs font-mono text-gray-300 break-all">{extensionId || 'Loading...'}</span>
             </div>
           </div>
         </section>

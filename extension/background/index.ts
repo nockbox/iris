@@ -55,7 +55,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     touchActivity(payload?.method);
 
     // Guard: internal methods (wallet:*) can only be called from popup/extension pages
-    if (payload?.method?.startsWith('wallet:') && !isFromPopup(_sender)) {
+    if (payload?.method?.startsWith("wallet:") && !isFromPopup(_sender)) {
       return sendResponse({ error: ERROR_CODES.UNAUTHORIZED });
     }
 
@@ -145,6 +145,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       case INTERNAL_METHODS.GET_AUTO_LOCK:
         return sendResponse({ minutes: autoLockMinutes });
+
+      case INTERNAL_METHODS.GET_BALANCE:
+        // TODO: Query blockchain for balance when WASM bindings are ready
+        return sendResponse({ balance: 0 });
 
       default:
         return sendResponse({ error: ERROR_CODES.METHOD_NOT_SUPPORTED });

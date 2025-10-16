@@ -15,13 +15,12 @@ import { PROVIDER_METHODS } from "../../../shared/constants";
 import { useNumericInput } from "../../hooks/useNumericInput";
 
 export function SendScreen() {
-  const { navigate } = useStore();
+  const { navigate, wallet } = useStore();
   const [toAddress, setToAddress] = useState("");
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // TODO: Get real balance from blockchain when backend is ready
-  const balance = 0;
+  const balance = wallet.balance || 0;
 
   // Numeric inputs with validation and increment/decrement
   const amount = useNumericInput({ min: 0, max: balance });
