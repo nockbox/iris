@@ -35,8 +35,8 @@ export function ImportScreen() {
     setWords(newWords);
     setError("");
 
-    // Auto-advance to next field on space or completed word
-    if (value.endsWith(" ") || (trimmedValue && value.length > 2)) {
+    // Auto-advance to next field on space
+    if (value.endsWith(" ")) {
       const nextIndex = index + 1;
       if (nextIndex < UI_CONSTANTS.MNEMONIC_WORD_COUNT) {
         inputRefs.current[nextIndex]?.focus();
