@@ -12,6 +12,7 @@ import { BackupScreen } from './screens/onboarding/BackupScreen';
 import { VerifyScreen } from './screens/onboarding/VerifyScreen';
 import { SuccessScreen } from './screens/onboarding/SuccessScreen';
 import { ImportScreen } from './screens/onboarding/ImportScreen';
+import { ImportSuccessScreen } from './screens/onboarding/ImportSuccessScreen';
 import { ResumeBackupScreen } from './screens/onboarding/ResumeBackupScreen';
 import { HomeScreen } from './screens/main/HomeScreen';
 import { SendScreen } from './screens/transactions/SendScreen';
@@ -38,6 +39,8 @@ export function Router() {
       return <SuccessScreen />;
     case 'onboarding-import':
       return <ImportScreen />;
+    case 'onboarding-import-success':
+      return <ImportSuccessScreen />;
     case 'onboarding-resume-backup':
       return <ResumeBackupScreen />;
 

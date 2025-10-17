@@ -19,6 +19,7 @@ export type Screen =
   | 'onboarding-verify'
   | 'onboarding-success'
   | 'onboarding-import'
+  | 'onboarding-import-success'
   | 'onboarding-resume-backup'
 
   // Main app screens

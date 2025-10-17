@@ -131,7 +131,7 @@ export function ImportScreen() {
         balance: 0,
       });
       setOnboardingMnemonic(null);
-      navigate("home");
+      navigate("onboarding-import-success");
     }
   }
 
