@@ -1,0 +1,15 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# TypeScript
+*.tsbuildinfo
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS
+.DS_Store

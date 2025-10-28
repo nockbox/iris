@@ -14,15 +14,15 @@
   "permissions": ["storage", "alarms", "scripting"],
   "content_scripts": [
     {
-      "matches": ["https://*/*"],
+      "matches": ["http://*/*", "https://*/*"],
       "js": ["content/index.ts"],
       "run_at": "document_start"
-    }
-  ],
-  "web_accessible_resources": [
+    },
     {
-      "resources": ["inpage/index.ts"],
-      "matches": ["<all_urls>"]
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["inpage/index.ts"],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ]
 }

@@ -1,9 +1,12 @@
 /**
  * Inpage Provider: Injected into web pages
  * Exposes window.nockchain with EIP-1193-style API
+ *
+ * NOTE: This file runs in the MAIN world and cannot use any imports or Chrome APIs
  */
 
-import { MESSAGE_TARGETS } from '../shared/constants';
+// Inline constant to avoid imports
+const MESSAGE_TARGET = 'FORT_NOCK';
 
 interface RequestArgs {
   method: string;
@@ -18,10 +21,12 @@ class NockProvider {
   request(args: RequestArgs): Promise<unknown> {
     const id = Math.random().toString(36).slice(2);
 
+    console.log('[Fort Nock] Sending request:', args.method, { id, args });
+
     // Post message to content script
     window.postMessage(
       {
-        target: MESSAGE_TARGETS.WALLET_BRIDGE,
+        target: MESSAGE_TARGET,
         id,
         payload: args
       },
@@ -33,8 +38,9 @@ class NockProvider {
       const handler = (evt: MessageEvent) => {
         const data = evt.data;
 
-        // Check if this is our response
-        if (data?.target === MESSAGE_TARGETS.WALLET_BRIDGE && data.id === id) {
+        // Check if this is our response (must have a reply field, not just the request)
+        if (data?.target === MESSAGE_TARGET && data.id === id && data.reply !== undefined) {
+          console.log('[Fort Nock] Matched response:', { id, reply: data.reply, fullData: data });
           window.removeEventListener('message', handler);
 
           if (data.reply?.error) {
@@ -65,13 +71,9 @@ class NockProvider {
 }
 
 // Inject provider into window
-declare global {
-  interface Window {
-    nockchain: NockProvider;
-  }
-}
-
-window.nockchain = new NockProvider();
+const provider = new NockProvider();
+(provider as any).isFortNock = true;
+(window as any).nockchain = provider;
 
 // Announce provider availability
 window.dispatchEvent(new Event('nockchain#initialized'));
