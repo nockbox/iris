@@ -17,6 +17,7 @@ export function Popup() {
     wallet,
     syncWallet,
     navigate,
+    setPendingConnectRequest,
     setPendingTransactionRequest,
     setPendingSignRequest,
   } = useStore();
@@ -30,6 +31,7 @@ export function Popup() {
   useApprovalDetection({
     walletAddress: wallet.address,
     walletLocked: wallet.locked,
+    setPendingConnectRequest,
     setPendingTransactionRequest,
     setPendingSignRequest,
     navigate,

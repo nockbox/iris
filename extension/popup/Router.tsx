@@ -18,6 +18,7 @@ import { HomeScreen } from './screens/main/HomeScreen';
 import { SendScreen } from './screens/transactions/SendScreen';
 import { SentScreen } from './screens/transactions/SentScreen';
 import { ReceiveScreen } from './screens/transactions/ReceiveScreen';
+import { ConnectApprovalScreen } from './screens/approvals/ConnectApprovalScreen';
 import { SignMessageScreen } from './screens/approvals/SignMessageScreen';
 import { TransactionApprovalScreen } from './screens/approvals/TransactionApprovalScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
@@ -63,6 +64,8 @@ export function Router() {
       return <ReceiveScreen />;
 
     // Approvals
+    case 'connect-approval':
+      return <ConnectApprovalScreen />;
     case 'sign-message':
       return <SignMessageScreen />;
     case 'approve-transaction':

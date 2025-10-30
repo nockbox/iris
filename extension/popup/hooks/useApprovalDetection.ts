@@ -15,12 +15,13 @@
 import { useEffect } from 'react';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS, APPROVAL_CONSTANTS } from '../../shared/constants';
-import type { TransactionRequest, SignRequest } from '../../shared/types';
+import type { TransactionRequest, SignRequest, ConnectRequest } from '../../shared/types';
 import type { Screen } from '../store';
 
 interface UseApprovalDetectionProps {
   walletAddress: string | null;
   walletLocked: boolean;
+  setPendingConnectRequest: (request: ConnectRequest | null) => void;
   setPendingTransactionRequest: (request: TransactionRequest | null) => void;
   setPendingSignRequest: (request: SignRequest | null) => void;
   navigate: (screen: Screen) => void;
@@ -29,6 +30,7 @@ interface UseApprovalDetectionProps {
 export function useApprovalDetection({
   walletAddress,
   walletLocked,
+  setPendingConnectRequest,
   setPendingTransactionRequest,
   setPendingSignRequest,
   navigate,
@@ -39,7 +41,22 @@ export function useApprovalDetection({
 
     const hash = window.location.hash.slice(1); // Remove '#'
 
-    if (hash.startsWith(APPROVAL_CONSTANTS.TRANSACTION_HASH_PREFIX)) {
+    if (hash.startsWith(APPROVAL_CONSTANTS.CONNECT_HASH_PREFIX)) {
+      const requestId = hash.replace(APPROVAL_CONSTANTS.CONNECT_HASH_PREFIX, '');
+
+      // Fetch pending connect request from background
+      send<ConnectRequest>(INTERNAL_METHODS.GET_PENDING_CONNECTION, [requestId])
+        .then((request) => {
+          if (request && !('error' in request)) {
+            setPendingConnectRequest(request);
+            // Only navigate if wallet is unlocked
+            if (!walletLocked) {
+              navigate('connect-approval');
+            }
+          }
+        })
+        .catch(console.error);
+    } else if (hash.startsWith(APPROVAL_CONSTANTS.TRANSACTION_HASH_PREFIX)) {
       const requestId = hash.replace(APPROVAL_CONSTANTS.TRANSACTION_HASH_PREFIX, '');
 
       // Fetch pending transaction request from background
@@ -70,5 +87,5 @@ export function useApprovalDetection({
         })
         .catch(console.error);
     }
-  }, [walletAddress, walletLocked, setPendingTransactionRequest, setPendingSignRequest, navigate]);
+  }, [walletAddress, walletLocked, setPendingConnectRequest, setPendingTransactionRequest, setPendingSignRequest, navigate]);
 }

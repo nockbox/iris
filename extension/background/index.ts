@@ -17,18 +17,90 @@ import {
   UI_CONSTANTS,
   APPROVAL_CONSTANTS,
 } from "../shared/constants";
-import type { TransactionRequest, SignRequest } from "../shared/types";
+import type {
+  TransactionRequest,
+  SignRequest,
+  ConnectRequest,
+} from "../shared/types";
 
 const vault = new Vault();
 let lastActivity = Date.now();
 let autoLockMinutes = AUTOLOCK_MINUTES;
 
 /**
+ * In-memory cache of approved origins
+ * Loaded from storage on startup, persisted on changes
+ */
+let approvedOrigins = new Set<string>();
+
+/**
+ * Request expiration time (5 minutes)
+ * Prevents replay attacks on approval requests
+ */
+const REQUEST_EXPIRATION_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Load approved origins from storage
+ */
+async function loadApprovedOrigins(): Promise<void> {
+  const stored = await chrome.storage.local.get([STORAGE_KEYS.APPROVED_ORIGINS]);
+  const origins = stored[STORAGE_KEYS.APPROVED_ORIGINS] || [];
+  approvedOrigins = new Set(origins);
+}
+
+/**
+ * Save approved origins to storage
+ */
+async function saveApprovedOrigins(): Promise<void> {
+  await chrome.storage.local.set({
+    [STORAGE_KEYS.APPROVED_ORIGINS]: Array.from(approvedOrigins),
+  });
+}
+
+/**
+ * Add an origin to the approved list
+ */
+async function approveOrigin(origin: string): Promise<void> {
+  approvedOrigins.add(origin);
+  await saveApprovedOrigins();
+}
+
+/**
+ * Remove an origin from the approved list
+ */
+async function revokeOrigin(origin: string): Promise<void> {
+  approvedOrigins.delete(origin);
+  await saveApprovedOrigins();
+}
+
+/**
+ * Check if origin is approved for provider method access
+ */
+function isOriginApproved(origin: string): boolean {
+  // Allow file:// protocol for local testing in development only
+  if (import.meta.env.DEV && origin.startsWith('file://')) {
+    return true;
+  }
+
+  // Check if origin is in approved list
+  return approvedOrigins.has(origin);
+}
+
+/**
+ * Check if a request timestamp has expired
+ * @param timestamp - Request creation timestamp
+ * @returns true if expired, false if still valid
+ */
+function isRequestExpired(timestamp: number): boolean {
+  return Date.now() - timestamp > REQUEST_EXPIRATION_MS;
+}
+
+/**
  * Pending approval requests
  * Maps request ID to the request data and response callback
  */
 interface PendingRequest {
-  request: TransactionRequest | SignRequest;
+  request: TransactionRequest | SignRequest | ConnectRequest;
   sendResponse: (response: any) => void;
   origin: string;
 }
@@ -36,12 +108,38 @@ interface PendingRequest {
 const pendingRequests = new Map<string, PendingRequest>();
 
 /**
+ * Type guard to check if a request is a ConnectRequest
+ */
+function isConnectRequest(request: TransactionRequest | SignRequest | ConnectRequest): request is ConnectRequest {
+  return 'timestamp' in request && !('message' in request) && !('to' in request);
+}
+
+/**
+ * Type guard to check if a request is a SignRequest
+ */
+function isSignRequest(request: TransactionRequest | SignRequest | ConnectRequest): request is SignRequest {
+  return 'message' in request;
+}
+
+/**
+ * Type guard to check if a request is a TransactionRequest
+ */
+function isTransactionRequest(request: TransactionRequest | SignRequest | ConnectRequest): request is TransactionRequest {
+  return 'to' in request;
+}
+
+/**
  * Create an approval popup window
  */
-async function createApprovalPopup(requestId: string, type: 'transaction' | 'sign-message') {
-  const hashPrefix = type === 'transaction'
-    ? APPROVAL_CONSTANTS.TRANSACTION_HASH_PREFIX
-    : APPROVAL_CONSTANTS.SIGN_MESSAGE_HASH_PREFIX;
+async function createApprovalPopup(requestId: string, type: 'connect' | 'transaction' | 'sign-message') {
+  let hashPrefix: string;
+  if (type === 'connect') {
+    hashPrefix = APPROVAL_CONSTANTS.CONNECT_HASH_PREFIX;
+  } else if (type === 'transaction') {
+    hashPrefix = APPROVAL_CONSTANTS.TRANSACTION_HASH_PREFIX;
+  } else {
+    hashPrefix = APPROVAL_CONSTANTS.SIGN_MESSAGE_HASH_PREFIX;
+  }
   const popupUrl = chrome.runtime.getURL(`popup/index.html#${hashPrefix}${requestId}`);
 
   // Get the last focused window to position the popup relative to it
@@ -93,12 +191,13 @@ async function emitWalletEvent(eventType: string, data: unknown) {
   }
 }
 
-// Initialize auto-lock setting and schedule alarm
+// Initialize auto-lock setting, load approved origins, and schedule alarm
 (async () => {
   const stored = await chrome.storage.local.get([
     STORAGE_KEYS.AUTO_LOCK_MINUTES,
   ]);
   autoLockMinutes = stored[STORAGE_KEYS.AUTO_LOCK_MINUTES] ?? AUTOLOCK_MINUTES;
+  await loadApprovedOrigins();
   scheduleAlarm();
 })();
 
@@ -144,6 +243,34 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
+
+        const requestAccountsOrigin = _sender.url || _sender.origin || '';
+
+        // Check if origin is already approved
+        if (!isOriginApproved(requestAccountsOrigin)) {
+          // Origin not approved - show connection approval popup
+          const connectRequestId = crypto.randomUUID();
+          const connectRequest: ConnectRequest = {
+            id: connectRequestId,
+            origin: requestAccountsOrigin,
+            timestamp: Date.now(),
+          };
+
+          // Store pending request with response callback
+          pendingRequests.set(connectRequestId, {
+            request: connectRequest,
+            sendResponse,
+            origin: connectRequest.origin,
+          });
+
+          // Create approval popup
+          await createApprovalPopup(connectRequestId, 'connect');
+
+          // Response will be sent when user approves/rejects
+          return;
+        }
+
+        // Origin approved - return address
         const address = vault.getAddress();
         sendResponse([address]);
 
@@ -152,6 +279,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case PROVIDER_METHODS.SIGN_MESSAGE:
+        // Validate origin
+        const signMessageOrigin = _sender.url || _sender.origin || '';
+        if (!isOriginApproved(signMessageOrigin)) {
+          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          return;
+        }
+
         if (vault.isLocked()) {
           sendResponse({ error: ERROR_CODES.LOCKED });
           return;
@@ -161,7 +295,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const newSignRequestId = crypto.randomUUID();
         const signRequest: SignRequest = {
           id: newSignRequestId,
-          origin: _sender.url || _sender.origin || 'unknown',
+          origin: signMessageOrigin,
           message: payload.params?.[0] || '',
           timestamp: Date.now(),
         };
@@ -180,6 +314,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case PROVIDER_METHODS.SEND_TRANSACTION:
+        // Validate origin
+        const sendTxOrigin = _sender.url || _sender.origin || '';
+        if (!isOriginApproved(sendTxOrigin)) {
+          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          return;
+        }
+
         if (vault.isLocked()) {
           sendResponse({ error: ERROR_CODES.LOCKED });
           return;
@@ -194,7 +335,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const txRequestId = crypto.randomUUID();
         const txRequest: TransactionRequest = {
           id: txRequestId,
-          origin: _sender.url || _sender.origin || 'unknown',
+          origin: sendTxOrigin,
           to,
           amount,
           fee,
@@ -311,7 +452,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case INTERNAL_METHODS.GET_PENDING_TRANSACTION:
         const getPendingTxId = payload.params?.[0];
         const txPending = pendingRequests.get(getPendingTxId);
-        if (txPending && 'to' in txPending.request) {
+        if (txPending && isTransactionRequest(txPending.request)) {
           sendResponse(txPending.request);
         } else {
           sendResponse({ error: ERROR_CODES.NOT_FOUND });
@@ -321,7 +462,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case INTERNAL_METHODS.GET_PENDING_SIGN_REQUEST:
         const getPendingSignId = payload.params?.[0];
         const signPending = pendingRequests.get(getPendingSignId);
-        if (signPending && 'message' in signPending.request) {
+        if (signPending && isSignRequest(signPending.request)) {
           sendResponse(signPending.request);
         } else {
           sendResponse({ error: ERROR_CODES.NOT_FOUND });
@@ -331,10 +472,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case INTERNAL_METHODS.APPROVE_TRANSACTION:
         const approveTxId = payload.params?.[0];
         const approveTxPending = pendingRequests.get(approveTxId);
-        if (approveTxPending && 'to' in approveTxPending.request) {
+        if (approveTxPending && isTransactionRequest(approveTxPending.request)) {
+          const txRequest = approveTxPending.request;
+
+          // Check if request has expired (replay prevention)
+          if (isRequestExpired(txRequest.timestamp)) {
+            approveTxPending.sendResponse({
+              error: { code: 4003, message: 'Request expired' },
+            });
+            pendingRequests.delete(approveTxId);
+            sendResponse({ error: 'Request expired' });
+            return;
+          }
+
           // TODO: Implement real transaction signing and RPC broadcast to Nockchain network
           // For now, return a generated transaction ID until WASM signing and RPC are integrated
-          const txRequest = approveTxPending.request as TransactionRequest;
           approveTxPending.sendResponse({
             txid: crypto.randomUUID(),
             amount: txRequest.amount,
@@ -364,8 +516,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case INTERNAL_METHODS.APPROVE_SIGN_MESSAGE:
         const approveSignId = payload.params?.[0];
         const approveSignPending = pendingRequests.get(approveSignId);
-        if (approveSignPending && 'message' in approveSignPending.request) {
-          const signRequest = approveSignPending.request as SignRequest;
+        if (approveSignPending && isSignRequest(approveSignPending.request)) {
+          const signRequest = approveSignPending.request;
+
+          // Check if request has expired (replay prevention)
+          if (isRequestExpired(signRequest.timestamp)) {
+            approveSignPending.sendResponse({
+              error: { code: 4003, message: 'Request expired' },
+            });
+            pendingRequests.delete(approveSignId);
+            sendResponse({ error: 'Request expired' });
+            return;
+          }
+
           const signature = await vault.signMessage([signRequest.message]);
           approveSignPending.sendResponse({ signature });
           pendingRequests.delete(approveSignId);
@@ -383,6 +546,62 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             error: { code: 4001, message: 'User rejected the signature request' },
           });
           pendingRequests.delete(rejectSignId);
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ error: ERROR_CODES.NOT_FOUND });
+        }
+        return;
+
+      case INTERNAL_METHODS.GET_PENDING_CONNECTION:
+        const getPendingConnectId = payload.params?.[0];
+        const connectPending = pendingRequests.get(getPendingConnectId);
+        if (connectPending && isConnectRequest(connectPending.request)) {
+          sendResponse(connectPending.request);
+        } else {
+          sendResponse({ error: ERROR_CODES.NOT_FOUND });
+        }
+        return;
+
+      case INTERNAL_METHODS.APPROVE_CONNECTION:
+        const approveConnectId = payload.params?.[0];
+        const approveConnectPending = pendingRequests.get(approveConnectId);
+        if (approveConnectPending && isConnectRequest(approveConnectPending.request)) {
+          const connectRequest = approveConnectPending.request;
+
+          // Check if request has expired (replay prevention)
+          if (isRequestExpired(connectRequest.timestamp)) {
+            approveConnectPending.sendResponse({
+              error: { code: 4003, message: 'Request expired' },
+            });
+            pendingRequests.delete(approveConnectId);
+            sendResponse({ error: 'Request expired' });
+            return;
+          }
+
+          // Add origin to approved list
+          await approveOrigin(connectRequest.origin);
+
+          // Return address
+          const connectAddress = vault.getAddress();
+          approveConnectPending.sendResponse([connectAddress]);
+          pendingRequests.delete(approveConnectId);
+          sendResponse({ success: true });
+
+          // Emit connect event
+          await emitWalletEvent('connect', { chainId: 'nockchain-1' });
+        } else {
+          sendResponse({ error: ERROR_CODES.NOT_FOUND });
+        }
+        return;
+
+      case INTERNAL_METHODS.REJECT_CONNECTION:
+        const rejectConnectId = payload.params?.[0];
+        const rejectConnectPending = pendingRequests.get(rejectConnectId);
+        if (rejectConnectPending) {
+          rejectConnectPending.sendResponse({
+            error: { code: 4001, message: 'User rejected the connection' },
+          });
+          pendingRequests.delete(rejectConnectId);
           sendResponse({ success: true });
         } else {
           sendResponse({ error: ERROR_CODES.NOT_FOUND });

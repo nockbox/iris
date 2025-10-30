@@ -77,6 +77,15 @@ export const INTERNAL_METHODS = {
 
   /** Reject pending sign message request */
   REJECT_SIGN_MESSAGE: "wallet:rejectSignMessage",
+
+  /** Get pending connection request for approval */
+  GET_PENDING_CONNECTION: "wallet:getPendingConnection",
+
+  /** Approve pending connection request */
+  APPROVE_CONNECTION: "wallet:approveConnection",
+
+  /** Reject pending connection request */
+  REJECT_CONNECTION: "wallet:rejectConnection",
 } as const;
 
 /**
@@ -137,6 +146,9 @@ export const STORAGE_KEYS = {
 
   /** Onboarding state - tracks whether seed phrase backup is complete */
   ONBOARDING_STATE: "onboardingState",
+
+  /** Array of approved origins (websites that can access wallet) */
+  APPROVED_ORIGINS: "approvedOrigins",
 } as const;
 
 /**
@@ -214,6 +226,8 @@ export const UI_CONSTANTS = {
  * Approval Request Constants - URL hash prefixes for approval flows
  */
 export const APPROVAL_CONSTANTS = {
+  /** Hash prefix for connection approval requests */
+  CONNECT_HASH_PREFIX: 'connect-approval-',
   /** Hash prefix for transaction approval requests */
   TRANSACTION_HASH_PREFIX: 'transaction-approval-',
   /** Hash prefix for sign message approval requests */

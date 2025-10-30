@@ -10,6 +10,7 @@ import {
   TransactionDetails,
   SignRequest,
   TransactionRequest,
+  ConnectRequest,
 } from "../shared/types";
 import { send } from "./utils/messaging";
 
@@ -39,6 +40,7 @@ export type Screen =
   | "tx-details"
 
   // Approval screens
+  | "connect-approval"
   | "sign-message"
   | "approve-transaction"
 
@@ -80,6 +82,10 @@ interface AppStore {
   lastTransaction: TransactionDetails | null;
   setLastTransaction: (transaction: TransactionDetails | null) => void;
 
+  // Pending connect request (for showing approval screen)
+  pendingConnectRequest: ConnectRequest | null;
+  setPendingConnectRequest: (request: ConnectRequest | null) => void;
+
   // Pending sign request (for showing approval screen)
   pendingSignRequest: SignRequest | null;
   setPendingSignRequest: (request: SignRequest | null) => void;
@@ -113,6 +119,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   onboardingMnemonic: null,
   lastTransaction: null,
+  pendingConnectRequest: null,
   pendingSignRequest: null,
   pendingTransactionRequest: null,
 
@@ -152,6 +159,11 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ lastTransaction: transaction });
   },
 
+  // Set pending connect request
+  setPendingConnectRequest: (request: ConnectRequest | null) => {
+    set({ pendingConnectRequest: request });
+  },
+
   // Set pending sign request
   setPendingSignRequest: (request: SignRequest | null) => {
     set({ pendingSignRequest: request });
@@ -168,6 +180,7 @@ export const useStore = create<AppStore>((set, get) => ({
       // Check if we're opening for an approval request
       const hash = window.location.hash.slice(1); // Remove '#'
       const isApprovalRequest =
+        hash.startsWith(APPROVAL_CONSTANTS.CONNECT_HASH_PREFIX) ||
         hash.startsWith(APPROVAL_CONSTANTS.TRANSACTION_HASH_PREFIX) ||
         hash.startsWith(APPROVAL_CONSTANTS.SIGN_MESSAGE_HASH_PREFIX);
 

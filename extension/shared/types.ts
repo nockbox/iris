@@ -74,6 +74,18 @@ export interface TransactionDetails {
 }
 
 /**
+ * Pending connection request from a dApp
+ */
+export interface ConnectRequest {
+  /** Unique request ID */
+  id: string;
+  /** Origin of the requesting site (e.g., "https://app.example.com") */
+  origin: string;
+  /** Request timestamp */
+  timestamp: number;
+}
+
+/**
  * Pending sign message request from a dApp
  */
 export interface SignRequest {
