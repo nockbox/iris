@@ -1,38 +1,14 @@
 /**
- * Address encoding utilities for Nockchain
- * Converts public keys to base58-encoded addresses
+ * Address encoding utilities for Nockchain V1
+ * Converts public keys to base58-encoded PKH addresses
  */
 
 import { base58 } from '@scure/base';
 import { tip5Hash } from '../lib/nbx-crypto/nbx_crypto.js';
 
 /**
- * Converts a public key to a Nockchain v0 address (DEPRECATED - use v1)
- * In Nockchain v0, an address is the base58-encoded public key
- *
- * @param publicKey - The 97-byte public key from WASM
- * @returns A 132-character base58-encoded address
- * @deprecated Use publicKeyToPKH for v1 addresses instead
- */
-export function publicKeyToAddress(publicKey: Uint8Array): string {
-  if (publicKey.length !== 97) {
-    throw new Error(`Invalid public key length: ${publicKey.length}, expected 97`);
-  }
-
-  // Nockchain v0 addresses are base58-encoded public keys
-  const address = base58.encode(publicKey);
-
-  // Validate the result is 132 characters
-  if (address.length !== 132) {
-    throw new Error(`Invalid address length: ${address.length}, expected 132`);
-  }
-
-  return address;
-}
-
-/**
- * Converts a public key to a Nockchain v1 PKH (Public Key Hash) address
- * In Nockchain v1, an address is the base58-encoded TIP5 hash of the public key
+ * Converts a public key to a Nockchain V1 PKH (Public Key Hash) address
+ * An address is the base58-encoded TIP5 hash of the public key
  *
  * @param publicKey - The 97-byte public key from WASM
  * @returns A ~60-character base58-encoded PKH address
@@ -52,21 +28,45 @@ export function publicKeyToPKH(publicKey: Uint8Array): string {
 }
 
 /**
- * Decodes a Nockchain address back to a public key
+ * Converts digest bytes (40 bytes) to a base58-encoded digest string
+ * Used for communicating with WASM API which uses string-based digests
  *
- * @param address - The 132-character base58-encoded address
- * @returns The 97-byte public key
+ * @param digestBytes - The 40-byte digest (TIP5 hash)
+ * @returns Base58-encoded digest string
  */
-export function addressToPublicKey(address: string): Uint8Array {
-  if (address.length !== 132) {
-    throw new Error(`Invalid address length: ${address.length}, expected 132`);
+export function digestBytesToString(digestBytes: Uint8Array): string {
+  if (digestBytes.length !== 40) {
+    throw new Error(`Invalid digest length: ${digestBytes.length}, expected 40`);
   }
+  return base58.encode(digestBytes);
+}
 
-  const publicKey = base58.decode(address);
+/**
+ * Converts a base58-encoded digest string to bytes
+ * Used for communicating with WASM API which uses string-based digests
+ *
+ * @param digestString - Base58-encoded digest string
+ * @returns The 40-byte digest
+ */
+export function digestStringToBytes(digestString: string): Uint8Array {
+  const bytes = base58.decode(digestString);
+  if (bytes.length !== 40) {
+    throw new Error(`Decoded digest has invalid length: ${bytes.length}, expected 40`);
+  }
+  return bytes;
+}
 
+/**
+ * Converts a public key to a PKH digest string (for WASM API)
+ * Hashes the public key and returns base58-encoded string
+ *
+ * @param publicKey - The 97-byte public key
+ * @returns Base58-encoded PKH digest string
+ */
+export function publicKeyToPKHDigest(publicKey: Uint8Array): string {
   if (publicKey.length !== 97) {
-    throw new Error(`Decoded public key has invalid length: ${publicKey.length}, expected 97`);
+    throw new Error(`Invalid public key length: ${publicKey.length}, expected 97`);
   }
-
-  return publicKey;
+  const pkh = tip5Hash(publicKey);
+  return base58.encode(pkh);
 }

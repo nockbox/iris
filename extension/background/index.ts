@@ -422,6 +422,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         );
         return;
 
+      case INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING:
+        sendResponse(
+          await vault.updateAccountStyling(
+            payload.params?.[0],
+            payload.params?.[1],
+            payload.params?.[2]
+          )
+        );
+        return;
+
       case INTERNAL_METHODS.CREATE_ACCOUNT:
         // params: name (optional)
         const createResult = await vault.createAccount(payload.params?.[0]);
@@ -446,6 +456,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case INTERNAL_METHODS.GET_BALANCE:
         // TODO: Query blockchain for balance when WASM bindings are ready
         sendResponse({ balance: 0 });
+        return;
+
+      // Transaction cache handlers
+      case INTERNAL_METHODS.ADD_TRANSACTION_TO_CACHE:
+        // params: [accountAddress, transaction]
+        await vault.addTransactionToCache(payload.params?.[0], payload.params?.[1]);
+        sendResponse({ ok: true });
+        return;
+
+      case INTERNAL_METHODS.GET_CACHED_TRANSACTIONS:
+        // params: [accountAddress]
+        const cachedTxs = await vault.getCachedTransactions(payload.params?.[0]);
+        sendResponse({ transactions: cachedTxs });
+        return;
+
+      case INTERNAL_METHODS.SHOULD_REFRESH_CACHE:
+        // params: [accountAddress]
+        const shouldRefresh = await vault.shouldRefreshCache(payload.params?.[0]);
+        sendResponse({ shouldRefresh });
         return;
 
       // Approval request handlers
@@ -619,6 +648,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ success: true });
         } else {
           sendResponse({ error: ERROR_CODES.NOT_FOUND });
+        }
+        return;
+
+      case INTERNAL_METHODS.REVOKE_ORIGIN:
+        const revokeOriginParam = payload.params?.[0];
+        if (revokeOriginParam && typeof revokeOriginParam === 'object' && 'origin' in revokeOriginParam) {
+          await revokeOrigin(revokeOriginParam.origin as string);
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ error: ERROR_CODES.INVALID_PARAMS });
         }
         return;
 

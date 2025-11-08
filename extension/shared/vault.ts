@@ -6,9 +6,10 @@ import { encryptGCM, decryptGCM, deriveKeyPBKDF2, rand, PBKDF2_ITERATIONS } from
 import { generateMnemonic, deriveAddress, validateMnemonic } from "./wallet-crypto";
 import { ERROR_CODES, STORAGE_KEYS } from "./constants";
 import { Account } from "./types";
-import { buildPayment } from "./transaction-builder";
-import { addressToPublicKey } from "./address-encoding";
-import initCryptoWasm, { deriveMasterKeyFromMnemonic, signDigest, tip5Hash } from '../lib/nbx-crypto/nbx_crypto.js';
+import { buildPayment, createSinglePKHSpendCondition, calculateNoteDataHash, type Note } from "./transaction-builder";
+import { digestBytesToString } from "./address-encoding";
+import initCryptoWasm, { signDigest, tip5Hash } from '../lib/nbx-crypto/nbx_crypto.js';
+import { deriveMasterKeyFromMnemonic } from '../lib/nbx-nockchain-types/nbx_nockchain_types.js';
 
 /**
  * Versioned encrypted vault format
@@ -308,6 +309,32 @@ export class Vault {
   }
 
   /**
+   * Updates account styling (icon and color)
+   */
+  async updateAccountStyling(
+    index: number,
+    iconStyleId: number,
+    iconColor: string
+  ): Promise<{ ok: boolean } | { error: string }> {
+    if (this.state.locked) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    if (index < 0 || index >= this.state.accounts.length) {
+      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    }
+
+    this.state.accounts[index].iconStyleId = iconStyleId;
+    this.state.accounts[index].iconColor = iconColor;
+
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.ACCOUNTS]: this.state.accounts,
+    });
+
+    return { ok: true };
+  }
+
+  /**
    * Gets the mnemonic phrase (only when unlocked)
    * Requires password verification for security
    */
@@ -385,13 +412,13 @@ export class Vault {
   }
 
   /**
-   * Signs a transaction using Nockchain WASM cryptography
+   * Signs a V1 transaction using Nockchain WASM cryptography
    * Derives the account's private key and builds/signs the transaction
    *
-   * @param to - Recipient address (132-char base58)
+   * @param to - Recipient PKH address (base58-encoded digest string)
    * @param amount - Amount in nicks
    * @param fee - Transaction fee in nicks
-   * @returns Transaction ID as hex string
+   * @returns Transaction ID as digest string
    */
   async signTransaction(to: string, amount: number, fee: number): Promise<string> {
     if (this.state.locked || !this.mnemonic) {
@@ -404,7 +431,6 @@ export class Vault {
     }
 
     // Initialize crypto WASM module
-    // In service worker context, we need to provide the explicit URL
     const cryptoWasmUrl = chrome.runtime.getURL('lib/nbx-crypto/nbx_crypto_bg.wasm');
     await initCryptoWasm({ module_or_path: cryptoWasmUrl });
 
@@ -418,51 +444,120 @@ export class Vault {
       throw new Error("Cannot sign: keys unavailable");
     }
 
-    // Decode recipient address
-    const recipientPubkey = addressToPublicKey(to);
-
-    // TODO: Query actual UTXOs from blockchain via RPC
-    // For now, create a mock UTXO for testing purposes
-    // This will be replaced with real balance query when RPC is ready
-    const mockNote = {
-      version: 0,
-      originPage: BigInt(0),
-      timelockMin: undefined,
-      timelockMax: undefined,
-      nameFirst: new Uint8Array(40).fill(0), // Mock 40-byte name
-      nameLast: new Uint8Array(40).fill(1),  // Mock 40-byte name
-      lockPubkeys: [accountKey.public_key],
-      lockKeysRequired: BigInt(1),
-      sourceHash: new Uint8Array(40).fill(0), // Mock 40-byte hash
-      sourceIsCoinbase: false,
-      assets: amount + fee + 1000, // Ensure enough for tx + change
-    };
-
     try {
+      // Create spend condition for this account
+      const spendCondition = await createSinglePKHSpendCondition(accountKey.public_key);
+
+      // Calculate note data hash for the spend condition
+      const noteDataHash = await calculateNoteDataHash(spendCondition);
+
+      // TODO: Query actual UTXOs from blockchain via RPC
+      // For now, create a mock V1 UTXO for testing purposes
+      // This will be replaced with real balance query when RPC is ready
+      const mockNote: Note = {
+        originPage: 0,
+        nameFirst: digestBytesToString(new Uint8Array(40).fill(0)), // Mock 40-byte name as base58 string
+        nameLast: digestBytesToString(new Uint8Array(40).fill(1)),  // Mock 40-byte name as base58 string
+        noteDataHash: digestBytesToString(noteDataHash),            // Note data hash as base58 string
+        assets: amount + fee + 1000, // Ensure enough for tx + change
+      };
+
       // Build and sign the transaction
       const constructedTx = await buildPayment(
         mockNote,
-        recipientPubkey,
+        to, // Recipient PKH digest string
         amount,
-        accountKey.public_key, // Change goes back to sender
+        accountKey.public_key, // For creating spend condition
         fee,
-        accountKey.private_key,
-        accountKey.public_key
+        accountKey.private_key
       );
 
-      // Convert txId bytes to hex string
-      const txIdHex = Array.from(constructedTx.txId)
-        .map(b => b.toString(16).padStart(2, '0'))
-        .join('');
-
+      // Return transaction ID as digest string
       // TODO: Broadcast transaction via RPC
-      // await rpcClient.broadcastTransaction(constructedTx.serialized);
+      // await rpcClient.broadcastTransaction(constructedTx.rawTx);
 
-      return txIdHex;
+      return constructedTx.txId;
     } finally {
       // Clean up WASM memory
       accountKey.free();
       masterKey.free();
     }
+  }
+
+  /**
+   * Adds a transaction to the cache for a specific account
+   */
+  async addTransactionToCache(
+    accountAddress: string,
+    transaction: import('./types').CachedTransaction
+  ): Promise<void> {
+    // Get existing cache
+    const result = await chrome.storage.local.get([STORAGE_KEYS.TRANSACTION_CACHE]);
+    const cache: import('./types').TransactionCache = result[STORAGE_KEYS.TRANSACTION_CACHE] || {};
+
+    // Initialize array for this account if it doesn't exist
+    if (!cache[accountAddress]) {
+      cache[accountAddress] = [];
+    }
+
+    // Check if transaction already exists
+    const exists = cache[accountAddress].some(tx => tx.txid === transaction.txid);
+    if (exists) {
+      return; // Don't add duplicates
+    }
+
+    // Add transaction to the beginning (most recent first)
+    cache[accountAddress].unshift(transaction);
+
+    // Limit to 100 transactions per account
+    if (cache[accountAddress].length > 100) {
+      cache[accountAddress] = cache[accountAddress].slice(0, 100);
+    }
+
+    // Save to storage
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.TRANSACTION_CACHE]: cache,
+    });
+  }
+
+  /**
+   * Gets cached transactions for a specific account
+   */
+  async getCachedTransactions(accountAddress: string): Promise<import('./types').CachedTransaction[]> {
+    const result = await chrome.storage.local.get([STORAGE_KEYS.TRANSACTION_CACHE]);
+    const cache: import('./types').TransactionCache = result[STORAGE_KEYS.TRANSACTION_CACHE] || {};
+    return cache[accountAddress] || [];
+  }
+
+  /**
+   * Updates the last sync timestamp for an account
+   */
+  async updateLastSync(accountAddress: string): Promise<void> {
+    const result = await chrome.storage.local.get([STORAGE_KEYS.LAST_TX_SYNC]);
+    const timestamps: import('./types').LastSyncTimestamps = result[STORAGE_KEYS.LAST_TX_SYNC] || {};
+
+    timestamps[accountAddress] = Date.now();
+
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.LAST_TX_SYNC]: timestamps,
+    });
+  }
+
+  /**
+   * Gets the last sync timestamp for an account
+   */
+  async getLastSync(accountAddress: string): Promise<number> {
+    const result = await chrome.storage.local.get([STORAGE_KEYS.LAST_TX_SYNC]);
+    const timestamps: import('./types').LastSyncTimestamps = result[STORAGE_KEYS.LAST_TX_SYNC] || {};
+    return timestamps[accountAddress] || 0;
+  }
+
+  /**
+   * Checks if cache should be refreshed (older than 5 minutes)
+   */
+  async shouldRefreshCache(accountAddress: string): Promise<boolean> {
+    const lastSync = await this.getLastSync(accountAddress);
+    const fiveMinutes = 5 * 60 * 1000;
+    return Date.now() - lastSync > fiveMinutes;
   }
 }

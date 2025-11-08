@@ -3,3 +3,8 @@ dist/
 .DS_Store
 *.log
 .vite-cache
+
+# Environment variables
+.env
+.env.*
+!.env.example

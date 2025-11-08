@@ -3,14 +3,18 @@
  * High-level API for constructing Nockchain transactions
  */
 
-import initCryptoWasm, { signDigest, tip5Hash } from '../lib/nbx-crypto/nbx_crypto.js';
+import initCryptoWasm from '../lib/nbx-crypto/nbx_crypto.js';
 import initTxWasm, {
-  WasmSeed,
-  WasmSpend,
+  WasmTxBuilder,
   WasmNote,
-  WasmInput,
+  WasmName,
+  WasmDigest,
+  WasmVersion,
+  WasmPkh,
+  WasmSpendCondition,
   WasmRawTx,
 } from '../lib/nbx-nockchain-types/nbx_nockchain_types.js';
+import { publicKeyToPKHDigest } from './address-encoding.js';
 
 let cryptoWasmInitialized = false;
 let txWasmInitialized = false;
@@ -20,8 +24,6 @@ let txWasmInitialized = false;
  */
 async function ensureCryptoWasmInit(): Promise<void> {
   if (!cryptoWasmInitialized) {
-    // In service worker context, provide explicit WASM URL
-    // Must pass as object to avoid deprecated parameter warning
     const cryptoWasmUrl = chrome.runtime.getURL('lib/nbx-crypto/nbx_crypto_bg.wasm');
     await initCryptoWasm({ module_or_path: cryptoWasmUrl });
     cryptoWasmInitialized = true;
@@ -33,8 +35,6 @@ async function ensureCryptoWasmInit(): Promise<void> {
  */
 async function ensureTxWasmInit(): Promise<void> {
   if (!txWasmInitialized) {
-    // In service worker context, provide explicit WASM URL
-    // Must pass as object to avoid deprecated parameter warning
     const txWasmUrl = chrome.runtime.getURL('lib/nbx-nockchain-types/nbx_nockchain_types_bg.wasm');
     await initTxWasm({ module_or_path: txWasmUrl });
     txWasmInitialized = true;
@@ -42,223 +42,193 @@ async function ensureTxWasmInit(): Promise<void> {
 }
 
 /**
- * Note data from RPC balance query
+ * Note data in V1 WASM format
  */
 export interface Note {
-  version: number;
-  originPage: bigint;
-  timelockMin?: bigint;
-  timelockMax?: bigint;
-  nameFirst: Uint8Array;
-  nameLast: Uint8Array;
-  lockPubkeys: Uint8Array[];
-  lockKeysRequired: bigint;
-  sourceHash: Uint8Array;
-  sourceIsCoinbase: boolean;
-  assets: number; // amount in nicks
+  originPage: number;
+  nameFirst: string; // base58 digest string
+  nameLast: string; // base58 digest string
+  noteDataHash: string; // base58 digest string
+  assets: number;
 }
 
 /**
- * Payment output specification
- */
-export interface PaymentOutput {
-  recipientPubkey: Uint8Array; // 97 bytes
-  amount: number; // nicks
-  relativeLockMin?: bigint;
-  relativeLockMax?: bigint;
-}
-
-/**
- * Transaction parameters
+ * Transaction parameters for new builder API
  */
 export interface TransactionParams {
   /** Notes (UTXOs) to spend */
   notes: Note[];
-  /** Payment outputs */
-  outputs: PaymentOutput[];
+  /** Spend condition (determines who can unlock the notes) */
+  spendCondition: WasmSpendCondition;
+  /** Recipient's PKH as digest string */
+  recipientPKH: string;
+  /** Amount to send in nicks */
+  amount: number;
   /** Transaction fee in nicks */
   fee: number;
+  /** Your PKH for receiving change (as digest string) */
+  refundPKH: string;
   /** Private key for signing (32 bytes) */
   privateKey: Uint8Array;
-  /** Public key for signature (97 bytes) */
-  publicKey: Uint8Array;
 }
 
 /**
  * Constructed transaction ready for broadcast
  */
 export interface ConstructedTransaction {
-  /** Transaction ID (40 bytes) */
-  txId: Uint8Array;
-  /** Total fees */
-  totalFees: number;
-  /** Serialized transaction bytes (placeholder - needs RPC format) */
-  serialized: Uint8Array;
-  /** Number of inputs */
-  inputCount: number;
+  /** Transaction ID as digest string */
+  txId: string;
+  /** Transaction version */
+  version: number;
+  /** Raw transaction object (for additional operations) */
+  rawTx: WasmRawTx;
 }
 
 /**
- * Build a complete Nockchain transaction
+ * Build a complete Nockchain transaction using the new builder API
  *
  * @param params - Transaction parameters
  * @returns Constructed transaction ready for broadcast
  */
-export async function buildTransaction(
-  params: TransactionParams
-): Promise<ConstructedTransaction> {
+export async function buildTransaction(params: TransactionParams): Promise<ConstructedTransaction> {
   // Initialize both WASM modules
   await ensureCryptoWasmInit();
   await ensureTxWasmInit();
 
-  const { notes, outputs, fee, privateKey, publicKey } = params;
+  const { notes, spendCondition, recipientPKH, amount, fee, refundPKH, privateKey } = params;
 
   // Validate inputs
   if (notes.length === 0) {
     throw new Error('At least one note (UTXO) is required');
   }
-  if (outputs.length === 0) {
-    throw new Error('At least one output is required');
-  }
   if (privateKey.length !== 32) {
     throw new Error('Private key must be 32 bytes');
-  }
-  if (publicKey.length !== 97) {
-    throw new Error('Public key must be 97 bytes');
   }
 
   // Calculate total available from notes
   const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
-  const totalOutputs = outputs.reduce((sum, out) => sum + out.amount, 0);
 
-  if (totalAvailable < totalOutputs + fee) {
+  if (totalAvailable < amount + fee) {
     throw new Error(
-      `Insufficient funds: have ${totalAvailable} nicks, need ${totalOutputs + fee} (${totalOutputs} outputs + ${fee} fee)`
+      `Insufficient funds: have ${totalAvailable} nicks, need ${amount + fee} (${amount} amount + ${fee} fee)`
     );
   }
 
-  // Create inputs array
-  const inputs: WasmInput[] = [];
-
-  for (const note of notes) {
-    // Convert Note to WasmNote
-    const wasmNote = new WasmNote(
-      note.version,
+  // Convert notes to WasmNote format (V1 only)
+  const wasmNotes = notes.map(note => {
+    return new WasmNote(
+      WasmVersion.V1(),
       note.originPage,
-      note.timelockMin ?? null,
-      note.timelockMax ?? null,
-      note.nameFirst,
-      note.nameLast,
-      note.lockPubkeys,
-      note.lockKeysRequired,
-      note.sourceHash,
-      note.sourceIsCoinbase,
+      new WasmName(note.nameFirst, note.nameLast),
+      new WasmDigest(note.noteDataHash),
       note.assets
     );
+  });
 
-    // Create seeds (outputs) for this spend
-    // For simplicity, we'll create all outputs in the first spend
-    // (More sophisticated builders might distribute across multiple spends)
-    const seeds: WasmSeed[] = [];
+  // Create transaction builder
+  const builder = WasmTxBuilder.newSimple(
+    wasmNotes,
+    spendCondition,
+    new WasmDigest(recipientPKH),
+    amount, // gift
+    fee,
+    new WasmDigest(refundPKH)
+  );
 
-    if (inputs.length === 0) {
-      // First input - add all payment outputs
-      for (const output of outputs) {
-        // Parent hash = note name (first part)
-        const seed = output.relativeLockMin !== undefined || output.relativeLockMax !== undefined
-          ? WasmSeed.newWithTimelock(
-              output.recipientPubkey,
-              output.amount,
-              note.nameFirst,
-              output.relativeLockMin ?? null,
-              output.relativeLockMax ?? null
-            )
-          : new WasmSeed(
-              output.recipientPubkey,
-              output.amount,
-              note.nameFirst
-            );
-        seeds.push(seed);
-      }
-    }
-
-    // Create spend
-    const spend = new WasmSpend(seeds, fee);
-
-    // Sign the spend
-    const digest = spend.getSigningDigest();
-    const signature = signDigest(privateKey, digest);
-    spend.addSignature(publicKey, signature);
-
-    // Create input linking note to spend
-    const input = new WasmInput(wasmNote, spend);
-    inputs.push(input);
-  }
-
-  // Assemble complete transaction
-  const tx = new WasmRawTx(inputs);
+  // Sign the transaction
+  const rawTx = builder.sign(privateKey);
 
   return {
-    txId: tx.getTxId(),
-    totalFees: tx.getTotalFees(),
-    serialized: tx.serialize(),
-    inputCount: tx.getInputCount(),
+    txId: rawTx.id.value,
+    version: 1, // V1 only
+    rawTx,
   };
 }
 
 /**
  * Create a simple payment transaction (single recipient)
  *
+ * This is a convenience wrapper around buildTransaction for the common case
+ * of sending a payment to one recipient with change back to yourself.
+ *
  * @param note - UTXO to spend
- * @param recipientPubkey - Recipient's public key (97 bytes)
+ * @param recipientPKH - Recipient's PKH digest string
  * @param amount - Amount to send in nicks
- * @param changePubkey - Your public key for change (97 bytes)
+ * @param senderPublicKey - Your public key (97 bytes, for creating spend condition)
  * @param fee - Transaction fee in nicks
  * @param privateKey - Your private key (32 bytes)
- * @param publicKey - Your public key (97 bytes)
  * @returns Constructed transaction
  */
 export async function buildPayment(
   note: Note,
-  recipientPubkey: Uint8Array,
+  recipientPKH: string,
   amount: number,
-  changePubkey: Uint8Array,
+  senderPublicKey: Uint8Array,
   fee: number,
-  privateKey: Uint8Array,
-  publicKey: Uint8Array
+  privateKey: Uint8Array
 ): Promise<ConstructedTransaction> {
+  // Initialize WASM
+  await ensureCryptoWasmInit();
+  await ensureTxWasmInit();
+
   const totalNeeded = amount + fee;
 
   if (note.assets < totalNeeded) {
-    throw new Error(
-      `Insufficient funds in note: have ${note.assets} nicks, need ${totalNeeded}`
-    );
+    throw new Error(`Insufficient funds in note: have ${note.assets} nicks, need ${totalNeeded}`);
   }
 
-  const outputs: PaymentOutput[] = [
-    // Payment to recipient
-    {
-      recipientPubkey,
-      amount,
-    },
-  ];
+  // Create sender's PKH digest string for change
+  const senderPKH = publicKeyToPKHDigest(senderPublicKey);
 
-  // Add change output if there's any left
-  const change = note.assets - totalNeeded;
-  if (change > 0) {
-    outputs.push({
-      recipientPubkey: changePubkey,
-      amount: change,
-    });
-  }
+  // Create spend condition (single PKH)
+  const pkh = WasmPkh.single(senderPKH);
+  const spendCondition = WasmSpendCondition.newPkh(pkh);
 
   return buildTransaction({
     notes: [note],
-    outputs,
+    spendCondition,
+    recipientPKH,
+    amount,
     fee,
+    refundPKH: senderPKH,
     privateKey,
-    publicKey,
   });
+}
+
+/**
+ * Create a spend condition for a single public key
+ * Helper function for the common case
+ *
+ * @param publicKey - The 97-byte public key
+ * @returns WasmSpendCondition for this public key
+ */
+export async function createSinglePKHSpendCondition(
+  publicKey: Uint8Array
+): Promise<WasmSpendCondition> {
+  await ensureCryptoWasmInit();
+  await ensureTxWasmInit();
+
+  const pkhDigest = publicKeyToPKHDigest(publicKey);
+  const pkh = WasmPkh.single(pkhDigest);
+  return WasmSpendCondition.newPkh(pkh);
+}
+
+/**
+ * Calculate the note data hash for a given spend condition
+ * This is needed when converting legacy notes to new format
+ *
+ * @param spendCondition - The spend condition
+ * @returns The note data hash as 40-byte digest
+ */
+export async function calculateNoteDataHash(
+  spendCondition: WasmSpendCondition
+): Promise<Uint8Array> {
+  await ensureTxWasmInit();
+
+  const hashDigest = spendCondition.hash();
+  // The digest value is already a base58 string, decode it to bytes
+  const { base58 } = await import('@scure/base');
+  return base58.decode(hashDigest.value);
 }
 
 /**
@@ -269,15 +239,12 @@ export async function buildPayment(
  * @param outputCount - Number of outputs
  * @returns Estimated size in bytes
  */
-export function estimateTransactionSize(
-  inputCount: number,
-  outputCount: number
-): number {
+export function estimateTransactionSize(inputCount: number, outputCount: number): number {
   // Rough estimates based on typical sizes:
   // - Each input: ~200 bytes (note data + signature)
   // - Each output: ~150 bytes (seed data)
   // - Transaction overhead: ~100 bytes
-  return 100 + (inputCount * 200) + (outputCount * 150);
+  return 100 + inputCount * 200 + outputCount * 150;
 }
 
 /**

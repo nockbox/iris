@@ -15,6 +15,10 @@ export interface Account {
   address: string;
   /** BIP-44 derivation index (0, 1, 2, ...) */
   index: number;
+  /** Icon style ID (1-15, defaults to index % 3 + 1 for variety) */
+  iconStyleId?: number;
+  /** Icon color (hex string, defaults to #FFC413) */
+  iconColor?: string;
 }
 
 /**
@@ -71,6 +75,43 @@ export interface TransactionDetails {
   to?: string;
   /** Sender address */
   from?: string;
+}
+
+/**
+ * Cached transaction for a specific account
+ * Stored in chrome.storage for offline viewing
+ */
+export interface CachedTransaction {
+  /** Transaction ID (hash) */
+  txid: string;
+  /** Transaction type relative to this account */
+  type: 'sent' | 'received';
+  /** Amount in NOCK */
+  amount: number;
+  /** Transaction fee in NOCK */
+  fee: number;
+  /** Counterparty address (recipient if sent, sender if received) */
+  address: string;
+  /** Transaction timestamp (milliseconds since epoch) */
+  timestamp: number;
+  /** Transaction status */
+  status: 'confirmed' | 'pending' | 'failed';
+}
+
+/**
+ * Transaction cache structure per account
+ * Key is the account address
+ */
+export interface TransactionCache {
+  [accountAddress: string]: CachedTransaction[];
+}
+
+/**
+ * Last sync timestamp per account
+ * Key is the account address, value is timestamp in milliseconds
+ */
+export interface LastSyncTimestamps {
+  [accountAddress: string]: number;
 }
 
 /**

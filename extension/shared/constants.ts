@@ -51,6 +51,9 @@ export const INTERNAL_METHODS = {
   /** Rename an account */
   RENAME_ACCOUNT: "wallet:renameAccount",
 
+  /** Update account styling (icon and color) */
+  UPDATE_ACCOUNT_STYLING: "wallet:updateAccountStyling",
+
   /** Get mnemonic phrase (requires password verification) */
   GET_MNEMONIC: "wallet:getMnemonic",
 
@@ -62,6 +65,15 @@ export const INTERNAL_METHODS = {
 
   /** Get pending transaction request for approval */
   GET_PENDING_TRANSACTION: "wallet:getPendingTransaction",
+
+  /** Add a transaction to the cache */
+  ADD_TRANSACTION_TO_CACHE: "wallet:addTransactionToCache",
+
+  /** Get cached transactions for current account */
+  GET_CACHED_TRANSACTIONS: "wallet:getCachedTransactions",
+
+  /** Check if cache should be refreshed */
+  SHOULD_REFRESH_CACHE: "wallet:shouldRefreshCache",
 
   /** Approve pending transaction request */
   APPROVE_TRANSACTION: "wallet:approveTransaction",
@@ -86,6 +98,9 @@ export const INTERNAL_METHODS = {
 
   /** Reject pending connection request */
   REJECT_CONNECTION: "wallet:rejectConnection",
+
+  /** Revoke origin permissions */
+  REVOKE_ORIGIN: "wallet:revokeOrigin",
 } as const;
 
 /**
@@ -126,6 +141,9 @@ export const ERROR_CODES = {
 
   /** Requested resource not found (e.g., pending approval request) */
   NOT_FOUND: "NOT_FOUND",
+
+  /** Invalid parameters provided to method */
+  INVALID_PARAMS: "INVALID_PARAMS",
 } as const;
 
 /**
@@ -149,6 +167,12 @@ export const STORAGE_KEYS = {
 
   /** Array of approved origins (websites that can access wallet) */
   APPROVED_ORIGINS: "approvedOrigins",
+
+  /** Cached transaction history per account address */
+  TRANSACTION_CACHE: "transactionCache",
+
+  /** Last transaction sync timestamp per account address */
+  LAST_TX_SYNC: "lastTxSync",
 } as const;
 
 /**
@@ -198,6 +222,7 @@ export const USER_ACTIVITY_METHODS = new Set([
   INTERNAL_METHODS.SWITCH_ACCOUNT,
   INTERNAL_METHODS.CREATE_ACCOUNT,
   INTERNAL_METHODS.RENAME_ACCOUNT,
+  INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING,
   INTERNAL_METHODS.SET_AUTO_LOCK,
   INTERNAL_METHODS.GET_MNEMONIC, // Viewing recovery phrase is user activity
 ]);
