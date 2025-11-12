@@ -2,16 +2,66 @@
  * Vault: manages encrypted mnemonic storage and wallet state
  */
 
-import { encryptGCM, decryptGCM, deriveKeyPBKDF2, rand, PBKDF2_ITERATIONS } from "./webcrypto";
-import { generateMnemonic, deriveAddress, validateMnemonic } from "./wallet-crypto";
-import { ERROR_CODES, STORAGE_KEYS, ACCOUNT_COLORS } from "./constants";
-import { Account } from "./types";
-import { buildPayment, createSinglePKHSpendCondition, calculateNoteDataHash, type Note } from "./transaction-builder";
-import { digestBytesToString } from "./address-encoding";
+import { encryptGCM, decryptGCM, deriveKeyPBKDF2, rand, PBKDF2_ITERATIONS } from './webcrypto';
+import { generateMnemonic, deriveAddress, validateMnemonic } from './wallet-crypto';
+import { ERROR_CODES, STORAGE_KEYS, ACCOUNT_COLORS } from './constants';
+import { Account } from './types';
+import {
+  buildPayment,
+  createSinglePKHSpendCondition,
+  calculateNoteDataHash,
+  type Note as TxBuilderNote,
+} from './transaction-builder';
 import initCryptoWasm, { signDigest, tip5Hash } from '../lib/nbx-crypto/nbx_crypto.js';
-import initNockchainTypesWasm, { deriveMasterKeyFromMnemonic } from '../lib/nbx-nockchain-types/nbx_nockchain_types.js';
-import { queryV1Balance } from "./balance-query";
-import { createBrowserClient } from "./rpc-client-browser";
+import initWasmTx, { deriveMasterKeyFromMnemonic, hashU64 } from '../lib/nbx-wasm/nbx_wasm.js';
+import { queryV1Balance } from './balance-query';
+import { createBrowserClient } from './rpc-client-browser';
+import type { Note as BalanceNote } from './types';
+import { base58 } from '@scure/base';
+import { USE_MOCK_TRANSACTIONS, MOCK_TRANSACTIONS } from './mocks/transactions';
+
+/**
+ * Convert a balance query note to transaction builder note format
+ * @param note - Note from balance query (with Uint8Array names)
+ * @returns Note in format expected by transaction builder
+ *
+ * NOTE: Prefers pre-computed base58 values from the RPC response to avoid WASM init issues
+ */
+async function convertNoteForTxBuilder(note: BalanceNote): Promise<TxBuilderNote> {
+  // Use pre-computed base58 strings if available (from WASM gRPC client)
+  let nameFirst: string;
+  let nameLast: string;
+  let noteDataHash: string;
+
+  if (note.nameFirstBase58 && note.nameLastBase58) {
+    nameFirst = note.nameFirstBase58;
+    nameLast = note.nameLastBase58;
+  } else {
+    // Fallback: convert bytes to base58
+    nameFirst = base58.encode(note.nameFirst);
+    nameLast = base58.encode(note.nameLast);
+  }
+
+  if (note.noteDataHashBase58) {
+    // Use pre-computed noteDataHash from RPC response
+    console.log('[Vault] Using pre-computed noteDataHash from RPC response');
+    noteDataHash = note.noteDataHashBase58;
+  } else {
+    // Try hash(0) - based on test code in builder.rs:122
+    // The backend's test uses: note_data_hash: 0.hash()
+    console.log('[Vault] Trying hash(0) as noteDataHash (matching backend test code)');
+    noteDataHash = hashU64(0);
+    console.log('[Vault] Computed hash(0):', noteDataHash.slice(0, 20) + '...');
+  }
+
+  return {
+    originPage: Number(note.originPage),
+    nameFirst,
+    nameLast,
+    noteDataHash,
+    assets: note.assets,
+  };
+}
 
 /**
  * Versioned encrypted vault format
@@ -23,12 +73,12 @@ interface EncryptedVaultV1 {
     name: 'PBKDF2';
     hash: 'SHA-256';
     iterations: number;
-    salt: number[];  // PBKDF2 salt for key derivation
+    salt: number[]; // PBKDF2 salt for key derivation
   };
   cipher: {
     alg: 'AES-GCM';
-    iv: number[];    // AES-GCM initialization vector (12 bytes)
-    ct: number[];    // Ciphertext (includes authentication tag)
+    iv: number[]; // AES-GCM initialization vector (12 bytes)
+    ct: number[]; // Ciphertext (includes authentication tag)
   };
 }
 
@@ -68,9 +118,9 @@ export class Vault {
       return { error: ERROR_CODES.INVALID_MNEMONIC };
     }
 
-    // Create first account (Account 1 at index 0)
+    // Create first account (Wallet 1 at index 0)
     const firstAccount: Account = {
-      name: "Account 1",
+      name: 'Wallet 1',
       address: await deriveAddress(words, 0),
       index: 0,
       createdAt: Date.now(),
@@ -81,10 +131,7 @@ export class Vault {
     const { key } = await deriveKeyPBKDF2(password, kdfSalt);
 
     // Encrypt mnemonic with AES-GCM
-    const { iv, ct } = await encryptGCM(
-      key,
-      new TextEncoder().encode(words)
-    );
+    const { iv, ct } = await encryptGCM(key, new TextEncoder().encode(words));
 
     // Store in versioned format (arrays for chrome.storage compatibility)
     const encData: EncryptedVaultV1 = {
@@ -93,12 +140,12 @@ export class Vault {
         name: 'PBKDF2',
         hash: 'SHA-256',
         iterations: PBKDF2_ITERATIONS,
-        salt: Array.from(kdfSalt),  // PBKDF2 salt
+        salt: Array.from(kdfSalt), // PBKDF2 salt
       },
       cipher: {
         alg: 'AES-GCM',
-        iv: Array.from(iv),  // AES-GCM IV (12 bytes)
-        ct: Array.from(ct),  // Ciphertext + auth tag
+        iv: Array.from(iv), // AES-GCM IV (12 bytes)
+        ct: Array.from(ct), // Ciphertext + auth tag
       },
     };
 
@@ -115,7 +162,7 @@ export class Vault {
       locked: false,
       accounts: [firstAccount],
       currentAccountIndex: 0,
-      enc: encData
+      enc: encData,
     };
 
     return { ok: true, address: firstAccount.address, mnemonic: words };
@@ -126,17 +173,19 @@ export class Vault {
    */
   async unlock(
     password: string
-  ): Promise<{ ok: boolean; address: string; accounts: Account[]; currentAccount: Account } | { error: string }> {
+  ): Promise<
+    | { ok: boolean; address: string; accounts: Account[]; currentAccount: Account }
+    | { error: string }
+  > {
     const stored = await chrome.storage.local.get([
       STORAGE_KEYS.ENCRYPTED_VAULT,
       STORAGE_KEYS.ACCOUNTS,
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
     ]);
-    const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as
-      | EncryptedVaultV1
-      | undefined;
+    const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVaultV1 | undefined;
     const accounts = (stored[STORAGE_KEYS.ACCOUNTS] as Account[] | undefined) || [];
-    const currentAccountIndex = (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
+    const currentAccountIndex =
+      (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
 
     if (!enc) {
       return { error: ERROR_CODES.NO_VAULT };
@@ -144,10 +193,7 @@ export class Vault {
 
     try {
       // Re-derive key using stored KDF parameters
-      const { key } = await deriveKeyPBKDF2(
-        password,
-        new Uint8Array(enc.kdf.salt)
-      );
+      const { key } = await deriveKeyPBKDF2(password, new Uint8Array(enc.kdf.salt));
 
       // Decrypt mnemonic
       const pt = await decryptGCM(
@@ -167,15 +213,15 @@ export class Vault {
         locked: false,
         accounts,
         currentAccountIndex,
-        enc
+        enc,
       };
 
       const currentAccount = accounts[currentAccountIndex] || accounts[0];
       return {
         ok: true,
-        address: currentAccount?.address || "",
+        address: currentAccount?.address || '',
         accounts,
-        currentAccount
+        currentAccount,
       };
     } catch (err) {
       return { error: ERROR_CODES.BAD_PASSWORD };
@@ -189,6 +235,25 @@ export class Vault {
     this.state.locked = true;
     // Clear mnemonic from memory for security
     this.mnemonic = null;
+    return { ok: true };
+  }
+
+  /**
+   * Resets/deletes the wallet completely (clears all data)
+   */
+  async reset(): Promise<{ ok: boolean }> {
+    // Clear all storage
+    await chrome.storage.local.clear();
+
+    // Reset in-memory state
+    this.state = {
+      locked: true,
+      accounts: [],
+      currentAccountIndex: 0,
+      enc: null,
+    };
+    this.mnemonic = null;
+
     return { ok: true };
   }
 
@@ -212,7 +277,7 @@ export class Vault {
    */
   getAddress(): string {
     const account = this.getCurrentAccount();
-    return account?.address || "";
+    return account?.address || '';
   }
 
   /**
@@ -227,20 +292,27 @@ export class Vault {
    */
   async getAddressSafe(): Promise<string> {
     if (this.state.accounts.length > 0) {
-      const currentAccount = this.state.accounts[this.state.currentAccountIndex] || this.state.accounts[0];
+      const currentAccount =
+        this.state.accounts[this.state.currentAccountIndex] || this.state.accounts[0];
       return currentAccount.address;
     }
-    const stored = await chrome.storage.local.get([STORAGE_KEYS.ACCOUNTS, STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]);
+    const stored = await chrome.storage.local.get([
+      STORAGE_KEYS.ACCOUNTS,
+      STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
+    ]);
     const accounts = (stored[STORAGE_KEYS.ACCOUNTS] as Account[] | undefined) || [];
-    const currentAccountIndex = (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
+    const currentAccountIndex =
+      (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
     const currentAccount = accounts[currentAccountIndex] || accounts[0];
-    return currentAccount?.address || "";
+    return currentAccount?.address || '';
   }
 
   /**
    * Creates a new account by deriving the next index
    */
-  async createAccount(name?: string): Promise<{ ok: boolean; account: Account } | { error: string }> {
+  async createAccount(
+    name?: string
+  ): Promise<{ ok: boolean; account: Account } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
@@ -250,7 +322,7 @@ export class Vault {
     }
 
     const nextIndex = this.state.accounts.length;
-    const accountName = name || `Account ${nextIndex + 1}`;
+    const accountName = name || `Wallet ${nextIndex + 1}`;
 
     // Pick a random color from available account colors
     const randomColor = ACCOUNT_COLORS[Math.floor(Math.random() * ACCOUNT_COLORS.length)];
@@ -277,7 +349,9 @@ export class Vault {
   /**
    * Switches to a different account
    */
-  async switchAccount(index: number): Promise<{ ok: boolean; account: Account } | { error: string }> {
+  async switchAccount(
+    index: number
+  ): Promise<{ ok: boolean; account: Account } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
@@ -347,7 +421,9 @@ export class Vault {
    * - Auto-switches to first visible account if hiding current account
    * - Prevents hiding if it's the last visible account
    */
-  async hideAccount(index: number): Promise<{ ok: boolean; switchedTo?: number } | { error: string }> {
+  async hideAccount(
+    index: number
+  ): Promise<{ ok: boolean; switchedTo?: number } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
@@ -387,10 +463,64 @@ export class Vault {
   }
 
   /**
+   * Get balance for the current account
+   * Queries the blockchain via RPC for V1 PKH address balance
+   *
+   * @returns Balance information including total NOCK, nicks, and UTXO count
+   */
+  async getBalance(): Promise<
+    | {
+        totalNock: number;
+        totalNicks: bigint;
+        utxoCount: number;
+      }
+    | { error: string }
+  > {
+    if (this.state.locked) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    try {
+      // Create RPC client
+      const rpcClient = createBrowserClient();
+
+      console.log('[Vault] Querying balance for', currentAccount.address.slice(0, 20) + '...');
+
+      // Query balance using V1 balance query (derives first-names automatically)
+      const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
+
+      console.log('[Vault]  Balance retrieved:', {
+        totalNock: balanceResult.totalNock,
+        totalNicks: balanceResult.totalNicks.toString(),
+        utxoCount: balanceResult.utxoCount,
+      });
+
+      return {
+        totalNock: balanceResult.totalNock,
+        totalNicks: balanceResult.totalNicks,
+        utxoCount: balanceResult.utxoCount,
+      };
+    } catch (error) {
+      console.error('[Vault] Error fetching balance:', error);
+      return {
+        error:
+          'Failed to fetch balance: ' + (error instanceof Error ? error.message : 'Unknown error'),
+      };
+    }
+  }
+
+  /**
    * Gets the mnemonic phrase (only when unlocked)
    * Requires password verification for security
    */
-  async getMnemonic(password: string): Promise<{ ok: boolean; mnemonic: string } | { error: string }> {
+  async getMnemonic(
+    password: string
+  ): Promise<{ ok: boolean; mnemonic: string } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
@@ -401,10 +531,7 @@ export class Vault {
 
     // Re-verify password before revealing mnemonic
     try {
-      const { key } = await deriveKeyPBKDF2(
-        password,
-        new Uint8Array(this.state.enc.kdf.salt)
-      );
+      const { key } = await deriveKeyPBKDF2(password, new Uint8Array(this.state.enc.kdf.salt));
 
       const pt = await decryptGCM(
         key,
@@ -428,31 +555,31 @@ export class Vault {
    */
   async signMessage(params: unknown): Promise<string> {
     if (this.state.locked || !this.mnemonic) {
-      throw new Error("Wallet is locked");
+      throw new Error('Wallet is locked');
     }
 
     // Initialize WASM modules
     // In service worker context, we need to provide the explicit URLs
     // Both init functions are idempotent - they return immediately if already initialized
     const cryptoWasmUrl = chrome.runtime.getURL('lib/nbx-crypto/nbx_crypto_bg.wasm');
-    const nockchainTypesWasmUrl = chrome.runtime.getURL('lib/nbx-nockchain-types/nbx_nockchain_types_bg.wasm');
+    const wasmTxUrl = chrome.runtime.getURL('lib/nbx-wasm/nbx_wasm_bg.wasm');
 
     await Promise.all([
       initCryptoWasm({ module_or_path: cryptoWasmUrl }),
-      initNockchainTypesWasm({ module_or_path: nockchainTypesWasmUrl })
+      initWasmTx({ module_or_path: wasmTxUrl }),
     ]);
 
-    const msg = (Array.isArray(params) ? params[0] : params) ?? "";
+    const msg = (Array.isArray(params) ? params[0] : params) ?? '';
     const msgBytes = new TextEncoder().encode(String(msg));
 
     // Derive the account's private key
-    const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, "");
+    const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
     const accountKey = masterKey.deriveChild(this.state.currentAccountIndex);
 
     if (!accountKey.private_key) {
       masterKey.free();
       accountKey.free();
-      throw new Error("Cannot sign: no private key available");
+      throw new Error('Cannot sign: no private key available');
     }
 
     // Hash the message with TIP5
@@ -480,33 +607,33 @@ export class Vault {
    */
   async signTransaction(to: string, amount: number, fee: number): Promise<string> {
     if (this.state.locked || !this.mnemonic) {
-      throw new Error("Wallet is locked");
+      throw new Error('Wallet is locked');
     }
 
     const currentAccount = this.getCurrentAccount();
     if (!currentAccount) {
-      throw new Error("No account selected");
+      throw new Error('No account selected');
     }
 
     // Initialize WASM modules
     // In service worker context, we need to provide the explicit URLs
     // Both init functions are idempotent - they return immediately if already initialized
     const cryptoWasmUrl = chrome.runtime.getURL('lib/nbx-crypto/nbx_crypto_bg.wasm');
-    const nockchainTypesWasmUrl = chrome.runtime.getURL('lib/nbx-nockchain-types/nbx_nockchain_types_bg.wasm');
+    const wasmTxUrl = chrome.runtime.getURL('lib/nbx-wasm/nbx_wasm_bg.wasm');
 
     await Promise.all([
       initCryptoWasm({ module_or_path: cryptoWasmUrl }),
-      initNockchainTypesWasm({ module_or_path: nockchainTypesWasmUrl })
+      initWasmTx({ module_or_path: wasmTxUrl }),
     ]);
 
     // Derive the account's private and public keys
-    const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, "");
+    const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
     const accountKey = masterKey.deriveChild(this.state.currentAccountIndex);
 
     if (!accountKey.private_key || !accountKey.public_key) {
       masterKey.free();
       accountKey.free();
-      throw new Error("Cannot sign: keys unavailable");
+      throw new Error('Cannot sign: keys unavailable');
     }
 
     try {
@@ -520,7 +647,9 @@ export class Vault {
         throw new Error('No UTXOs available. Your wallet may have zero balance.');
       }
 
-      console.log(`[Vault] Found ${balanceResult.utxoCount} UTXOs (${balanceResult.simpleNotes.length} simple, ${balanceResult.coinbaseNotes.length} coinbase)`);
+      console.log(
+        `[Vault] Found ${balanceResult.utxoCount} UTXOs (${balanceResult.simpleNotes.length} simple, ${balanceResult.coinbaseNotes.length} coinbase)`
+      );
 
       // Combine simple and coinbase notes
       const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
@@ -537,16 +666,19 @@ export class Vault {
         const totalBalance = notes.reduce((sum, note) => sum + note.assets, 0);
         throw new Error(
           `Insufficient balance. Need ${totalNeeded} nicks (${amount} + ${fee} fee), ` +
-          `but wallet only has ${totalBalance} nicks across ${notes.length} UTXOs. ` +
-          `Multi-UTXO transactions not yet implemented.`
+            `but wallet only has ${totalBalance} nicks across ${notes.length} UTXOs. ` +
+            `Multi-UTXO transactions not yet implemented.`
         );
       }
 
       console.log('[Vault] Selected UTXO with', selectedNote.assets, 'nicks');
 
+      // Convert note to transaction builder format
+      const txBuilderNote = await convertNoteForTxBuilder(selectedNote);
+
       // Build and sign the transaction
       const constructedTx = await buildPayment(
-        selectedNote,
+        txBuilderNote,
         to, // Recipient PKH digest string
         amount,
         accountKey.public_key, // For creating spend condition
@@ -554,15 +686,242 @@ export class Vault {
         accountKey.private_key
       );
 
-      // Return transaction ID as digest string
-      // TODO: Broadcast transaction via RPC
-      // await rpcClient.broadcastTransaction(constructedTx.rawTx);
-
+      // Return constructed transaction (for caller to broadcast)
       return constructedTx.txId;
     } finally {
       // Clean up WASM memory
       accountKey.free();
       masterKey.free();
+    }
+  }
+
+  /**
+   * Broadcast a raw signed transaction to the network
+   * This is a simpler method that doesn't require note conversion or WASM
+   *
+   * @param rawTx - The raw signed transaction object (WasmRawTx or already serialized)
+   * @returns Transaction ID and broadcast status
+   */
+  async broadcastTransaction(
+    rawTx: any
+  ): Promise<{ txId: string; broadcasted: boolean } | { error: string }> {
+    try {
+      const rpcClient = createBrowserClient();
+      console.log('[Vault] Broadcasting pre-signed transaction...');
+
+      // If rawTx has toProtobuf method, convert it; otherwise use as-is
+      const protobufTx = typeof rawTx.toProtobuf === 'function' ? rawTx.toProtobuf() : rawTx;
+
+      const txId = await rpcClient.sendTransaction(protobufTx);
+
+      console.log('[Vault] Transaction broadcasted successfully:', txId);
+
+      return {
+        txId,
+        broadcasted: true,
+      };
+    } catch (error) {
+      console.error('[Vault] Error broadcasting transaction:', error);
+      return {
+        error: `Failed to broadcast transaction: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  /**
+   * Send a transaction to the network
+   * This is the high-level API for sending NOCK to a recipient
+   * TODO: Clean up logs
+   *
+   * @param to - Recipient PKH address (base58-encoded digest string)
+   * @param amount - Amount in nicks
+   * @param fee - Transaction fee in nicks
+   * @returns Transaction ID and broadcast status
+   */
+  async sendTransaction(
+    to: string,
+    amount: number,
+    fee: number
+  ): Promise<{ txId: string; broadcasted: boolean } | { error: string }> {
+    if (this.state.locked || !this.mnemonic) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    try {
+      // Initialize WASM modules
+      const cryptoWasmUrl = chrome.runtime.getURL('lib/nbx-crypto/nbx_crypto_bg.wasm');
+      const wasmTxUrl = chrome.runtime.getURL('lib/nbx-wasm/nbx_wasm_bg.wasm');
+
+      await Promise.all([
+        initCryptoWasm({ module_or_path: cryptoWasmUrl }),
+        initWasmTx({ module_or_path: wasmTxUrl }),
+      ]);
+
+      // Derive the account's private and public keys
+      const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const accountKey = masterKey.deriveChild(this.state.currentAccountIndex);
+
+      if (!accountKey.private_key || !accountKey.public_key) {
+        masterKey.free();
+        accountKey.free();
+        return { error: 'Keys unavailable' };
+      }
+
+      try {
+        // Create RPC client
+        const rpcClient = createBrowserClient();
+
+        console.log('[Vault] Fetching UTXOs for transaction...');
+        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
+
+        if (balanceResult.utxoCount === 0) {
+          return { error: 'No UTXOs available. Your wallet may have zero balance.' };
+        }
+
+        console.log(`[Vault] Found ${balanceResult.utxoCount} UTXOs`);
+
+        // Combine simple and coinbase notes
+        const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+
+        // Calculate total amount needed (amount + fee)
+        const totalNeeded = amount + fee;
+
+        // UTXO selection: find a note with sufficient balance
+        const selectedNote = notes.find(note => note.assets >= totalNeeded);
+
+        if (!selectedNote) {
+          const totalBalance = notes.reduce((sum, note) => sum + note.assets, 0);
+          return {
+            error:
+              `Insufficient balance. Need ${totalNeeded} nicks (${amount} + ${fee} fee), ` +
+              `but wallet only has ${totalBalance} nicks across ${notes.length} UTXOs. ` +
+              `Multi-UTXO transactions not yet implemented.`,
+          };
+        }
+
+        console.log('[Vault] Selected UTXO with', selectedNote.assets, 'nicks');
+        console.log('[Vault] Selected note details:', {
+          version: selectedNote.version,
+          originPage: selectedNote.originPage.toString(),
+          assets: selectedNote.assets,
+          hasNameFirstBase58: !!selectedNote.nameFirstBase58,
+          hasNoteDataHashBase58: !!selectedNote.noteDataHashBase58,
+        });
+
+        // Convert note to transaction builder format
+        const txBuilderNote = await convertNoteForTxBuilder(selectedNote);
+        console.log('[Vault] Converted note for tx builder:', {
+          originPage: txBuilderNote.originPage,
+          nameFirst: txBuilderNote.nameFirst.slice(0, 20) + '...',
+          nameLast: txBuilderNote.nameLast.slice(0, 20) + '...',
+          noteDataHash: txBuilderNote.noteDataHash.slice(0, 20) + '...',
+          assets: txBuilderNote.assets,
+        });
+
+        // Build and sign the transaction
+        console.log('[Vault] Building transaction with params:', {
+          recipientPKH: to.slice(0, 20) + '...',
+          amount,
+          fee,
+          senderPublicKey: base58.encode(accountKey.public_key).slice(0, 20) + '...',
+        });
+
+        const constructedTx = await buildPayment(
+          txBuilderNote,
+          to,
+          amount,
+          accountKey.public_key,
+          fee,
+          accountKey.private_key
+        );
+
+        console.log('[Vault] Transaction signed:', constructedTx.txId);
+        console.log('[Vault] Transaction version:', constructedTx.version);
+        console.log('[Vault] RawTx object keys:', Object.keys(constructedTx.rawTx));
+
+        // Convert to protobuf format for gRPC
+        const protobufTx = constructedTx.rawTx.toProtobuf();
+        console.log('[Vault] Protobuf tx object keys:', Object.keys(protobufTx));
+        console.log(
+          '[Vault] Protobuf tx sample:',
+          JSON.stringify(protobufTx).slice(0, 200) + '...'
+        );
+
+        // DEBUG: Log the spend details
+        if (protobufTx.spends && protobufTx.spends.length > 0) {
+          const spendEntry = protobufTx.spends[0];
+          console.log('[Vault] First spend entry:', {
+            spendEntryKeys: Object.keys(spendEntry),
+            hasName: !!spendEntry.name,
+            hasSpend: !!spendEntry.spend,
+            name: spendEntry.name
+              ? {
+                  first: spendEntry.name.first?.slice(0, 20) + '...',
+                  last: spendEntry.name.last?.slice(0, 20) + '...',
+                }
+              : 'missing',
+          });
+
+          if (spendEntry.spend) {
+            console.log('[Vault] Spend object:', {
+              spendKeys: Object.keys(spendEntry.spend),
+              hasWitness: !!spendEntry.spend.witness,
+              hasLegacy: !!spendEntry.spend.legacy,
+              spend_kind: spendEntry.spend.spend_kind,
+            });
+
+            // Check if spend_kind contains the actual spend data
+            if (spendEntry.spend.spend_kind) {
+              console.log('[Vault] Spend kind:', {
+                spendKindKeys: Object.keys(spendEntry.spend.spend_kind),
+                hasWitness: !!spendEntry.spend.spend_kind.witness,
+                hasLegacy: !!spendEntry.spend.spend_kind.legacy,
+              });
+
+              if (spendEntry.spend.spend_kind.witness) {
+                console.log('[Vault] Witness spend:', {
+                  witnessKeys: Object.keys(spendEntry.spend.spend_kind.witness),
+                  seedCount: spendEntry.spend.spend_kind.witness.seeds?.length || 0,
+                  fee: spendEntry.spend.spend_kind.witness.fee,
+                });
+              }
+            }
+
+            if (spendEntry.spend.witness) {
+              console.log('[Vault] Witness spend (direct):', {
+                witnessKeys: Object.keys(spendEntry.spend.witness),
+                seedCount: spendEntry.spend.witness.seeds?.length || 0,
+                fee: spendEntry.spend.witness.fee,
+              });
+            }
+          }
+        }
+
+        // Broadcast the transaction to the network
+        console.log('[Vault] Broadcasting transaction...');
+        const broadcastTxId = await rpcClient.sendTransaction(protobufTx);
+
+        console.log('[Vault]  Transaction broadcasted successfully:', broadcastTxId);
+
+        return {
+          txId: constructedTx.txId,
+          broadcasted: true,
+        };
+      } finally {
+        // Clean up WASM memory
+        accountKey.free();
+        masterKey.free();
+      }
+    } catch (error) {
+      console.error('[Vault] Error sending transaction:', error);
+      return {
+        error: `Failed to send transaction: ${error instanceof Error ? error.message : String(error)}`,
+      };
     }
   }
 
@@ -605,10 +964,46 @@ export class Vault {
   /**
    * Gets cached transactions for a specific account
    */
-  async getCachedTransactions(accountAddress: string): Promise<import('./types').CachedTransaction[]> {
+  async getCachedTransactions(
+    accountAddress: string
+  ): Promise<import('./types').CachedTransaction[]> {
+    // Return mock transactions if enabled
+    if (USE_MOCK_TRANSACTIONS) {
+      console.log('[Vault] Returning mock transactions (USE_MOCK_TRANSACTIONS = true)');
+      return MOCK_TRANSACTIONS;
+    }
+
     const result = await chrome.storage.local.get([STORAGE_KEYS.TRANSACTION_CACHE]);
     const cache: import('./types').TransactionCache = result[STORAGE_KEYS.TRANSACTION_CACHE] || {};
     return cache[accountAddress] || [];
+  }
+
+  /**
+   * Updates the status of a cached transaction
+   */
+  async updateTransactionStatus(
+    accountAddress: string,
+    txid: string,
+    status: 'confirmed' | 'pending' | 'failed'
+  ): Promise<void> {
+    // Get existing cache
+    const result = await chrome.storage.local.get([STORAGE_KEYS.TRANSACTION_CACHE]);
+    const cache: import('./types').TransactionCache = result[STORAGE_KEYS.TRANSACTION_CACHE] || {};
+
+    // Find and update the transaction
+    if (cache[accountAddress]) {
+      const txIndex = cache[accountAddress].findIndex(tx => tx.txid === txid);
+      if (txIndex !== -1) {
+        cache[accountAddress][txIndex].status = status;
+
+        // Save to storage
+        await chrome.storage.local.set({
+          [STORAGE_KEYS.TRANSACTION_CACHE]: cache,
+        });
+
+        console.log(`[Vault] Updated transaction ${txid.slice(0, 20)}... status to: ${status}`);
+      }
+    }
   }
 
   /**
@@ -616,7 +1011,8 @@ export class Vault {
    */
   async updateLastSync(accountAddress: string): Promise<void> {
     const result = await chrome.storage.local.get([STORAGE_KEYS.LAST_TX_SYNC]);
-    const timestamps: import('./types').LastSyncTimestamps = result[STORAGE_KEYS.LAST_TX_SYNC] || {};
+    const timestamps: import('./types').LastSyncTimestamps =
+      result[STORAGE_KEYS.LAST_TX_SYNC] || {};
 
     timestamps[accountAddress] = Date.now();
 
@@ -630,7 +1026,8 @@ export class Vault {
    */
   async getLastSync(accountAddress: string): Promise<number> {
     const result = await chrome.storage.local.get([STORAGE_KEYS.LAST_TX_SYNC]);
-    const timestamps: import('./types').LastSyncTimestamps = result[STORAGE_KEYS.LAST_TX_SYNC] || {};
+    const timestamps: import('./types').LastSyncTimestamps =
+      result[STORAGE_KEYS.LAST_TX_SYNC] || {};
     return timestamps[accountAddress] || 0;
   }
 

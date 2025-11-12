@@ -8,3 +8,19 @@ dist/
 .env
 .env.*
 !.env.example
+
+# Local development infrastructure
+docker-compose.yml
+envoy.yaml
+start-grpc-proxy.sh
+
+# Test/debug scripts
+test-derivation.js
+test-*.js
+
+# Editor/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

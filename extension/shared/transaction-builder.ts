@@ -13,8 +13,13 @@ import initTxWasm, {
   WasmPkh,
   WasmSpendCondition,
   WasmRawTx,
-} from '../lib/nbx-nockchain-types/nbx_nockchain_types.js';
+  WasmLockPrimitive,
+  WasmLockTim,
+  WasmTimelockRange,
+} from '../lib/nbx-wasm/nbx_wasm.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
+import { deriveFirstNameFromLockHash } from './first-name-derivation.js';
+import { base58 } from '@scure/base';
 
 let cryptoWasmInitialized = false;
 let txWasmInitialized = false;
@@ -35,10 +40,102 @@ async function ensureCryptoWasmInit(): Promise<void> {
  */
 async function ensureTxWasmInit(): Promise<void> {
   if (!txWasmInitialized) {
-    const txWasmUrl = chrome.runtime.getURL('lib/nbx-nockchain-types/nbx_nockchain_types_bg.wasm');
+    const txWasmUrl = chrome.runtime.getURL('lib/nbx-wasm/nbx_wasm_bg.wasm');
     await initTxWasm({ module_or_path: txWasmUrl });
     txWasmInitialized = true;
   }
+}
+
+/**
+ * Discover the correct spend condition for a note by matching lock-root to name.first
+ *
+ * The note's name.first commits to the lock-root (Merkle root of spend condition).
+ * We try different candidate spend conditions and find which one matches.
+ *
+ * @param senderPKH - Base58 PKH digest of the sender's public key
+ * @param note - Note with nameFirst (lock-root) and originPage
+ * @returns The matching WasmSpendCondition
+ */
+export async function discoverSpendConditionForNote(
+  senderPKH: string,
+  note: { nameFirst: string; originPage: number }
+): Promise<WasmSpendCondition> {
+  await ensureTxWasmInit();
+
+  const candidates: Array<{ name: string; condition: WasmSpendCondition }> = [];
+
+  console.log(
+    '[TxBuilder] Trying to match lock-root against name.first:',
+    note.nameFirst.slice(0, 20) + '...'
+  );
+
+  // 1) PKH only (standard simple note)
+  try {
+    const pkhLeaf = WasmLockPrimitive.newPkh(WasmPkh.single(senderPKH));
+    const condition = new WasmSpendCondition([pkhLeaf]);
+    candidates.push({ name: 'PKH-only', condition });
+  } catch (e) {
+    console.warn('[TxBuilder] Failed to create PKH-only condition:', e);
+  }
+
+  // 2) PKH ∧ TIM (coinbase helper)
+  try {
+    const pkhLeaf = WasmLockPrimitive.newPkh(WasmPkh.single(senderPKH));
+    const timLeaf = WasmLockPrimitive.newTim(WasmLockTim.coinbase());
+    const condition = new WasmSpendCondition([pkhLeaf, timLeaf]);
+    candidates.push({ name: 'PKH+TIM(coinbase)', condition });
+  } catch (e) {
+    console.warn('[TxBuilder] Failed to create PKH+TIM(coinbase) condition:', e);
+  }
+
+  // 3) PKH ∧ TIM (relative 100 blocks - common coinbase maturity)
+  try {
+    const pkhLeaf = WasmLockPrimitive.newPkh(WasmPkh.single(senderPKH));
+    const timLeaf = WasmLockPrimitive.newTim(
+      new WasmLockTim(new WasmTimelockRange(100n, null), new WasmTimelockRange(null, null))
+    );
+    const condition = new WasmSpendCondition([pkhLeaf, timLeaf]);
+    candidates.push({ name: 'PKH+TIM(rel:100)', condition });
+  } catch (e) {
+    console.warn('[TxBuilder] Failed to create PKH+TIM(rel:100) condition:', e);
+  }
+
+  // 4) PKH ∧ TIM (absolute = originPage + 100)
+  try {
+    const absMin = BigInt(note.originPage) + 100n;
+    const pkhLeaf = WasmLockPrimitive.newPkh(WasmPkh.single(senderPKH));
+    const timLeaf = WasmLockPrimitive.newTim(
+      new WasmLockTim(new WasmTimelockRange(null, null), new WasmTimelockRange(absMin, null))
+    );
+    const condition = new WasmSpendCondition([pkhLeaf, timLeaf]);
+    candidates.push({ name: 'PKH+TIM(abs:origin+100)', condition });
+  } catch (e) {
+    console.warn('[TxBuilder] Failed to create PKH+TIM(abs:origin+100) condition:', e);
+  }
+
+  console.log(`[TxBuilder] Successfully created ${candidates.length} candidate conditions`);
+
+  // Find the candidate whose lock-root derives to note.nameFirst
+  // NOTE: The note's name.first is NOT the raw lock-root, it's: hash([true, lock-root])
+  for (const candidate of candidates) {
+    const lockRoot = candidate.condition.hash().value;
+    // Derive the first-name from the lock-root using the same algorithm as the chain
+    const derivedFirstName = await deriveFirstNameFromLockHash(lockRoot);
+
+    console.log(`[TxBuilder] Candidate ${candidate.name}:`);
+    console.log(`  Lock-root: ${lockRoot.slice(0, 20)}...`);
+    console.log(`  First-name: ${derivedFirstName.slice(0, 20)}...`);
+
+    if (derivedFirstName === note.nameFirst) {
+      console.log(`[TxBuilder]  MATCH! Using spend condition: ${candidate.name}`);
+      return candidate.condition;
+    }
+  }
+
+  throw new Error(
+    `No matching spend condition for note.name.first (${note.nameFirst.slice(0, 20)}...). ` +
+      `Cannot spend this UTXO. It may require a different lock configuration.`
+  );
 }
 
 /**
@@ -114,29 +211,97 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     );
   }
 
-  // Convert notes to WasmNote format (V1 only)
+  // Convert notes to also format (V1 only)
   const wasmNotes = notes.map(note => {
+    console.log('[TxBuilder] Creating WasmNote with:', {
+      version: 'V1',
+      originPage: note.originPage,
+      nameFirst: note.nameFirst.slice(0, 20) + '...',
+      nameLast: note.nameLast.slice(0, 20) + '...',
+      noteDataHash: note.noteDataHash.slice(0, 20) + '...',
+      assets: note.assets,
+    });
+
     return new WasmNote(
       WasmVersion.V1(),
-      note.originPage,
+      BigInt(note.originPage),
       new WasmName(note.nameFirst, note.nameLast),
       new WasmDigest(note.noteDataHash),
-      note.assets
+      BigInt(note.assets)
     );
   });
 
-  // Create transaction builder
+  // The builder expects lock-roots for outputs, NOT raw PKH digests
+  // We must derive the lock-root from each PKH's spend condition
+  const recipientLockRoot = WasmSpendCondition.newPkh(WasmPkh.single(recipientPKH)).hash().value;
+  const refundLockRoot = WasmSpendCondition.newPkh(WasmPkh.single(refundPKH)).hash().value;
+
+  console.log('[TxBuilder] Creating transaction with:', {
+    inputCount: wasmNotes.length,
+    recipientPKH: recipientPKH.slice(0, 20) + '...',
+    recipientLockRoot: recipientLockRoot.slice(0, 20) + '...',
+    amount,
+    fee,
+    refundPKH: refundPKH.slice(0, 20) + '...',
+    refundLockRoot: refundLockRoot.slice(0, 20) + '...',
+  });
+
+  // Create transaction builder with lock-roots (not raw PKHs!)
   const builder = WasmTxBuilder.newSimple(
     wasmNotes,
     spendCondition,
-    new WasmDigest(recipientPKH),
-    amount, // gift
-    fee,
-    new WasmDigest(refundPKH)
+    new WasmDigest(recipientLockRoot), //  Lock-root, not PKH
+    BigInt(amount), // gift
+    BigInt(fee),
+    new WasmDigest(refundLockRoot) //  Lock-root, not PKH
   );
+
+  console.log('[TxBuilder] Signing transaction...');
 
   // Sign the transaction
   const rawTx = builder.sign(privateKey);
+
+  console.log('[TxBuilder]  Transaction signed, txId:', rawTx.id.value);
+
+  // DEBUG: Log parent_hash from seeds to diagnose rejection
+  try {
+    console.log('[TxBuilder]  DEBUG: Inspecting transaction seeds...');
+    // Try to access seeds if available (rawTx is WASM object with potentially hidden properties)
+    const rawTxAny = rawTx as any;
+    if (rawTxAny.seeds && Array.isArray(rawTxAny.seeds)) {
+      console.log('[TxBuilder] Seeds count:', rawTxAny.seeds.length);
+      rawTxAny.seeds.forEach((seed: any, i: number) => {
+        console.log(`[TxBuilder] Seed ${i}:`, {
+          parent_hash: seed.parent_hash?.value
+            ? seed.parent_hash.value.slice(0, 30) + '...'
+            : 'N/A',
+          lock_root: seed.lock_root?.value ? seed.lock_root.value.slice(0, 30) + '...' : 'N/A',
+        });
+      });
+    } else {
+      console.log('[TxBuilder]   Seeds not directly accessible on rawTx');
+    }
+  } catch (e) {
+    console.log('[TxBuilder]   Could not inspect seeds:', e);
+  }
+
+  // DEBUG: Log the note data that was used to build this transaction
+  console.log('[TxBuilder]  DEBUG: Input notes used for transaction:');
+  notes.forEach((note, i) => {
+    console.log(`[TxBuilder] Input ${i}:`, {
+      originPage: note.originPage,
+      nameFirst: note.nameFirst.slice(0, 30) + '...',
+      nameLast: note.nameLast.slice(0, 30) + '...',
+      noteDataHash: note.noteDataHash.slice(0, 30) + '...',
+      assets: note.assets,
+    });
+    console.log(
+      `[TxBuilder] The parent_hash in seeds should equal hash(Note) where Note contains these fields`
+    );
+    console.log(
+      `[TxBuilder]   If parent_hash doesn't match the blockchain's stored note hash, TX will be REJECTED`
+    );
+  });
 
   return {
     txId: rawTx.id.value,
@@ -180,9 +345,24 @@ export async function buildPayment(
   // Create sender's PKH digest string for change
   const senderPKH = publicKeyToPKHDigest(senderPublicKey);
 
-  // Create spend condition (single PKH)
-  const pkh = WasmPkh.single(senderPKH);
-  const spendCondition = WasmSpendCondition.newPkh(pkh);
+  // Discover the correct spend condition by matching lock-root to note.nameFirst
+  // the spend condition MUST match what was locked on the note
+  const spendCondition = await discoverSpendConditionForNote(senderPKH, {
+    nameFirst: note.nameFirst,
+    originPage: note.originPage,
+  });
+
+  // Sanity check: verify the derived first-name matches
+  const computedLockRoot = spendCondition.hash().value;
+  const derivedFirstName = await deriveFirstNameFromLockHash(computedLockRoot);
+  if (derivedFirstName !== note.nameFirst) {
+    throw new Error(
+      `First-name mismatch! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
+        `Expected: ${note.nameFirst.slice(0, 20)}...`
+    );
+  }
+
+  console.log('[TxBuilder]  Spend condition verified, building transaction...');
 
   return buildTransaction({
     notes: [note],
@@ -227,7 +407,6 @@ export async function calculateNoteDataHash(
 
   const hashDigest = spendCondition.hash();
   // The digest value is already a base58 string, decode it to bytes
-  const { base58 } = await import('@scure/base');
   return base58.decode(hashDigest.value);
 }
 

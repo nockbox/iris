@@ -161,3 +161,38 @@ export interface TransactionRequest {
   /** Request timestamp */
   timestamp: number;
 }
+
+/**
+ * Nockchain note (UTXO) structure
+ * Represents an unspent transaction output on the blockchain
+ */
+export interface Note {
+  /** Note version (0 for legacy, 1 for v1) */
+  version: number;
+  /** Origin page (block height where note was created) */
+  originPage: bigint;
+  /** Minimum timelock (optional, for coinbase/timelocked notes) */
+  timelockMin?: bigint;
+  /** Maximum timelock (optional, for coinbase/timelocked notes) */
+  timelockMax?: bigint;
+  /** First 40 bytes of note name (80-byte identifier) */
+  nameFirst: Uint8Array;
+  /** Last 40 bytes of note name (80-byte identifier) */
+  nameLast: Uint8Array;
+  /** First name as base58 string (optional, from WASM gRPC client) */
+  nameFirstBase58?: string;
+  /** Last name as base58 string (optional, from WASM gRPC client) */
+  nameLastBase58?: string;
+  /** Note data hash as base58 string (optional, from WASM gRPC client) */
+  noteDataHashBase58?: string;
+  /** Public keys for lock (legacy format) */
+  lockPubkeys: Uint8Array[];
+  /** Number of keys required to unlock (legacy format) */
+  lockKeysRequired: bigint;
+  /** Source transaction hash */
+  sourceHash: Uint8Array;
+  /** Whether this note is from a coinbase (mining reward) transaction */
+  sourceIsCoinbase: boolean;
+  /** Amount in nicks (1 NOCK = 65,536 nicks) */
+  assets: number;
+}
