@@ -10,6 +10,8 @@ import { markOnboardingComplete } from '../../../shared/onboarding';
 import { INTERNAL_METHODS, UI_CONSTANTS, ERROR_CODES } from '../../../shared/constants';
 import { send } from '../../utils/messaging';
 import lockIcon from '../../assets/lock-icon.svg';
+import { EyeIcon } from '../../components/icons/EyeIcon';
+import { EyeOffIcon } from '../../components/icons/EyeOffIcon';
 
 export function ImportScreen() {
   const { navigate, syncWallet, setOnboardingMnemonic } = useStore();
@@ -213,117 +215,113 @@ export function ImportScreen() {
             </div>
 
             {/* Password fields */}
-            <div className="flex flex-col gap-3 w-full">
+            <div className="flex flex-col gap-6 w-full">
               {/* Password input */}
-              <div className="bg-[var(--color-bg)] border border-[var(--color-surface-700)] rounded-lg p-3 flex items-center gap-2.5">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => {
-                    setPassword(e.target.value);
-                    setError('');
-                  }}
-                  placeholder="Password"
-                  className="flex-1 bg-transparent font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] outline-none"
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="password"
+                  className="font-sans font-medium text-[var(--color-text-primary)]"
                   style={{
-                    fontSize: 'var(--font-size-base)',
+                    fontSize: 'var(--font-size-sm)',
                     lineHeight: 'var(--line-height-snug)',
-                    letterSpacing: '0.01em',
-                  }}
-                />
-                <button
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                >
-                  {showPassword ? (
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                      <path
-                        d="M2 2L18 18M10 7C11.6569 7 13 8.34315 13 10C13 10.3453 12.9417 10.6768 12.8347 10.9861M10 13C8.34315 13 7 11.6569 7 10C7 9.65468 7.05829 9.32318 7.16529 9.01389M10 5C12.7614 5 15.0459 6.57757 16.3814 8.40121C16.7583 8.94075 16.7583 9.65925 16.3814 10.1988C15.6736 11.2042 14.7929 12.0706 13.7921 12.7489M10 15C7.23858 15 4.95409 13.4224 3.61863 11.5988C3.24172 11.0592 3.24172 10.3407 3.61863 9.80121C4.32644 8.79577 5.20714 7.92942 6.20789 7.25105"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  ) : (
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                      <path
-                        d="M10 7C11.6569 7 13 8.34315 13 10C13 11.6569 11.6569 13 10 13C8.34315 13 7 11.6569 7 10C7 8.34315 8.34315 7 10 7Z"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                      />
-                      <path
-                        d="M10 5C12.7614 5 15.0459 6.57757 16.3814 8.40121C16.7583 8.94075 16.7583 9.65925 16.3814 10.1988C15.0459 12.0224 12.7614 13.6 10 13.6C7.23858 13.6 4.95409 12.0224 3.61863 10.1988C3.24172 9.65925 3.24172 8.94075 3.61863 8.40121C4.95409 6.57757 7.23858 5 10 5Z"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                      />
-                    </svg>
-                  )}
-                </button>
-              </div>
-
-              {/* Confirm password input */}
-              <div className="bg-[var(--color-bg)] border border-[var(--color-surface-700)] rounded-lg p-3 flex items-center gap-2.5">
-                <input
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  value={confirmPassword}
-                  onChange={e => {
-                    setConfirmPassword(e.target.value);
-                    setError('');
-                  }}
-                  onKeyDown={e => e.key === 'Enter' && handleImport()}
-                  placeholder="Confirm password"
-                  className="flex-1 bg-transparent font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] outline-none"
-                  style={{
-                    fontSize: 'var(--font-size-base)',
-                    lineHeight: 'var(--line-height-snug)',
-                    letterSpacing: '0.01em',
-                  }}
-                />
-                <button
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
-                >
-                  {showConfirmPassword ? (
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                      <path
-                        d="M2 2L18 18M10 7C11.6569 7 13 8.34315 13 10C13 10.3453 12.9417 10.6768 12.8347 10.9861M10 13C8.34315 13 7 11.6569 7 10C7 9.65468 7.05829 9.32318 7.16529 9.01389M10 5C12.7614 5 15.0459 6.57757 16.3814 8.40121C16.7583 8.94075 16.7583 9.65925 16.3814 10.1988C15.6736 11.2042 14.7929 12.0706 13.7921 12.7489M10 15C7.23858 15 4.95409 13.4224 3.61863 11.5988C3.24172 11.0592 3.24172 10.3407 3.61863 9.80121C4.32644 8.79577 5.20714 7.92942 6.20789 7.25105"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  ) : (
-                    <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
-                      <path
-                        d="M10 7C11.6569 7 13 8.34315 13 10C13 11.6569 11.6569 13 10 13C8.34315 13 7 11.6569 7 10C7 8.34315 8.34315 7 10 7Z"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                      />
-                      <path
-                        d="M10 5C12.7614 5 15.0459 6.57757 16.3814 8.40121C16.7583 8.94075 16.7583 9.65925 16.3814 10.1988C15.0459 12.0224 12.7614 13.6 10 13.6C7.23858 13.6 4.95409 12.0224 3.61863 10.1988C3.24172 9.65925 3.24172 8.94075 3.61863 8.40121C4.95409 6.57757 7.23858 5 10 5Z"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
-                      />
-                    </svg>
-                  )}
-                </button>
-              </div>
-
-              {/* Info box */}
-              <div className="bg-[var(--color-surface-900)] rounded-lg p-3">
-                <p
-                  className="font-sans font-medium text-center text-[var(--color-text-muted)]"
-                  style={{
-                    fontSize: 'var(--font-size-xs)',
-                    lineHeight: 'var(--line-height-tight)',
                     letterSpacing: '0.02em',
                   }}
                 >
-                  Minimum {UI_CONSTANTS.MIN_PASSWORD_LENGTH} characters
-                </p>
+                  Create password
+                </label>
+                <div className="relative">
+                  <input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={e => {
+                      setPassword(e.target.value);
+                      setError('');
+                    }}
+                    className="w-full h-[52px] px-3 py-4 bg-transparent border border-[var(--color-surface-700)] rounded-lg font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] focus:outline-none focus:border-[var(--color-primary)]"
+                    style={{
+                      fontSize: 'var(--font-size-base)',
+                      lineHeight: 'var(--line-height-snug)',
+                      letterSpacing: '0.01em',
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
+                    tabIndex={-1}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? (
+                      <EyeIcon className="w-4 h-4" />
+                    ) : (
+                      <EyeOffIcon className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
               </div>
+
+              {/* Confirm password input */}
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="confirmPassword"
+                  className="font-sans font-medium text-[var(--color-text-primary)]"
+                  style={{
+                    fontSize: 'var(--font-size-sm)',
+                    lineHeight: 'var(--line-height-snug)',
+                    letterSpacing: '0.02em',
+                  }}
+                >
+                  Confirm password
+                </label>
+                <div className="relative">
+                  <input
+                    id="confirmPassword"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={e => {
+                      setConfirmPassword(e.target.value);
+                      setError('');
+                    }}
+                    onKeyDown={e => e.key === 'Enter' && handleImport()}
+                    className="w-full h-[52px] px-3 py-4 bg-transparent border border-[var(--color-surface-700)] rounded-lg font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] focus:outline-none focus:border-[var(--color-primary)]"
+                    style={{
+                      fontSize: 'var(--font-size-base)',
+                      lineHeight: 'var(--line-height-snug)',
+                      letterSpacing: '0.01em',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
+                    tabIndex={-1}
+                    aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showConfirmPassword ? (
+                      <EyeIcon className="w-4 h-4" />
+                    ) : (
+                      <EyeOffIcon className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Info box */}
+            <div className="bg-[var(--color-surface-900)] rounded-lg p-3">
+              <p
+                className="font-sans font-medium text-center text-[var(--color-text-muted)]"
+                style={{
+                  fontSize: 'var(--font-size-xs)',
+                  lineHeight: 'var(--line-height-tight)',
+                  letterSpacing: '0.02em',
+                }}
+              >
+                This password encrypts your wallet on this device. Choose something strong but
+                memorable.
+              </p>
             </div>
 
             {/* Error message */}
