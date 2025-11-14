@@ -492,7 +492,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
               // Check if origin needs approval
               if (!isOriginApproved(connectRequest.origin)) {
-                // Window is already open from unlock flow - just update it to show connect approval
+                // Window is already open from unlock flow - clear currentRequestId so it can update
+                currentRequestId = null;
                 // Remove the needsUnlock flag - it's now in the approval flow
                 delete pendingData.needsUnlock;
                 // Update the existing window to show the connect approval screen
