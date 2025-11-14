@@ -4,7 +4,7 @@ import { truncateAddress } from '../utils/format';
 import { AccountIcon } from '../components/AccountIcon';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../shared/constants';
-import { nockToNick } from '../../shared/currency';
+import { nockToNick, formatNock, formatNick } from '../../shared/currency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 
@@ -20,14 +20,16 @@ export function SendReviewScreen() {
   const currentAccount = wallet.currentAccount;
 
   // Format amounts for display
-  const amount = lastTransaction.amount.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const amount = formatNock(lastTransaction.amount);
+  const amountInNicks = nockToNick(lastTransaction.amount);
+  const feeInNocks = formatNock(lastTransaction.fee);
+  const feeInNicks = nockToNick(lastTransaction.fee);
+  const total = formatNock(lastTransaction.amount + lastTransaction.fee);
+  const totalInNicks = nockToNick(lastTransaction.amount + lastTransaction.fee);
+  const remainingBalance = formatNock(wallet.balance - lastTransaction.amount - lastTransaction.fee);
   const usdValue = '$0.00'; // TODO: Get from real price feed
   const fromAddress = truncateAddress(lastTransaction.from);
   const toAddress = truncateAddress(lastTransaction.to);
-  const networkFee = `${lastTransaction.fee} NOCK`;
 
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState('');
@@ -142,10 +144,10 @@ export function SendReviewScreen() {
                 {amount} <span style={{ color: 'var(--color-text-muted)' }}>NOCK</span>
               </h2>
               <p
-                className="m-0 text-[13px] font-medium leading-[18px] tracking-[0.26px]"
+                className="m-0 text-[10px] leading-3 tracking-[0.02em]"
                 style={{ color: 'var(--color-text-muted)' }}
               >
-                {usdValue}
+                {formatNick(amountInNicks)} nicks
               </p>
             </div>
           </div>
@@ -180,19 +182,59 @@ export function SendReviewScreen() {
               </div>
             </div>
 
-            {/* Network fee */}
+            {/* Network fee & Total */}
             <div
-              className="rounded-lg px-3 py-5"
+              className="rounded-lg p-3"
               style={{ backgroundColor: 'var(--color-surface-800)' }}
             >
-              <div className="flex items-center justify-between w-full">
-                <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">
-                  Network fee
+              <div className="flex flex-col gap-2.5 w-full">
+                {/* Fee row */}
+                <div className="flex items-center justify-between w-full">
+                  <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">
+                    Network fee
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">
+                      {feeInNocks} NOCK
+                    </div>
+                    <div
+                      className="text-[10px] leading-3 tracking-[0.02em]"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      {formatNick(feeInNicks)} nicks
+                    </div>
+                  </div>
                 </div>
-                <div className="text-sm font-medium leading-[18px] tracking-[0.14px] whitespace-nowrap">
-                  {networkFee}
+                
+                {/* Divider */}
+                <div className="w-full h-px" style={{ backgroundColor: 'var(--color-surface-700)' }} />
+                
+                {/* Total row */}
+                <div className="flex items-center justify-between w-full">
+                  <div className="text-sm font-semibold leading-[18px] tracking-[0.14px]">
+                    Total
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <div className="text-sm font-semibold leading-[18px] tracking-[0.14px]">
+                      {total} NOCK
+                    </div>
+                    <div
+                      className="text-[10px] leading-3 tracking-[0.02em]"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      {formatNick(totalInNicks)} nicks
+                    </div>
+                  </div>
                 </div>
               </div>
+            </div>
+
+            {/* Remaining balance */}
+            <div
+              className="text-center text-[12px] leading-4 font-medium tracking-[0.02em] mt-3"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
+              Balance after: {remainingBalance} NOCK
             </div>
           </div>
 
