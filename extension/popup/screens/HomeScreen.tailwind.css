@@ -40,3 +40,41 @@ body,
 .wallet-dropdown-item:hover .wallet-settings-icon {
   display: flex;
 }
+
+/* Shimmer loading animation */
+@keyframes shimmer {
+  0% {
+    background-position: -468px 0;
+  }
+  100% {
+    background-position: 468px 0;
+  }
+}
+
+/* Dark mode skeleton (default) */
+.skeleton-shimmer {
+  animation: shimmer 10s linear infinite;
+  background: linear-gradient(
+    to right,
+    rgba(255, 255, 255, 0.05) 0%,
+    rgba(255, 255, 255, 0.12) 20%,
+    rgba(255, 255, 255, 0.18) 40%,
+    rgba(255, 255, 255, 0.12) 60%,
+    rgba(255, 255, 255, 0.05) 80%,
+    rgba(255, 255, 255, 0.05) 100%
+  );
+  background-size: 800px 100px;
+}
+
+/* Light mode skeleton */
+.light .skeleton-shimmer {
+  background: linear-gradient(
+    to right,
+    rgba(0, 0, 0, 0.08) 0%,
+    rgba(0, 0, 0, 0.15) 20%,
+    rgba(0, 0, 0, 0.2) 40%,
+    rgba(0, 0, 0, 0.15) 60%,
+    rgba(0, 0, 0, 0.08) 80%,
+    rgba(0, 0, 0, 0.08) 100%
+  );
+}

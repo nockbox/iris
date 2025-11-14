@@ -8,7 +8,7 @@ import { hashPublicKey } from '../lib/nbx-wasm/nbx_wasm.js';
 
 /**
  * Converts a public key to a Nockchain V1 PKH (Public Key Hash) address
- * Uses the correct Noun representation before hashing (not raw bytes)
+ * Uses proper Noun representation before hashing (matches CLI wallet)
  *
  * @param publicKey - The 97-byte public key from WASM
  * @returns A ~60-character base58-encoded PKH address
@@ -18,7 +18,7 @@ export function publicKeyToPKH(publicKey: Uint8Array): string {
     throw new Error(`Invalid public key length: ${publicKey.length}, expected 97`);
   }
 
-  // Use WASM function which converts to Noun before hashing
+  // Use proper Noun representation before hashing
   const address = hashPublicKey(publicKey);
 
   return address;
@@ -55,7 +55,7 @@ export function digestStringToBytes(digestString: string): Uint8Array {
 
 /**
  * Converts a public key to a PKH digest string (for WASM API)
- * Uses the correct Noun representation before hashing
+ * Uses proper Noun representation before hashing (matches CLI wallet)
  *
  * @param publicKey - The 97-byte public key
  * @returns Base58-encoded PKH digest string
@@ -64,6 +64,6 @@ export function publicKeyToPKHDigest(publicKey: Uint8Array): string {
   if (publicKey.length !== 97) {
     throw new Error(`Invalid public key length: ${publicKey.length}, expected 97`);
   }
-  // Use WASM function which converts to Noun before hashing
+  // Use proper Noun representation before hashing
   return hashPublicKey(publicKey);
 }

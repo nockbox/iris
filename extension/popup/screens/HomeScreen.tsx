@@ -20,6 +20,7 @@ import GreenStatusDot from '../assets/green-status-dot.svg';
 import LockIconAsset from '../assets/lock-icon.svg';
 import SettingsIconAsset from '../assets/settings-icon.svg';
 import TrendUpArrow from '../assets/trend-up-arrow.svg';
+import TrendDownArrow from '../assets/trend-down-arrow.svg';
 import ExplorerIcon from '../assets/explorer-icon.svg';
 import PermissionsIcon from '../assets/permissions-icon.svg';
 import FeedbackIcon from '../assets/feedback-icon.svg';
@@ -37,10 +38,15 @@ export function HomeScreen() {
     wallet,
     syncWallet,
     fetchBalance,
+    fetchPrice,
     cachedTransactions,
     fetchCachedTransactions,
     setSelectedTransaction,
     updateTransactionStatus,
+    isBalanceFetching,
+    priceUsd,
+    priceChange24h,
+    isPriceFetching,
   } = useStore();
   const { theme } = useTheme();
 
@@ -221,9 +227,21 @@ export function HomeScreen() {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  const usdValue = '0.00'; // TODO: Get from real price feed when available
-  const percentChange = '0.00'; // TODO: Get from real price feed when available
+
+  // Calculate USD value based on balance and price
+  const totalBalanceUsd = wallet.balance * priceUsd;
+  const formattedUsdValue = totalBalanceUsd.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+  const formattedPercentChange = Math.abs(priceChange24h).toFixed(2);
+
   const walletName = currentAccount?.name || 'Wallet';
+
+  // Fetch price on mount and when account changes
+  useEffect(() => {
+    fetchPrice();
+  }, [fetchPrice]);
   const walletAddress = truncateAddress(currentAccount?.address);
   const fullAddress = currentAccount?.address || '';
 
@@ -315,7 +333,7 @@ export function HomeScreen() {
                   <span className="truncate">{walletAddress}</span>
                   <button
                     className="shrink-0 opacity-70 hover:opacity-40"
-                    onClick={async (e) => {
+                    onClick={async e => {
                       e.stopPropagation();
                       try {
                         await navigator.clipboard.writeText(fullAddress);
@@ -505,18 +523,27 @@ export function HomeScreen() {
         >
           <div className="mb-3">
             <div className="flex items-baseline gap-[6px]">
-              <div
-                className="font-display font-semibold text-[36px] leading-[40px] tracking-[-0.72px]"
-                style={{ color: 'var(--color-text-primary)' }}
-              >
-                {balanceHidden ? '••••••' : balance}
-              </div>
-              <div
-                className="font-display text-[24px] leading-[28px] tracking-[-0.48px]"
-                style={{ color: 'var(--color-text-muted)' }}
-              >
-                NOCK
-              </div>
+              {isBalanceFetching ? (
+                <div className="flex items-baseline gap-[6px]">
+                  <div className="h-[40px] w-32 rounded skeleton-shimmer" />
+                  <div className="h-[28px] w-16 rounded skeleton-shimmer" />
+                </div>
+              ) : (
+                <>
+                  <div
+                    className="font-display font-semibold text-[36px] leading-[40px] tracking-[-0.72px]"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    {balanceHidden ? '••••••' : balance}
+                  </div>
+                  <div
+                    className="font-display text-[24px] leading-[28px] tracking-[-0.48px]"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    NOCK
+                  </div>
+                </>
+              )}
               <button
                 className="ml-1"
                 style={{ color: 'var(--color-text-muted)' }}
@@ -548,12 +575,27 @@ export function HomeScreen() {
                 />
               </button>
             </div>
-            <div
-              className="mt-1 text-[13px] font-medium leading-[18px] flex items-center gap-1"
-              style={{ color: 'var(--color-green)' }}
-            >
-              <img src={TrendUpArrow} alt="" className="h-4 w-4" />
-              <span>{balanceHidden ? '••••• •••••' : `${usdValue}$ (${percentChange}%)`}</span>
+            <div className="mt-1 text-[13px] font-medium leading-[18px] flex items-center gap-1">
+              {isPriceFetching ? (
+                <div className="h-[14px] w-36 rounded skeleton-shimmer" />
+              ) : (
+                <>
+                  <img
+                    src={priceChange24h >= 0 ? TrendUpArrow : TrendDownArrow}
+                    alt={priceChange24h >= 0 ? 'up' : 'down'}
+                    className="h-4 w-4"
+                  />
+                  <span
+                    style={{
+                      color: priceChange24h >= 0 ? 'var(--color-green)' : 'var(--color-red)',
+                    }}
+                  >
+                    {balanceHidden
+                      ? '••••• •••••'
+                      : `$${formattedUsdValue} (${priceChange24h >= 0 ? '+' : '-'}${formattedPercentChange}%)`}
+                  </span>
+                </>
+              )}
             </div>
           </div>
 
@@ -651,93 +693,93 @@ export function HomeScreen() {
               </div>
             ) : (
               transactions.map((group, idx) => (
-              <div
-                key={idx}
-                className={idx === 0 ? 'pt-4' : 'pt-4'}
-                style={idx !== 0 ? { borderTop: '1px solid var(--color-divider)' } : undefined}
-              >
                 <div
-                  className="font-display font-medium text-[14px] leading-[18px] tracking-[0.14px] mb-3"
-                  style={{ color: 'var(--color-text-muted)' }}
+                  key={idx}
+                  className={idx === 0 ? 'pt-4' : 'pt-4'}
+                  style={idx !== 0 ? { borderTop: '1px solid var(--color-divider)' } : undefined}
                 >
-                  {group.date}
-                </div>
-                <div>
-                  {group.items.map((t, i) => (
-                    <button
-                      key={i}
-                      className="w-full flex items-center gap-3 py-3 rounded-lg px-2 -mx-2"
-                      onClick={() => {
-                        setSelectedTransaction(t.originalTx);
-                        navigate('tx-details');
-                      }}
-                    >
-                      <div
-                        className="h-10 w-10 rounded-full grid place-items-center"
-                        style={{ backgroundColor: 'var(--color-tx-icon)' }}
+                  <div
+                    className="font-display font-medium text-[14px] leading-[18px] tracking-[0.14px] mb-3"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    {group.date}
+                  </div>
+                  <div>
+                    {group.items.map((t, i) => (
+                      <button
+                        key={i}
+                        className="w-full flex items-center gap-3 py-3 rounded-lg px-2 -mx-2"
+                        onClick={() => {
+                          setSelectedTransaction(t.originalTx);
+                          navigate('tx-details');
+                        }}
                       >
-                        {t.type === 'received' ? (
-                          <ReceiveArrowIcon
-                            className="h-4 w-4"
-                            style={{ color: 'var(--color-text-muted)' }}
-                          />
-                        ) : (
-                          <SentArrowIcon
-                            className="h-4 w-4"
-                            style={{ color: 'var(--color-text-muted)' }}
-                          />
-                        )}
-                      </div>
-                      <div className="flex-1 text-left">
                         <div
-                          className="text-[14px] font-medium"
-                          style={{ color: 'var(--color-text-primary)' }}
+                          className="h-10 w-10 rounded-full grid place-items-center"
+                          style={{ backgroundColor: 'var(--color-tx-icon)' }}
                         >
-                          {t.type === 'received' ? 'Received' : 'Send'}
-                        </div>
-                        <div
-                          className="text-[12px] flex items-center gap-1.5"
-                          style={{ color: 'var(--color-text-muted)' }}
-                        >
-                          {t.status === 'pending' && (
-                            <>
-                              <span style={{ color: '#C88414' }}>Pending</span>
-                              <span>·</span>
-                            </>
+                          {t.type === 'received' ? (
+                            <ReceiveArrowIcon
+                              className="h-4 w-4"
+                              style={{ color: 'var(--color-text-muted)' }}
+                            />
+                          ) : (
+                            <SentArrowIcon
+                              className="h-4 w-4"
+                              style={{ color: 'var(--color-text-muted)' }}
+                            />
                           )}
-                          {t.status === 'failed' && (
-                            <>
-                              <span style={{ color: 'var(--color-red)' }}>Failed</span>
-                              <span>·</span>
-                            </>
-                          )}
-                          <span>{t.from}</span>
                         </div>
-                      </div>
-                      <div className="text-right">
-                        <div
-                          className="text-[14px] font-medium whitespace-nowrap"
-                          style={{
-                            color:
-                              t.type === 'received'
-                                ? 'var(--color-green)'
-                                : 'var(--color-text-primary)',
-                          }}
-                        >
-                          {t.amount}
+                        <div className="flex-1 text-left">
+                          <div
+                            className="text-[14px] font-medium"
+                            style={{ color: 'var(--color-text-primary)' }}
+                          >
+                            {t.type === 'received' ? 'Received' : 'Send'}
+                          </div>
+                          <div
+                            className="text-[12px] flex items-center gap-1.5"
+                            style={{ color: 'var(--color-text-muted)' }}
+                          >
+                            {t.status === 'pending' && (
+                              <>
+                                <span style={{ color: '#C88414' }}>Pending</span>
+                                <span>·</span>
+                              </>
+                            )}
+                            {t.status === 'failed' && (
+                              <>
+                                <span style={{ color: 'var(--color-red)' }}>Failed</span>
+                                <span>·</span>
+                              </>
+                            )}
+                            <span>{t.from}</span>
+                          </div>
                         </div>
-                        <div
-                          className="text-[12px] whitespace-nowrap"
-                          style={{ color: 'var(--color-text-muted)' }}
-                        >
-                          {t.usdValue}
+                        <div className="text-right">
+                          <div
+                            className="text-[14px] font-medium whitespace-nowrap"
+                            style={{
+                              color:
+                                t.type === 'received'
+                                  ? 'var(--color-green)'
+                                  : 'var(--color-text-primary)',
+                            }}
+                          >
+                            {t.amount}
+                          </div>
+                          <div
+                            className="text-[12px] whitespace-nowrap"
+                            style={{ color: 'var(--color-text-muted)' }}
+                          >
+                            {t.usdValue}
+                          </div>
                         </div>
-                      </div>
-                    </button>
-                  ))}
+                      </button>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ))
+              ))
             )}
           </div>
         </section>

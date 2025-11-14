@@ -2,9 +2,9 @@
  * Zustand store for popup UI state and navigation
  */
 
-import { create } from "zustand";
-import { INTERNAL_METHODS, APPROVAL_CONSTANTS } from "../shared/constants";
-import { hasIncompleteOnboarding } from "../shared/onboarding";
+import { create } from 'zustand';
+import { INTERNAL_METHODS, APPROVAL_CONSTANTS } from '../shared/constants';
+import { hasIncompleteOnboarding } from '../shared/onboarding';
 import {
   Account,
   TransactionDetails,
@@ -12,51 +12,51 @@ import {
   TransactionRequest,
   ConnectRequest,
   CachedTransaction,
-} from "../shared/types";
-import { send } from "./utils/messaging";
+} from '../shared/types';
+import { send } from './utils/messaging';
 
 /**
  * All available screens in the wallet
  */
 export type Screen =
   // Onboarding flow
-  | "onboarding-start"
-  | "onboarding-create"
-  | "onboarding-backup"
-  | "onboarding-verify"
-  | "onboarding-success"
-  | "onboarding-import"
-  | "onboarding-import-success"
-  | "onboarding-resume-backup"
+  | 'onboarding-start'
+  | 'onboarding-create'
+  | 'onboarding-backup'
+  | 'onboarding-verify'
+  | 'onboarding-success'
+  | 'onboarding-import'
+  | 'onboarding-import-success'
+  | 'onboarding-resume-backup'
 
   // Main app screens
-  | "home"
-  | "settings"
-  | "theme-settings"
-  | "lock-time"
-  | "key-settings"
-  | "view-secret-phrase"
-  | "wallet-permissions"
-  | "wallet-settings"
-  | "wallet-styling"
-  | "about"
-  | "recovery-phrase"
+  | 'home'
+  | 'settings'
+  | 'theme-settings'
+  | 'lock-time'
+  | 'key-settings'
+  | 'view-secret-phrase'
+  | 'wallet-permissions'
+  | 'wallet-settings'
+  | 'wallet-styling'
+  | 'about'
+  | 'recovery-phrase'
 
   // Transaction screens
-  | "send"
-  | "send-review"
-  | "send-submitted"
-  | "sent"
-  | "receive"
-  | "tx-details"
+  | 'send'
+  | 'send-review'
+  | 'send-submitted'
+  | 'sent'
+  | 'receive'
+  | 'tx-details'
 
   // Approval screens
-  | "connect-approval"
-  | "sign-message"
-  | "approve-transaction"
+  | 'connect-approval'
+  | 'sign-message'
+  | 'approve-transaction'
 
   // System
-  | "locked";
+  | 'locked';
 
 /**
  * Wallet state synced from background service worker
@@ -114,20 +114,39 @@ interface AppStore {
   selectedTransaction: CachedTransaction | null;
   setSelectedTransaction: (transaction: CachedTransaction | null) => void;
 
+  // Balance fetching state
+  isBalanceFetching: boolean;
+
+  // Price data
+  priceUsd: number;
+  priceChange24h: number;
+  isPriceFetching: boolean;
+
   // Initialize app - checks vault status and navigates appropriately
   initialize: () => Promise<void>;
 
   // Fetch balance from blockchain
   fetchBalance: () => Promise<void>;
 
+  // Fetch price from CoinGecko
+  fetchPrice: () => Promise<void>;
+
   // Fetch cached transactions for current account
   fetchCachedTransactions: () => Promise<void>;
 
   // Add a sent transaction to cache
-  addSentTransactionToCache: (txid: string, amount: number, fee: number, to: string) => Promise<void>;
+  addSentTransactionToCache: (
+    txid: string,
+    amount: number,
+    fee: number,
+    to: string
+  ) => Promise<void>;
 
   // Update transaction status in cache
-  updateTransactionStatus: (txid: string, status: 'confirmed' | 'pending' | 'failed') => Promise<void>;
+  updateTransactionStatus: (
+    txid: string,
+    status: 'confirmed' | 'pending' | 'failed'
+  ) => Promise<void>;
 }
 
 /**
@@ -135,7 +154,7 @@ interface AppStore {
  */
 export const useStore = create<AppStore>((set, get) => ({
   // Initial state
-  currentScreen: "locked",
+  currentScreen: 'locked',
   history: [],
 
   wallet: {
@@ -154,6 +173,10 @@ export const useStore = create<AppStore>((set, get) => ({
   pendingTransactionRequest: null,
   cachedTransactions: [],
   selectedTransaction: null,
+  isBalanceFetching: false,
+  priceUsd: 0,
+  priceChange24h: 0,
+  isPriceFetching: false,
 
   // Navigate to a new screen
   navigate: (screen: Screen) => {
@@ -249,23 +272,23 @@ export const useStore = create<AppStore>((set, get) => ({
       if (isApprovalRequest) {
         // For approval requests, don't override the screen
         // Let the approval useEffect handle navigation
-        initialScreen = walletState.locked ? "locked" : "home";
+        initialScreen = walletState.locked ? 'locked' : 'home';
       } else if (!walletState.address) {
         // No vault exists - start onboarding
-        initialScreen = "onboarding-start";
+        initialScreen = 'onboarding-start';
       } else {
         // Check if user has incomplete onboarding (created wallet but didn't complete backup)
         const incompleteOnboarding = await hasIncompleteOnboarding();
 
         if (incompleteOnboarding) {
           // User needs to complete their backup - show resume screen
-          initialScreen = "onboarding-resume-backup";
+          initialScreen = 'onboarding-resume-backup';
         } else if (walletState.locked) {
           // Vault exists but locked
-          initialScreen = "locked";
+          initialScreen = 'locked';
         } else {
           // Vault unlocked - go to home
-          initialScreen = "home";
+          initialScreen = 'home';
         }
       }
 
@@ -278,7 +301,7 @@ export const useStore = create<AppStore>((set, get) => ({
       console.log('[Store] Initialize complete. Wallet state:', {
         locked: walletState.locked,
         hasAddress: !!walletState.address,
-        address: walletState.address?.slice(0, 20) + '...'
+        address: walletState.address?.slice(0, 20) + '...',
       });
 
       if (!walletState.locked && walletState.address) {
@@ -289,15 +312,16 @@ export const useStore = create<AppStore>((set, get) => ({
         console.log('[Store] Skipping balance fetch - wallet is locked or no address');
       }
     } catch (error) {
-      console.error("Failed to initialize app:", error);
+      console.error('Failed to initialize app:', error);
       // Default to locked screen on error
-      set({ currentScreen: "locked" });
+      set({ currentScreen: 'locked' });
     }
   },
 
   // Fetch balance from blockchain
   fetchBalance: async () => {
     try {
+      set({ isBalanceFetching: true });
       console.log('[Store] Fetching balance from blockchain...');
 
       // Import balance query functions lazily to avoid circular dependencies
@@ -307,6 +331,7 @@ export const useStore = create<AppStore>((set, get) => ({
       const currentAccount = get().wallet.currentAccount;
       if (!currentAccount) {
         console.error('[Store] No current account');
+        set({ isBalanceFetching: false });
         return;
       }
 
@@ -327,9 +352,33 @@ export const useStore = create<AppStore>((set, get) => ({
             [currentAccount.address]: balanceResult.totalNock || 0,
           },
         },
+        isBalanceFetching: false,
       });
     } catch (error) {
       console.error('[Store] Failed to fetch balance:', error);
+      set({ isBalanceFetching: false });
+    }
+  },
+
+  // Fetch price from CoinGecko
+  fetchPrice: async () => {
+    try {
+      set({ isPriceFetching: true });
+      console.log('[Store] Fetching NOCK price from CoinGecko...');
+
+      const { fetchNockPrice } = await import('../shared/price-api');
+      const priceData = await fetchNockPrice();
+
+      console.log('[Store] Price fetched:', priceData);
+
+      set({
+        priceUsd: priceData.usd,
+        priceChange24h: priceData.usd_24h_change,
+        isPriceFetching: false,
+      });
+    } catch (error) {
+      console.error('[Store] Failed to fetch price:', error);
+      set({ isPriceFetching: false });
     }
   },
 
@@ -346,7 +395,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
       set({ cachedTransactions: result.transactions || [] });
     } catch (error) {
-      console.error("Failed to fetch cached transactions:", error);
+      console.error('Failed to fetch cached transactions:', error);
     }
   },
 
@@ -366,15 +415,12 @@ export const useStore = create<AppStore>((set, get) => ({
         status: 'pending',
       };
 
-      await send(INTERNAL_METHODS.ADD_TRANSACTION_TO_CACHE, [
-        currentAccount.address,
-        transaction,
-      ]);
+      await send(INTERNAL_METHODS.ADD_TRANSACTION_TO_CACHE, [currentAccount.address, transaction]);
 
       // Refresh cached transactions
       await get().fetchCachedTransactions();
     } catch (error) {
-      console.error("Failed to add transaction to cache:", error);
+      console.error('Failed to add transaction to cache:', error);
     }
   },
 
@@ -393,7 +439,7 @@ export const useStore = create<AppStore>((set, get) => ({
       // Refresh cached transactions to show updated status
       await get().fetchCachedTransactions();
     } catch (error) {
-      console.error("Failed to update transaction status:", error);
+      console.error('Failed to update transaction status:', error);
     }
   },
 }));
