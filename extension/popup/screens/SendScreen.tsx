@@ -61,16 +61,6 @@ export function SendScreen() {
     setAmount(formatNock(currentBalance));
   }
 
-  function handleAmountBlur() {
-    if (!amount || amount === '') return;
-    
-    const numAmount = parseFloat(amount.replace(/,/g, ''));
-    if (isNaN(numAmount) || numAmount <= 0 || !isFinite(numAmount)) return;
-    
-    const roundedAmount = roundNockToSendable(numAmount);
-    setAmount(formatNock(roundedAmount));
-  }
-
   function handleEditFee() {
     setIsEditingFee(true);
     setEditedFee(fee);
@@ -399,7 +389,6 @@ export function SendScreen() {
               setAmount(value);
             }
           }}
-          onBlur={handleAmountBlur}
         />
         <div className="w-full h-px" style={{ backgroundColor: 'var(--color-surface-700)' }} />
         <div className="flex items-center gap-2">
