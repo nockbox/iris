@@ -52,19 +52,19 @@ export function ConnectApprovalScreen() {
 
       {/* Content */}
       <div className="px-4 pb-2">
-        {/* Site Info */}
-        <div className="mb-3">
-          <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
-            Requesting Site
-          </label>
-          <div className="rounded-lg p-3" style={{ backgroundColor: surface }}>
-            <p className="text-sm font-semibold mb-0.5" style={{ color: textPrimary }}>
-              {domain}
-            </p>
-            <p className="text-xs break-all" style={{ color: textMuted }}>
-              {origin}
-            </p>
+        {/* Site Icon & Info */}
+        <div className="text-center mb-4">
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-3" style={{ backgroundColor: surface }}>
+            <span className="text-2xl font-bold" style={{ color: textPrimary }}>
+              {domain.charAt(0).toUpperCase()}
+            </span>
           </div>
+          <h3 className="text-lg font-semibold mb-1" style={{ color: textPrimary }}>
+            {domain}
+          </h3>
+          <p className="text-xs break-all px-4" style={{ color: textMuted }}>
+            {origin}
+          </p>
         </div>
 
         {/* Permissions */}
