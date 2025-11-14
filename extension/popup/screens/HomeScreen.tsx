@@ -26,6 +26,7 @@ import PermissionsIcon from '../assets/permissions-icon.svg';
 import FeedbackIcon from '../assets/feedback-icon.svg';
 import CopyIcon from '../assets/copy-icon.svg';
 import SettingsGearIcon from '../assets/settings-gear-icon.svg';
+import PencilEditIcon from '../assets/pencil-edit-icon.svg';
 import RefreshIcon from '../assets/refresh-icon.svg';
 import ReceiptIcon from '../assets/receipt-icon.svg';
 
@@ -453,7 +454,7 @@ export function HomeScreen() {
                           navigate('wallet-settings');
                         }}
                       >
-                        <img src={SettingsGearIcon} alt="Settings" className="h-5 w-5" />
+                        <img src={PencilEditIcon} alt="Edit wallet" className="h-5 w-5" />
                       </div>
                     </button>
                   );
