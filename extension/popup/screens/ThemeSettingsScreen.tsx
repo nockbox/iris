@@ -9,7 +9,7 @@ export function ThemeSettingsScreen() {
   function handleBack() {
     navigate('settings');
   }
-  function handleThemeSelect(newTheme: 'light' | 'dark') {
+  function handleThemeSelect(newTheme: 'light' | 'dark' | 'system') {
     setTheme(newTheme);
   }
 
@@ -96,8 +96,11 @@ export function ThemeSettingsScreen() {
           selected={theme === 'dark'}
           onClick={() => handleThemeSelect('dark')}
         />
-        {/* System (placeholder) */}
-        <Option label="System" selected={false} disabled />
+        <Option
+          label="System"
+          selected={theme === 'system'}
+          onClick={() => handleThemeSelect('system')}
+        />
       </div>
     </div>
   );

@@ -1,10 +1,10 @@
 /**
- * Theme Context - Manages dark/light mode switching
+ * Theme Context - Manages dark/light mode switching with system theme support
  */
 
 import { createContext, useContext, useEffect, useState, ReactNode } from 'react';
 
-type Theme = 'dark' | 'light';
+type Theme = 'dark' | 'light' | 'system';
 
 interface ThemeContextType {
   theme: Theme;
@@ -15,6 +15,11 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'fort-nock-theme';
+
+// Detect system theme preference
+function getSystemTheme(): 'dark' | 'light' {
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
 
 export function ThemeProvider({ children }: { children: ReactNode }) {
   const [theme, setThemeState] = useState<Theme>('light');
@@ -28,17 +33,38 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
         setThemeState(savedTheme);
         applyTheme(savedTheme);
       } else {
-        // No saved theme, apply the default light theme
+        // No saved theme, default to light theme
+        setThemeState('light');
         applyTheme('light');
+        chrome.storage.local.set({ [STORAGE_KEY]: 'light' });
       }
       setMounted(true);
     });
   }, []);
 
+  // Listen for system theme changes when using system theme
+  useEffect(() => {
+    if (theme !== 'system') return;
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+    const handleChange = () => {
+      applyTheme('system');
+    };
+
+    // Modern browsers
+    mediaQuery.addEventListener('change', handleChange);
+
+    return () => {
+      mediaQuery.removeEventListener('change', handleChange);
+    };
+  }, [theme]);
+
   // Apply theme to document
   const applyTheme = (newTheme: Theme) => {
     const root = document.documentElement;
-    if (newTheme === 'light') {
+    const effectiveTheme = newTheme === 'system' ? getSystemTheme() : newTheme;
+
+    if (effectiveTheme === 'light') {
       root.classList.add('light');
     } else {
       root.classList.remove('light');
@@ -52,7 +78,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     chrome.storage.local.set({ [STORAGE_KEY]: newTheme });
   };
 
-  // Toggle between dark and light
+  // Toggle between dark and light (skip system)
   const toggleTheme = () => {
     const newTheme = theme === 'dark' ? 'light' : 'dark';
     setTheme(newTheme);
