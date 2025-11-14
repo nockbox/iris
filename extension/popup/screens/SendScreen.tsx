@@ -30,6 +30,7 @@ export function SendScreen() {
   const [fee, setFee] = useState(defaultFeeNock);
   const [isEditingFee, setIsEditingFee] = useState(false);
   const [editedFee, setEditedFee] = useState(defaultFeeNock);
+  const [showFeeTooltip, setShowFeeTooltip] = useState(false);
   const [error, setError] = useState('');
 
   // Get real accounts from vault (filter out hidden accounts)
@@ -448,7 +449,37 @@ export function SendScreen() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5 text-[14px] leading-[18px] font-medium">
               Fee
-              <img src={InfoIcon} alt="" className="w-4 h-4" />
+              <div
+                className="relative inline-block"
+                onMouseEnter={() => setShowFeeTooltip(true)}
+                onMouseLeave={() => setShowFeeTooltip(false)}
+              >
+                <img src={InfoIcon} alt="Fee information" className="w-4 h-4 cursor-help" />
+                
+                {showFeeTooltip && (
+                  <div className="absolute left-0 bottom-full mb-2 w-64 z-50">
+                    <div
+                      className="rounded-lg px-3 py-2.5 text-[12px] leading-4 font-medium tracking-[0.02em] shadow-lg"
+                      style={{
+                        backgroundColor: 'var(--color-surface-800)',
+                        color: 'var(--color-text-muted)',
+                        border: '1px solid var(--color-surface-700)'
+                      }}
+                    >
+                      Network transaction fee. Adjustable if needed.
+                      
+                      <div
+                        className="absolute left-4 top-full w-0 h-0"
+                        style={{
+                          borderLeft: '6px solid transparent',
+                          borderRight: '6px solid transparent',
+                          borderTop: '6px solid var(--color-surface-800)',
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
             {isEditingFee ? (
               <div
