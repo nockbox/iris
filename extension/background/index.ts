@@ -27,6 +27,10 @@ const vault = new Vault();
 let lastActivity = Date.now();
 let autoLockMinutes = AUTOLOCK_MINUTES;
 let manuallyLocked = false; // Track if user manually locked (don't auto-unlock)
+let approvalWindowId: number | null = null; // Track the approval popup window for reuse
+let isCreatingWindow = false; // Prevent race condition when creating window
+let currentRequestId: string | null = null; // Currently displayed request
+let requestQueue: Array<{id: string, type: 'connect' | 'transaction' | 'sign-message'}> = []; // Queued requests
 
 /**
  * In-memory cache of approved origins
@@ -131,9 +135,25 @@ function isTransactionRequest(request: TransactionRequest | SignRequest | Connec
 }
 
 /**
- * Create an approval popup window
+ * Create an approval popup window (or reuse existing one)
+ * Uses MetaMask pattern: single popup window for all approval requests
+ * Queues requests if user is currently viewing another request
  */
 async function createApprovalPopup(requestId: string, type: 'connect' | 'transaction' | 'sign-message') {
+  // If user is currently viewing a different request, queue this one
+  if (currentRequestId !== null && currentRequestId !== requestId) {
+    // Check if already in queue to prevent duplicates
+    const alreadyQueued = requestQueue.some(r => r.id === requestId);
+    if (!alreadyQueued) {
+      requestQueue.push({id: requestId, type});
+      console.log(`[Queue] Request ${requestId} queued. Queue length: ${requestQueue.length}`);
+    }
+    return;
+  }
+
+  // Mark this request as currently displayed
+  currentRequestId = requestId;
+
   let hashPrefix: string;
   if (type === 'connect') {
     hashPrefix = APPROVAL_CONSTANTS.CONNECT_HASH_PREFIX;
@@ -144,31 +164,77 @@ async function createApprovalPopup(requestId: string, type: 'connect' | 'transac
   }
   const popupUrl = chrome.runtime.getURL(`popup/index.html#${hashPrefix}${requestId}`);
 
-  // Get the last focused window to position the popup relative to it
-  const currentWindow = await chrome.windows.getLastFocused();
+  // Try to reuse existing approval window
+  if (approvalWindowId !== null) {
+    try {
+      const existingWindow = await chrome.windows.get(approvalWindowId);
+      
+      // Window still exists - update it with new request
+      if (existingWindow.tabs && existingWindow.tabs[0]?.id) {
+        await chrome.tabs.update(existingWindow.tabs[0].id, { url: popupUrl });
+        await chrome.windows.update(approvalWindowId, { focused: true });
+        return; // Done - reused existing window
+      }
+    } catch (error) {
+      // Window was closed or doesn't exist, create new one
+      approvalWindowId = null;
+    }
+  }
 
-  // Calculate position for top-right area
-  const width = UI_CONSTANTS.POPUP_WIDTH;
-  const height = UI_CONSTANTS.POPUP_HEIGHT;
+  // Prevent race condition: if window is being created, wait and retry
+  if (isCreatingWindow) {
+    await new Promise(resolve => setTimeout(resolve, 100));
+    return createApprovalPopup(requestId, type);
+  }
 
-  // Position in top-right of the current window, with some padding
-  // If window dimensions aren't available, use reasonable defaults
-  const left = currentWindow.left !== undefined && currentWindow.width !== undefined
-    ? currentWindow.left + currentWindow.width - width - UI_CONSTANTS.POPUP_RIGHT_OFFSET
-    : undefined; // Let Chrome position it
-  const top = currentWindow.top !== undefined
-    ? currentWindow.top + UI_CONSTANTS.POPUP_TOP_OFFSET
-    : undefined; // Let Chrome position it
+  // Create new approval window
+  isCreatingWindow = true;
+  try {
+    const currentWindow = await chrome.windows.getLastFocused();
 
-  await chrome.windows.create({
-    url: popupUrl,
-    type: 'popup',
-    width,
-    height,
-    left,
-    top,
-    focused: true,
-  });
+    // Calculate position for top-right area
+    const width = UI_CONSTANTS.POPUP_WIDTH;
+    const height = UI_CONSTANTS.POPUP_HEIGHT;
+
+    // Position in top-right of the current window, with some padding
+    // If window dimensions aren't available, use reasonable defaults
+    const left = currentWindow.left !== undefined && currentWindow.width !== undefined
+      ? currentWindow.left + currentWindow.width - width - UI_CONSTANTS.POPUP_RIGHT_OFFSET
+      : undefined; // Let Chrome position it
+    const top = currentWindow.top !== undefined
+      ? currentWindow.top + UI_CONSTANTS.POPUP_TOP_OFFSET
+      : undefined; // Let Chrome position it
+
+    const newWindow = await chrome.windows.create({
+      url: popupUrl,
+      type: 'popup',
+      width,
+      height,
+      left,
+      top,
+      focused: true,
+    });
+
+    approvalWindowId = newWindow.id || null;
+  } finally {
+    isCreatingWindow = false;
+  }
+}
+
+/**
+ * Process next request in queue after current request is resolved
+ * Called when user approves or rejects a request
+ */
+function processNextRequest() {
+  currentRequestId = null;
+
+  if (requestQueue.length > 0) {
+    const next = requestQueue.shift()!;
+    console.log(`[Queue] Processing next request ${next.id}. Remaining: ${requestQueue.length}`);
+    createApprovalPopup(next.id, next.type);
+  } else {
+    console.log('[Queue] No more requests in queue');
+  }
 }
 
 /**
@@ -202,6 +268,15 @@ async function emitWalletEvent(eventType: string, data: unknown) {
   await loadApprovedOrigins();
   scheduleAlarm();
 })();
+
+// Clean up approval window ID when window is closed
+chrome.windows.onRemoved.addListener((windowId) => {
+  if (windowId === approvalWindowId) {
+    approvalWindowId = null;
+    // If user closed window, process next request in queue
+    processNextRequest();
+  }
+});
 
 /**
  * Track user activity for auto-lock timer
@@ -272,14 +347,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           });
 
           // Open popup to unlock (shows home screen with unlock prompt)
-          // Don't pass hash - just show normal unlock flow
-          await chrome.windows.create({
-            url: chrome.runtime.getURL('popup/index.html'),
-            type: 'popup',
-            width: UI_CONSTANTS.POPUP_WIDTH,
-            height: UI_CONSTANTS.POPUP_HEIGHT,
-            focused: true,
-          });
+          // Use createApprovalPopup to properly track the window
+          // Pass a temporary "unlock" request that will be replaced with connect request after unlock
+          await createApprovalPopup(unlockRequestId, 'connect');
 
           // Response will be sent after user unlocks and approves
           return;
@@ -422,15 +492,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
               // Check if origin needs approval
               if (!isOriginApproved(connectRequest.origin)) {
-                // Show approval popup for this connect request
-                await createApprovalPopup(requestId, 'connect');
+                // Window is already open from unlock flow - just update it to show connect approval
                 // Remove the needsUnlock flag - it's now in the approval flow
                 delete pendingData.needsUnlock;
+                // Update the existing window to show the connect approval screen
+                createApprovalPopup(requestId, 'connect'); // Will reuse existing window
               } else {
-                // Origin already approved - send address immediately
+                // Origin already approved - send address immediately and close window
                 const addr = vault.getAddress();
                 pendingData.sendResponse([addr]);
                 pendingRequests.delete(requestId);
+                processNextRequest(); // Process next request or close window
               }
 
               // Only process the first one, then break
@@ -633,6 +705,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               fee: txRequest.fee,
             });
             pendingRequests.delete(approveTxId);
+            processNextRequest();
             sendResponse({ success: true });
           } catch (error) {
             console.error('Transaction signing failed:', error);
@@ -640,6 +713,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               error: { code: 4900, message: error instanceof Error ? error.message : 'Transaction signing failed' },
             });
             pendingRequests.delete(approveTxId);
+            processNextRequest();
             sendResponse({ error: error instanceof Error ? error.message : 'Transaction signing failed' });
           }
         } else {
@@ -655,6 +729,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             error: { code: 4001, message: 'User rejected the transaction' },
           });
           pendingRequests.delete(rejectTxId);
+          processNextRequest();
           sendResponse({ success: true });
         } else {
           sendResponse({ error: ERROR_CODES.NOT_FOUND });
@@ -681,6 +756,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             const signature = await vault.signMessage([signRequest.message]);
             approveSignPending.sendResponse({ signature });
             pendingRequests.delete(approveSignId);
+            processNextRequest();
             sendResponse({ success: true });
           } catch (err) {
             const errorMessage = err instanceof Error ? err.message : 'Failed to sign message';
@@ -688,6 +764,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               error: { code: 4001, message: errorMessage },
             });
             pendingRequests.delete(approveSignId);
+            processNextRequest();
             sendResponse({ error: errorMessage });
           }
         } else {
@@ -703,6 +780,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             error: { code: 4001, message: 'User rejected the signature request' },
           });
           pendingRequests.delete(rejectSignId);
+          processNextRequest();
           sendResponse({ success: true });
         } else {
           sendResponse({ error: ERROR_CODES.NOT_FOUND });
@@ -742,6 +820,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           const connectAddress = vault.getAddress();
           approveConnectPending.sendResponse([connectAddress]);
           pendingRequests.delete(approveConnectId);
+          processNextRequest();
           sendResponse({ success: true });
 
           // Emit connect event
@@ -759,6 +838,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             error: { code: 4001, message: 'User rejected the connection' },
           });
           pendingRequests.delete(rejectConnectId);
+          processNextRequest();
           sendResponse({ success: true });
         } else {
           sendResponse({ error: ERROR_CODES.NOT_FOUND });
