@@ -24,3 +24,6 @@ test-*.js
 *.swp
 *.swo
 *~
+
+# Local WASM modules (built from wallet repo)
+extension/lib/nbx-wasm/

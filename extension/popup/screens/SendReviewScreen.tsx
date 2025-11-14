@@ -4,6 +4,7 @@ import { truncateAddress } from '../utils/format';
 import { AccountIcon } from '../components/AccountIcon';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../shared/constants';
+import { nockToNick } from '../../shared/currency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 
@@ -46,9 +47,8 @@ export function SendReviewScreen() {
     try {
       console.log('[SendReview] Sending transaction...');
 
-      // Convert amounts from NOCK to nicks (1 NOCK = 65,536 nicks)
-      const amountInNicks = Math.floor(lastTransaction.amount * NOCK_TO_NICKS);
-      const feeInNicks = Math.floor(lastTransaction.fee * NOCK_TO_NICKS);
+      const amountInNicks = nockToNick(lastTransaction.amount);
+      const feeInNicks = nockToNick(lastTransaction.fee);
 
       // Call vault to build, sign, and broadcast transaction
       const result = await send<{ txid?: string; broadcasted?: boolean; error?: string }>(

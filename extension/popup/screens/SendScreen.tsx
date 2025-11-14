@@ -4,6 +4,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { truncateAddress } from '../utils/format';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS, DEFAULT_TRANSACTION_FEE, NOCK_TO_NICKS } from '../../shared/constants';
+import { roundNockToSendable, formatNock, isDustAmount, MIN_SENDABLE_NOCK } from '../../shared/currency';
 import type { Account } from '../../shared/types';
 import { AccountIcon } from '../components/AccountIcon';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
@@ -56,7 +57,17 @@ export function SendScreen() {
   }
 
   function handleMaxAmount() {
-    setAmount(String(currentBalance));
+    setAmount(formatNock(currentBalance));
+  }
+
+  function handleAmountBlur() {
+    if (!amount || amount === '') return;
+    
+    const numAmount = parseFloat(amount.replace(/,/g, ''));
+    if (isNaN(numAmount) || numAmount <= 0 || !isFinite(numAmount)) return;
+    
+    const roundedAmount = roundNockToSendable(numAmount);
+    setAmount(formatNock(roundedAmount));
   }
 
   function handleEditFee() {
@@ -121,9 +132,15 @@ export function SendScreen() {
       return;
     }
 
-    const amountNum = parseFloat(amount);
+    const amountNum = parseFloat(amount.replace(/,/g, ''));
     if (!amount || isNaN(amountNum) || amountNum <= 0) {
       setError('Please enter a valid amount');
+      return;
+    }
+
+    if (isDustAmount(amountNum)) {
+      const minFormatted = MIN_SENDABLE_NOCK.toFixed(16).replace(/\.?0+$/, '');
+      setError(`Amount too small. Minimum: ${minFormatted} NOCK`);
       return;
     }
 
@@ -377,11 +394,11 @@ export function SendScreen() {
           value={amount}
           onChange={e => {
             const value = e.target.value;
-            // Only allow numbers and single decimal point
-            if (value === '' || /^\d*\.?\d*$/.test(value)) {
+            if (value === '' || /^[\d,]*\.?\d{0,5}$/.test(value)) {
               setAmount(value);
             }
           }}
+          onBlur={handleAmountBlur}
         />
         <div className="w-full h-px" style={{ backgroundColor: 'var(--color-surface-700)' }} />
         <div className="flex items-center gap-2">
