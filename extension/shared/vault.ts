@@ -69,10 +69,11 @@ async function convertNoteForTxBuilder(
 }
 
 /**
- * Versioned encrypted vault format
- * Explicitly separates PBKDF2 (key derivation) from AES-GCM (encryption) parameters
+ * Encrypted vault format
+ * Encrypts both mnemonic AND accounts for better privacy
+ * Prevents address enumeration from disk/backup without password
  */
-interface EncryptedVaultV1 {
+interface EncryptedVault {
   version: 1;
   kdf: {
     name: 'PBKDF2';
@@ -83,15 +84,24 @@ interface EncryptedVaultV1 {
   cipher: {
     alg: 'AES-GCM';
     iv: number[]; // AES-GCM initialization vector (12 bytes)
-    ct: number[]; // Ciphertext (includes authentication tag)
+    ct: number[]; // Ciphertext (includes authentication tag, contains VaultPayload)
   };
+}
+
+/**
+ * The decrypted vault payload
+ * Everything sensitive lives inside the encrypted vault
+ */
+interface VaultPayload {
+  mnemonic: string;
+  accounts: Account[];
 }
 
 interface VaultState {
   locked: boolean;
   accounts: Account[];
   currentAccountIndex: number;
-  enc: EncryptedVaultV1 | null;
+  enc: EncryptedVault | null;
 }
 
 export class Vault {
@@ -104,6 +114,9 @@ export class Vault {
 
   /** Decrypted mnemonic (only stored in memory while unlocked) */
   private mnemonic: string | null = null;
+
+  /** Derived encryption key (only stored in memory while unlocked, cleared on lock) */
+  private encryptionKey: CryptoKey | null = null;
 
   /**
    * Sets up a new vault with encrypted mnemonic
@@ -145,11 +158,16 @@ export class Vault {
     const kdfSalt = rand(16);
     const { key } = await deriveKeyPBKDF2(password, kdfSalt);
 
-    // Encrypt mnemonic with AES-GCM
-    const { iv, ct } = await encryptGCM(key, new TextEncoder().encode(words));
+    // Encrypt both mnemonic AND accounts together
+    const vaultPayload: VaultPayload = {
+      mnemonic: words,
+      accounts: [firstAccount],
+    };
+    const payloadJson = JSON.stringify(vaultPayload);
+    const { iv, ct } = await encryptGCM(key, new TextEncoder().encode(payloadJson));
 
-    // Store in versioned format (arrays for chrome.storage compatibility)
-    const encData: EncryptedVaultV1 = {
+    // Store encrypted vault (arrays for chrome.storage compatibility)
+    const encData: EncryptedVault = {
       version: 1,
       kdf: {
         name: 'PBKDF2',
@@ -160,19 +178,21 @@ export class Vault {
       cipher: {
         alg: 'AES-GCM',
         iv: Array.from(iv), // AES-GCM IV (12 bytes)
-        ct: Array.from(ct), // Ciphertext + auth tag
+        ct: Array.from(ct), // Ciphertext + auth tag (contains VaultPayload)
       },
     };
 
+    // Only store encrypted vault and current account index
+    // Accounts are inside the encrypted vault, not in plaintext
     await chrome.storage.local.set({
       [STORAGE_KEYS.ENCRYPTED_VAULT]: encData,
-      [STORAGE_KEYS.ACCOUNTS]: [firstAccount],
       [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: 0,
     });
 
     // Keep wallet unlocked after setup for smooth onboarding UX
     // Auto-lock timer will handle locking after inactivity
     this.mnemonic = words;
+    this.encryptionKey = key; // Cache the key for account operations (rename, create, etc.)
     this.state = {
       locked: false,
       accounts: [firstAccount],
@@ -194,11 +214,9 @@ export class Vault {
   > {
     const stored = await chrome.storage.local.get([
       STORAGE_KEYS.ENCRYPTED_VAULT,
-      STORAGE_KEYS.ACCOUNTS,
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
     ]);
-    const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVaultV1 | undefined;
-    const accounts = (stored[STORAGE_KEYS.ACCOUNTS] as Account[] | undefined) || [];
+    const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
     const currentAccountIndex =
       (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
 
@@ -207,10 +225,15 @@ export class Vault {
     }
 
     try {
-      // Re-derive key using stored KDF parameters
-      const { key } = await deriveKeyPBKDF2(password, new Uint8Array(enc.kdf.salt));
+      // Re-derive key using stored KDF parameters (critical for forward compatibility)
+      const { key } = await deriveKeyPBKDF2(
+        password,
+        new Uint8Array(enc.kdf.salt),
+        enc.kdf.iterations,
+        enc.kdf.hash
+      );
 
-      // Decrypt mnemonic
+      // Decrypt the vault
       const pt = await decryptGCM(
         key,
         new Uint8Array(enc.cipher.iv),
@@ -221,8 +244,14 @@ export class Vault {
         return { error: ERROR_CODES.BAD_PASSWORD };
       }
 
-      // Store decrypted mnemonic in memory (only while unlocked)
-      this.mnemonic = pt;
+      // Parse vault payload (mnemonic + accounts)
+      const payload = JSON.parse(pt) as VaultPayload;
+      const mnemonic = payload.mnemonic;
+      const accounts = payload.accounts;
+
+      // Store decrypted data in memory (only after successful decrypt)
+      this.mnemonic = mnemonic;
+      this.encryptionKey = key; // Cache key for account operations
 
       this.state = {
         locked: false,
@@ -244,12 +273,55 @@ export class Vault {
   }
 
   /**
+   * Helper method to save accounts back to the encrypted vault
+   * Called whenever accounts are modified (create, rename, update styling, hide)
+   * Requires wallet to be unlocked (encryptionKey must be in memory)
+   */
+  private async saveAccountsToVault(): Promise<void> {
+    if (!this.mnemonic || !this.state.enc || !this.encryptionKey) {
+      throw new Error('Cannot save accounts: vault is locked or not initialized');
+    }
+
+    // Re-encrypt mnemonic + accounts together with the key stored in memory
+    const vaultPayload: VaultPayload = {
+      mnemonic: this.mnemonic,
+      accounts: this.state.accounts,
+    };
+    const payloadJson = JSON.stringify(vaultPayload);
+    const { iv, ct } = await encryptGCM(
+      this.encryptionKey,
+      new TextEncoder().encode(payloadJson)
+    );
+
+    // Update the encrypted vault with new IV and ciphertext
+    const encData: EncryptedVault = {
+      version: 1,
+      kdf: this.state.enc.kdf, // Reuse same KDF parameters (salt, iterations)
+      cipher: {
+        alg: 'AES-GCM',
+        iv: Array.from(iv),
+        ct: Array.from(ct),
+      },
+    };
+
+    // Save updated vault to storage
+    await chrome.storage.local.set({
+      [STORAGE_KEYS.ENCRYPTED_VAULT]: encData,
+    });
+
+    // Update in-memory state
+    this.state.enc = encData;
+  }
+
+  /**
    * Locks the vault
    */
   async lock(): Promise<{ ok: boolean }> {
     this.state.locked = true;
-    // Clear mnemonic from memory for security
+    // Clear sensitive data from memory for security
+    this.state.accounts = []; // Clear accounts to enforce "no addresses while locked"
     this.mnemonic = null;
+    this.encryptionKey = null;
     return { ok: true };
   }
 
@@ -268,6 +340,7 @@ export class Vault {
       enc: null,
     };
     this.mnemonic = null;
+    this.encryptionKey = null; // Clear encryption key as well
 
     return { ok: true };
   }
@@ -304,22 +377,19 @@ export class Vault {
 
   /**
    * Gets the address safely (even when locked, from storage)
+   * NOTE: Accounts are encrypted, so this only works when unlocked
+   * This is intentional - better privacy, addresses not accessible without password
    */
   async getAddressSafe(): Promise<string> {
+    // If unlocked, return from memory
     if (this.state.accounts.length > 0) {
       const currentAccount =
         this.state.accounts[this.state.currentAccountIndex] || this.state.accounts[0];
       return currentAccount.address;
     }
-    const stored = await chrome.storage.local.get([
-      STORAGE_KEYS.ACCOUNTS,
-      STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
-    ]);
-    const accounts = (stored[STORAGE_KEYS.ACCOUNTS] as Account[] | undefined) || [];
-    const currentAccountIndex =
-      (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
-    const currentAccount = accounts[currentAccountIndex] || accounts[0];
-    return currentAccount?.address || '';
+
+    // Accounts are encrypted, cannot read while locked
+    return '';
   }
 
   /**
@@ -365,12 +435,10 @@ export class Vault {
     };
 
     const updatedAccounts = [...this.state.accounts, newAccount];
-
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.ACCOUNTS]: updatedAccounts,
-    });
-
     this.state.accounts = updatedAccounts;
+
+    // Save accounts to encrypted vault
+    await this.saveAccountsToVault();
 
     return { ok: true, account: newAccount };
   }
@@ -412,9 +480,8 @@ export class Vault {
 
     this.state.accounts[index].name = name;
 
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.ACCOUNTS]: this.state.accounts,
-    });
+    // Save accounts to encrypted vault
+    await this.saveAccountsToVault();
 
     return { ok: true };
   }
@@ -438,9 +505,8 @@ export class Vault {
     this.state.accounts[index].iconStyleId = iconStyleId;
     this.state.accounts[index].iconColor = iconColor;
 
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.ACCOUNTS]: this.state.accounts,
-    });
+    // Save accounts to encrypted vault
+    await this.saveAccountsToVault();
 
     return { ok: true };
   }
@@ -484,9 +550,8 @@ export class Vault {
       }
     }
 
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.ACCOUNTS]: this.state.accounts,
-    });
+    // Save accounts to encrypted vault
+    await this.saveAccountsToVault();
 
     return { ok: true, switchedTo };
   }
@@ -560,7 +625,12 @@ export class Vault {
 
     // Re-verify password before revealing mnemonic
     try {
-      const { key } = await deriveKeyPBKDF2(password, new Uint8Array(this.state.enc.kdf.salt));
+      const { key } = await deriveKeyPBKDF2(
+        password,
+        new Uint8Array(this.state.enc.kdf.salt),
+        this.state.enc.kdf.iterations,
+        this.state.enc.kdf.hash
+      );
 
       const pt = await decryptGCM(
         key,
@@ -572,7 +642,9 @@ export class Vault {
         return { error: ERROR_CODES.BAD_PASSWORD };
       }
 
-      return { ok: true, mnemonic: pt };
+      // Parse the vault payload and return only the mnemonic
+      const payload = JSON.parse(pt) as VaultPayload;
+      return { ok: true, mnemonic: payload.mnemonic };
     } catch (err) {
       return { error: ERROR_CODES.BAD_PASSWORD };
     }
@@ -601,10 +673,12 @@ export class Vault {
     // Derive the account's private key based on derivation method
     const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
     const currentAccount = this.getCurrentAccount();
+    // Use the account's own index, not currentAccountIndex (accounts may be reordered)
+    const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
     const accountKey =
       currentAccount?.derivation === 'master'
         ? masterKey // Use master key directly for master-derived accounts
-        : masterKey.deriveChild(this.state.currentAccountIndex); // Use child derivation for slip10 accounts
+        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
     if (!accountKey.private_key) {
       if (currentAccount?.derivation !== 'master') {
@@ -659,10 +733,12 @@ export class Vault {
 
     // Derive the account's private and public keys based on derivation method
     const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    // Use the account's own index, not currentAccountIndex (accounts may be reordered)
+    const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
     const accountKey =
       currentAccount.derivation === 'master'
         ? masterKey // Use master key directly for master-derived accounts
-        : masterKey.deriveChild(this.state.currentAccountIndex); // Use child derivation for slip10 accounts
+        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
     if (!accountKey.private_key || !accountKey.public_key) {
       if (currentAccount.derivation !== 'master') {
@@ -802,10 +878,12 @@ export class Vault {
 
       // Derive the account's private and public keys based on derivation method
       const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      // Use the account's own index, not currentAccountIndex (accounts may be reordered)
+      const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
       const accountKey =
         currentAccount.derivation === 'master'
           ? masterKey // Use master key directly for master-derived accounts
-          : masterKey.deriveChild(this.state.currentAccountIndex); // Use child derivation for slip10 accounts
+          : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
       if (!accountKey.private_key || !accountKey.public_key) {
         if (currentAccount.derivation !== 'master') {

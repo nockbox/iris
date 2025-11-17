@@ -14,7 +14,9 @@ export function rand(n: number): Uint8Array {
 
 export async function deriveKeyPBKDF2(
   password: string,
-  salt: Uint8Array
+  salt: Uint8Array,
+  iterations: number = PBKDF2_ITERATIONS,
+  hash: 'SHA-256' | 'SHA-512' = 'SHA-256'
 ): Promise<{ key: CryptoKey; salt: Uint8Array }> {
   const enc = new TextEncoder();
   const baseKey = await crypto.subtle.importKey(
@@ -28,8 +30,8 @@ export async function deriveKeyPBKDF2(
     {
       name: "PBKDF2",
       salt: salt as BufferSource,
-      iterations: PBKDF2_ITERATIONS,
-      hash: "SHA-256",
+      iterations,
+      hash,
     },
     baseKey,
     { name: "AES-GCM", length: 256 },
