@@ -241,13 +241,15 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   });
 
   // Create transaction builder with PKH digests (builder computes lock-roots)
+  // include_lock_data: false keeps note-data empty (0.5 NOCK fee component)
   const builder = WasmTxBuilder.newSimple(
     wasmNotes,
     spendCondition,
     new WasmDigest(recipientPKH),
     BigInt(amount), // gift
     BigInt(fee),
-    new WasmDigest(refundPKH)
+    new WasmDigest(refundPKH),
+    false // include_lock_data: false for empty note-data (lower fee)
   );
 
   console.log('[TxBuilder] Signing transaction...');
