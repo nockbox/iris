@@ -259,13 +259,14 @@ async function emitWalletEvent(eventType: string, data: unknown) {
   }
 }
 
-// Initialize auto-lock setting, load approved origins, and schedule alarm
+// Initialize auto-lock setting, load approved origins, vault state, and schedule alarm
 (async () => {
   const stored = await chrome.storage.local.get([
     STORAGE_KEYS.AUTO_LOCK_MINUTES,
   ]);
   autoLockMinutes = stored[STORAGE_KEYS.AUTO_LOCK_MINUTES] ?? AUTOLOCK_MINUTES;
   await loadApprovedOrigins();
+  await vault.init(); // Load encrypted vault header to detect vault existence
   scheduleAlarm();
 })();
 
@@ -541,8 +542,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case INTERNAL_METHODS.GET_STATE:
+        const uiStatus = vault.getUiStatus();
         sendResponse({
-          locked: vault.isLocked(),
+          locked: uiStatus.locked,
+          hasVault: uiStatus.hasVault,
           address: await vault.getAddressSafe(),
           accounts: vault.getAccounts(),
           currentAccount: vault.getCurrentAccount(),

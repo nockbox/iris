@@ -252,6 +252,7 @@ export const useStore = create<AppStore>((set, get) => ({
       // Get current vault state from service worker
       const state = await send<{
         locked: boolean;
+        hasVault: boolean;
         address: string;
         accounts: Account[];
         currentAccount: Account | null;
@@ -273,7 +274,7 @@ export const useStore = create<AppStore>((set, get) => ({
         // For approval requests, don't override the screen
         // Let the approval useEffect handle navigation
         initialScreen = walletState.locked ? 'locked' : 'home';
-      } else if (!walletState.address) {
+      } else if (!state.hasVault) {
         // No vault exists - start onboarding
         initialScreen = 'onboarding-start';
       } else {

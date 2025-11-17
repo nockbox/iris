@@ -119,6 +119,55 @@ export class Vault {
   private encryptionKey: CryptoKey | null = null;
 
   /**
+   * Check if a vault exists in storage (without decrypting)
+   * This is safe to call even after service worker restart
+   * @returns true if encrypted vault exists, false if no vault setup yet
+   */
+  async hasVault(): Promise<boolean> {
+    const stored = await chrome.storage.local.get([STORAGE_KEYS.ENCRYPTED_VAULT]);
+    return Boolean(stored[STORAGE_KEYS.ENCRYPTED_VAULT]);
+  }
+
+  /**
+   * Initialize vault state from storage (load encrypted header without decrypting)
+   * Call this on service worker startup or before checking vault existence
+   * Safe to call multiple times (idempotent)
+   */
+  async init(): Promise<void> {
+    // If already loaded, do nothing
+    if (this.state.enc) return;
+
+    const stored = await chrome.storage.local.get([
+      STORAGE_KEYS.ENCRYPTED_VAULT,
+      STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
+    ]);
+
+    const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
+    if (enc) {
+      this.state.enc = enc; // Header is safe to keep in memory
+      this.state.locked = true; // Still locked
+      this.state.accounts = []; // No plaintext accounts in memory
+      this.state.currentAccountIndex =
+        (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
+    } else {
+      // No vault yet — keep defaults
+      this.state.enc = null;
+      this.state.locked = true;
+    }
+  }
+
+  /**
+   * Get UI status without revealing secrets
+   * Safe to expose to popup for screen routing
+   */
+  getUiStatus(): { hasVault: boolean; locked: boolean } {
+    return {
+      hasVault: Boolean(this.state.enc),
+      locked: this.state.locked,
+    };
+  }
+
+  /**
    * Sets up a new vault with encrypted mnemonic
    * @param password - User password for encryption
    * @param mnemonic - Optional mnemonic for importing existing wallet (otherwise generates new one)
