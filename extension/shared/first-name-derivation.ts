@@ -4,54 +4,15 @@
  * In Nockchain v1, notes are indexed by "first-names" which are deterministically
  * derived from their lock conditions. This module provides functions to calculate
  * the expected first-name for standard lock types (simple PKH and coinbase).
- *
- * NOTE: The WASM functions take base58-encoded strings as input and return
- * base58-encoded strings as output. No additional encoding/decoding is needed.
  */
 
-// ✅ Pull the WASM into the build graph and get a runtime URL
-import wasmUrl from '../lib/nbx-nockchain-types/nbx_nockchain_types_bg.wasm?url';
-
-// Import the glue as a module namespace
-import * as nbt from '../lib/nbx-nockchain-types/nbx_nockchain_types.js';
-
-let wasmReady: Promise<void> | null = null;
-
-// Store function references after init
-// Note: These WASM functions take base58 strings and return base58 strings
-let wasmDeriveSimpleFirstName: (pkhBase58: string) => string;
-let wasmDeriveCoinbaseFirstName: (pkhBase58: string) => string;
-let wasmDeriveFirstNameFromLockHash: (lockHashBase58: string) => string;
-
-/**
- * Ensures WASM module is initialized
- * Must be called before using any WASM functions
- */
-async function ensureWasmInit(): Promise<void> {
-  if (!wasmReady) {
-    wasmReady = (async () => {
-      console.log('[WASM Debug] Loading WASM from:', wasmUrl);
-
-      // Initialize the WASM module
-      await nbt.default({ module_or_path: wasmUrl });
-
-      // Use the JS wrapper functions from the module (not raw WASM exports)
-      // These wrappers handle string encoding/decoding automatically
-      wasmDeriveSimpleFirstName = nbt.deriveSimpleFirstName;
-      wasmDeriveCoinbaseFirstName = nbt.deriveCoinbaseFirstName;
-      wasmDeriveFirstNameFromLockHash = nbt.deriveFirstNameFromLockHash;
-
-      if (typeof wasmDeriveSimpleFirstName !== 'function') {
-        throw new Error(
-          'nbx-nockchain-types: deriveSimpleFirstName not found in module exports'
-        );
-      }
-
-      console.log('[WASM Debug] WASM initialized and function references stored');
-    })();
-  }
-  return wasmReady;
-}
+import {
+  WasmSpendCondition,
+  WasmPkh,
+  WasmLockPrimitive,
+  WasmLockTim,
+} from '../lib/nbx-wasm/nbx_wasm.js';
+import { ensureWasmInitialized } from './wasm-utils.js';
 
 /**
  * Derives the first-name for a simple PKH-locked note
@@ -59,7 +20,7 @@ async function ensureWasmInit(): Promise<void> {
  * This is used for regular transaction outputs (non-coinbase).
  * The lock structure is: [(pkh, m=1, hashes=[your_pkh])]
  *
- * @param pkhBase58 - The base58-encoded PKH address (~55 chars)
+ * @param pkhBase58 - The base58-encoded PKH digest (~55 chars)
  * @returns The base58-encoded first-name hash (40 bytes encoded)
  *
  * @example
@@ -70,7 +31,7 @@ async function ensureWasmInit(): Promise<void> {
  * ```
  */
 export async function deriveSimpleFirstName(pkhBase58: string): Promise<string> {
-  await ensureWasmInit();
+  await ensureWasmInitialized();
 
   // Validate PKH is a non-empty string
   if (!pkhBase58 || typeof pkhBase58 !== 'string') {
@@ -79,20 +40,27 @@ export async function deriveSimpleFirstName(pkhBase58: string): Promise<string> 
 
   console.log('[First-Name] Input PKH:', {
     length: pkhBase58.length,
-    full: pkhBase58
+    full: pkhBase58,
   });
 
-  // Call WASM function to derive first-name (takes base58, returns base58)
-  const firstNameBase58 = wasmDeriveSimpleFirstName(pkhBase58);
+  // Create a simple PKH-only spend condition
+  const pkh = WasmPkh.single(pkhBase58);
+  const condition = WasmSpendCondition.newPkh(pkh);
+
+  // Get the first-name from the spend condition
+  const firstNameDigest = condition.firstName();
+  const firstNameBase58 = firstNameDigest.value;
 
   console.log('[First-Name] ✅ Derived simple first-name:', {
     length: firstNameBase58.length,
-    full: firstNameBase58
+    full: firstNameBase58,
   });
 
   // Verify it's the right length (40 bytes → ~55 chars base58)
   if (firstNameBase58.length < 50 || firstNameBase58.length > 60) {
-    console.warn(`[First-Name] ⚠️ WARNING: First-name length ${firstNameBase58.length} is outside expected range 50-60 chars`);
+    console.warn(
+      `[First-Name] ⚠️ WARNING: First-name length ${firstNameBase58.length} is outside expected range 50-60 chars`
+    );
   }
 
   return firstNameBase58;
@@ -104,10 +72,7 @@ export async function deriveSimpleFirstName(pkhBase58: string): Promise<string> 
  * This is used for mining rewards which include both a PKH lock and a timelock.
  * The lock structure is: [(pkh, m=1, hashes=[your_pkh]), (tim, timelock)]
  *
- * NOTE: The coinbase timelock parameters are currently placeholders.
- * This function will need to be updated with the exact timelock structure from Hoon.
- *
- * @param pkhBase58 - The base58-encoded PKH address (~55 chars)
+ * @param pkhBase58 - The base58-encoded PKH digest (~55 chars)
  * @returns The base58-encoded first-name hash (40 bytes encoded)
  *
  * @example
@@ -118,50 +83,33 @@ export async function deriveSimpleFirstName(pkhBase58: string): Promise<string> 
  * ```
  */
 export async function deriveCoinbaseFirstName(pkhBase58: string): Promise<string> {
-  await ensureWasmInit();
+  await ensureWasmInitialized();
 
   // Validate PKH is a non-empty string
   if (!pkhBase58 || typeof pkhBase58 !== 'string') {
     throw new Error('PKH must be a non-empty base58 string');
   }
 
-  // Call WASM function to derive first-name (takes base58, returns base58)
-  const firstNameBase58 = wasmDeriveCoinbaseFirstName(pkhBase58);
+  // Create PKH + TIM (coinbase) spend condition
+  const pkhLeaf = WasmLockPrimitive.newPkh(WasmPkh.single(pkhBase58));
+  const timLeaf = WasmLockPrimitive.newTim(WasmLockTim.coinbase());
+  const condition = new WasmSpendCondition([pkhLeaf, timLeaf]);
+
+  // Get the first-name from the spend condition
+  const firstNameDigest = condition.firstName();
+  const firstNameBase58 = firstNameDigest.value;
 
   console.log('[First-Name] ✅ Derived coinbase first-name:', {
     length: firstNameBase58.length,
-    full: firstNameBase58
+    full: firstNameBase58,
   });
 
   // Verify it's the right length (40 bytes → ~55 chars base58)
   if (firstNameBase58.length < 50 || firstNameBase58.length > 60) {
-    console.warn(`[First-Name] ⚠️ WARNING: Coinbase first-name length ${firstNameBase58.length} is outside expected range 50-60 chars`);
+    console.warn(
+      `[First-Name] ⚠️ WARNING: Coinbase first-name length ${firstNameBase58.length} is outside expected range 50-60 chars`
+    );
   }
-
-  return firstNameBase58;
-}
-
-/**
- * Low-level function to derive a first-name from a lock hash
- *
- * This implements the core v1 first-name derivation algorithm:
- * first-name = hash([true, lock-hash])
- *
- * Most users should use deriveSimpleFirstName() or deriveCoinbaseFirstName() instead.
- *
- * @param lockHashBase58 - The base58-encoded lock hash (40 bytes)
- * @returns The base58-encoded first-name hash (40 bytes encoded)
- */
-export async function deriveFirstNameFromLockHash(lockHashBase58: string): Promise<string> {
-  await ensureWasmInit();
-
-  // Validate lock hash is a non-empty string
-  if (!lockHashBase58 || typeof lockHashBase58 !== 'string') {
-    throw new Error('Lock hash must be a non-empty base58 string');
-  }
-
-  // Call WASM function to derive first-name (takes base58, returns base58)
-  const firstNameBase58 = wasmDeriveFirstNameFromLockHash(lockHashBase58);
 
   return firstNameBase58;
 }
@@ -191,7 +139,7 @@ export async function getBothFirstNames(pkhBase58: string): Promise<{
   simple: string;
   coinbase: string;
 }> {
-  await ensureWasmInit();
+  await ensureWasmInitialized();
 
   return {
     simple: await deriveSimpleFirstName(pkhBase58),

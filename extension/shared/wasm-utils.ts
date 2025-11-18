@@ -12,7 +12,6 @@ import initWasmTx from '../lib/nbx-wasm/nbx_wasm';
 export const WASM_PATHS = {
   CRYPTO: 'lib/nbx-crypto/nbx_crypto_bg.wasm',
   TX_BUILDER: 'lib/nbx-wasm/nbx_wasm_bg.wasm',
-  NOCKCHAIN_TYPES: 'lib/nbx-nockchain-types/nbx_nockchain_types_bg.wasm',
 } as const;
 
 /**
@@ -30,7 +29,6 @@ export function getWasmUrls() {
   return {
     crypto: getWasmUrl(WASM_PATHS.CRYPTO),
     txBuilder: getWasmUrl(WASM_PATHS.TX_BUILDER),
-    nockchainTypes: getWasmUrl(WASM_PATHS.NOCKCHAIN_TYPES),
   };
 }
 

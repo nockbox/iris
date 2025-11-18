@@ -45,8 +45,6 @@
       "resources": [
         "lib/nbx-crypto/*.wasm",
         "lib/nbx-crypto/*.js",
-        "lib/nbx-nockchain-types/*.wasm",
-        "lib/nbx-nockchain-types/*.js",
         "lib/nbx-wasm/*.wasm",
         "lib/nbx-wasm/*.js"
       ],

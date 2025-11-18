@@ -7,12 +7,7 @@ This directory contains WebAssembly modules used by the wallet extension.
 ### nbx-wasm
 
 **Source**: `github.com/nockbox/wallet`
-**Purpose**: Transaction building, gRPC client, address derivation
-
-### nbx-nockchain-types
-
-**Source**: `github.com/nockbox/wallet`
-**Purpose**: First-name derivation for balance queries
+**Purpose**: Transaction building, gRPC client, address derivation, first-name derivation
 
 ### nbx-crypto (External Module)
 
@@ -22,7 +17,7 @@ This directory contains WebAssembly modules used by the wallet extension.
 
 ## Building & Updating
 
-**Only nbx-wasm and nbx-nockchain-types need to be built.** The nbx-crypto module is already included in the repo.
+**Only nbx-wasm needs to be built.** The nbx-crypto module is external and already included in the repo.
 
 ### Prerequisites
 
@@ -52,27 +47,13 @@ rsync -av --delete ../../pkg/ /path/to/fort-nock/extension/lib/nbx-wasm/
 npm run build
 ```
 
-### Update nbx-nockchain-types
-
-```bash
-# Build from wallet repo
-cd wallet/crates/nbx-nockchain-types
-wasm-pack build --target web --out-dir ../../pkg-nockchain-types --features wasm
-
-# Copy to fort-nock (adjust path as needed)
-rsync -av --delete ../../pkg-nockchain-types/ /path/to/fort-nock/extension/lib/nbx-nockchain-types/
-
-# Rebuild extension
-npm run build
-```
-
 ## What Uses What
 
 - **Transactions**: nbx-wasm (TxBuilder, GrpcClient)
-- **Balance Queries**: nbx-wasm (GrpcClient) + nbx-nockchain-types (first-name derivation)
+- **Balance Queries**: nbx-wasm (GrpcClient, SpendCondition.firstName)
 - **Address Derivation**: nbx-wasm (hashPublicKey)
 - **Message Signing**: nbx-crypto (tip5Hash, signDigest)
 
 **Initialization:**
 - nbx-crypto and nbx-wasm: `extension/shared/wasm-utils.ts`
-- nbx-nockchain-types: `extension/shared/first-name-derivation.ts`
+- First-name derivation: `extension/shared/first-name-derivation.ts`

@@ -45,13 +45,13 @@ export default defineConfig({
         assetFileNames: (assetInfo) => {
           if (assetInfo.name?.endsWith('.wasm')) {
             // Preserve WASM files in their lib subdirectories
-            if (assetInfo.name.includes('nbx_nockchain_types')) {
-              return 'lib/nbx-nockchain-types/[name][extname]';
-            }
             if (assetInfo.name.includes('nbx_wasm')) {
               return 'lib/nbx-wasm/[name][extname]';
             }
-            return 'lib/nbx-crypto/[name][extname]';
+            if (assetInfo.name.includes('nbx_crypto')) {
+              return 'lib/nbx-crypto/[name][extname]';
+            }
+            return 'lib/[name][extname]';
           }
           return 'assets/[name]-[hash][extname]';
         },

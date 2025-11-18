@@ -15,7 +15,6 @@ import {
   WasmTimelockRange,
 } from '../lib/nbx-wasm/nbx_wasm.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
-import { deriveFirstNameFromLockHash } from './first-name-derivation.js';
 import { base58 } from '@scure/base';
 import { NOCK_TO_NICKS } from './constants.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
@@ -89,12 +88,12 @@ export async function discoverSpendConditionForNote(
 
   console.log(`[TxBuilder] Successfully created ${candidates.length} candidate conditions`);
 
-  // Find the candidate whose lock-root derives to note.nameFirst
-  // NOTE: The note's name.first is NOT the raw lock-root, it's: hash([true, lock-root])
+  // Find the candidate whose first-name matches note.nameFirst
+  // The note's name.first is derived from the spend condition
   for (const candidate of candidates) {
     const lockRoot = candidate.condition.hash().value;
-    // Derive the first-name from the lock-root using the same algorithm as the chain
-    const derivedFirstName = await deriveFirstNameFromLockHash(lockRoot);
+    // Get the first-name directly from the spend condition
+    const derivedFirstName = candidate.condition.firstName().value;
 
     console.log(`[TxBuilder] Candidate ${candidate.name}:`);
     console.log(`  Lock-root: ${lockRoot.slice(0, 20)}...`);
@@ -215,9 +214,11 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
 
   // Create transaction builder with PKH digests (builder computes lock-roots)
   // include_lock_data: false keeps note-data empty (0.5 NOCK fee component)
+  // Each note needs its own spend condition (array of conditions, one per note)
+  const spendConditions = notes.map(() => spendCondition);
   const builder = WasmTxBuilder.newSimple(
     wasmNotes,
-    spendCondition,
+    spendConditions,
     new WasmDigest(recipientPKH),
     BigInt(amount), // gift
     BigInt(fee),
@@ -321,8 +322,7 @@ export async function buildPayment(
   });
 
   // Sanity check: verify the derived first-name matches
-  const computedLockRoot = spendCondition.hash().value;
-  const derivedFirstName = await deriveFirstNameFromLockHash(computedLockRoot);
+  const derivedFirstName = spendCondition.firstName().value;
   if (derivedFirstName !== note.nameFirst) {
     throw new Error(
       `First-name mismatch! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
