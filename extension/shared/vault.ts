@@ -27,10 +27,7 @@ import { USE_MOCK_TRANSACTIONS, MOCK_TRANSACTIONS } from './mocks/transactions';
  *
  * NOTE: Prefers pre-computed base58 values from the RPC response to avoid WASM init issues
  */
-async function convertNoteForTxBuilder(
-  note: BalanceNote,
-  ownerPKH: string
-): Promise<TxBuilderNote> {
+async function convertNoteForTxBuilder(note: BalanceNote): Promise<TxBuilderNote> {
   // Use pre-computed base58 strings if available (from WASM gRPC client)
   let nameFirst: string;
   let nameLast: string;
@@ -337,10 +334,7 @@ export class Vault {
       accounts: this.state.accounts,
     };
     const payloadJson = JSON.stringify(vaultPayload);
-    const { iv, ct } = await encryptGCM(
-      this.encryptionKey,
-      new TextEncoder().encode(payloadJson)
-    );
+    const { iv, ct } = await encryptGCM(this.encryptionKey, new TextEncoder().encode(payloadJson));
 
     // Update the encrypted vault with new IV and ciphertext
     const encData: EncryptedVault = {
@@ -835,8 +829,7 @@ export class Vault {
       console.log('[Vault] Selected UTXO with', selectedNote.assets, 'nicks');
 
       // Convert note to transaction builder format
-      // Pass owner's PKH to compute correct note_data_hash for input note
-      const txBuilderNote = await convertNoteForTxBuilder(selectedNote, currentAccount.address);
+      const txBuilderNote = await convertNoteForTxBuilder(selectedNote);
 
       // Build and sign the transaction
       const constructedTx = await buildPayment(
@@ -860,21 +853,18 @@ export class Vault {
   }
 
   /**
-   * Broadcast a raw signed transaction to the network
-   * This is a simpler method that doesn't require note conversion or WASM
+   * Broadcast a protobuf transaction to the network
+   * Accepts pre-serialized protobuf transaction (not WASM objects)
    *
-   * @param rawTx - The raw signed transaction object (WasmRawTx or already serialized)
+   * @param protobufTx - The protobuf transaction object (plain object, not WASM)
    * @returns Transaction ID and broadcast status
    */
   async broadcastTransaction(
-    rawTx: any
+    protobufTx: any
   ): Promise<{ txId: string; broadcasted: boolean } | { error: string }> {
     try {
       const rpcClient = createBrowserClient();
       console.log('[Vault] Broadcasting pre-signed transaction...');
-
-      // If rawTx has toProtobuf method, convert it; otherwise use as-is
-      const protobufTx = typeof rawTx.toProtobuf === 'function' ? rawTx.toProtobuf() : rawTx;
 
       const txId = await rpcClient.sendTransaction(protobufTx);
 
@@ -893,20 +883,18 @@ export class Vault {
   }
 
   /**
-   * Send a transaction to the network
-   * This is the high-level API for sending NOCK to a recipient
-   * TODO: Clean up logs
+   * Build and sign a transaction without broadcasting
    *
    * @param to - Recipient PKH address (base58-encoded digest string)
    * @param amount - Amount in nicks
    * @param fee - Transaction fee in nicks
-   * @returns Transaction ID and broadcast status
+   * @returns Signed transaction with txId and protobufTx (no rawTx to avoid WASM cloning issues)
    */
-  async sendTransaction(
+  async buildAndSignTransaction(
     to: string,
     amount: number,
     fee: number
-  ): Promise<{ txId: string; broadcasted: boolean; protobufTx?: any } | { error: string }> {
+  ): Promise<{ txId: string; protobufTx: any } | { error: string }> {
     if (this.state.locked || !this.mnemonic) {
       return { error: ERROR_CODES.LOCKED };
     }
@@ -927,12 +915,9 @@ export class Vault {
 
       // Derive the account's private and public keys based on derivation method
       const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
-      // Use the account's own index, not currentAccountIndex (accounts may be reordered)
       const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
       const accountKey =
-        currentAccount.derivation === 'master'
-          ? masterKey // Use master key directly for master-derived accounts
-          : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
+        currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
 
       if (!accountKey.private_key || !accountKey.public_key) {
         if (currentAccount.derivation !== 'master') {
@@ -984,8 +969,7 @@ export class Vault {
         });
 
         // Convert note to transaction builder format
-        // Pass owner's PKH to compute correct note_data_hash for input note
-        const txBuilderNote = await convertNoteForTxBuilder(selectedNote, currentAccount.address);
+        const txBuilderNote = await convertNoteForTxBuilder(selectedNote);
         console.log('[Vault] Converted note for tx builder:', {
           originPage: txBuilderNote.originPage,
           nameFirst: txBuilderNote.nameFirst.slice(0, 20) + '...',
@@ -1013,76 +997,32 @@ export class Vault {
 
         console.log('[Vault] Transaction signed:', constructedTx.txId);
         console.log('[Vault] Transaction version:', constructedTx.version);
-        console.log('[Vault] RawTx object keys:', Object.keys(constructedTx.rawTx));
 
         // Convert to protobuf format for gRPC
         const protobufTx = constructedTx.rawTx.toProtobuf();
-        console.log('[Vault] Protobuf tx object keys:', Object.keys(protobufTx));
-        console.log(
-          '[Vault] Protobuf tx sample:',
-          JSON.stringify(protobufTx).slice(0, 200) + '...'
-        );
 
-        // DEBUG: Log the spend details
+        // Free WASM memory after converting to protobuf
+        // This prevents memory leaks from WASM objects sitting in state
+        try {
+          constructedTx.rawTx.free?.();
+        } catch (err) {
+          // Ignore if free() doesn't exist or fails
+        }
+
+        // DEBUG: Log transaction details
+        console.log('[Vault] Protobuf tx object keys:', Object.keys(protobufTx));
         if (protobufTx.spends && protobufTx.spends.length > 0) {
           const spendEntry = protobufTx.spends[0];
           console.log('[Vault] First spend entry:', {
             spendEntryKeys: Object.keys(spendEntry),
             hasName: !!spendEntry.name,
             hasSpend: !!spendEntry.spend,
-            name: spendEntry.name
-              ? {
-                  first: spendEntry.name.first?.slice(0, 20) + '...',
-                  last: spendEntry.name.last?.slice(0, 20) + '...',
-                }
-              : 'missing',
           });
-
-          if (spendEntry.spend) {
-            console.log('[Vault] Spend object:', {
-              spendKeys: Object.keys(spendEntry.spend),
-              hasWitness: !!spendEntry.spend.witness,
-              hasLegacy: !!spendEntry.spend.legacy,
-              spend_kind: spendEntry.spend.spend_kind,
-            });
-
-            // Check if spend_kind contains the actual spend data
-            if (spendEntry.spend.spend_kind) {
-              console.log('[Vault] Spend kind:', {
-                spendKindKeys: Object.keys(spendEntry.spend.spend_kind),
-                hasWitness: !!spendEntry.spend.spend_kind.witness,
-                hasLegacy: !!spendEntry.spend.spend_kind.legacy,
-              });
-
-              if (spendEntry.spend.spend_kind.witness) {
-                console.log('[Vault] Witness spend:', {
-                  witnessKeys: Object.keys(spendEntry.spend.spend_kind.witness),
-                  seedCount: spendEntry.spend.spend_kind.witness.seeds?.length || 0,
-                  fee: spendEntry.spend.spend_kind.witness.fee,
-                });
-              }
-            }
-
-            if (spendEntry.spend.witness) {
-              console.log('[Vault] Witness spend (direct):', {
-                witnessKeys: Object.keys(spendEntry.spend.witness),
-                seedCount: spendEntry.spend.witness.seeds?.length || 0,
-                fee: spendEntry.spend.witness.fee,
-              });
-            }
-          }
         }
-
-        // Broadcast the transaction to the network
-        console.log('[Vault] Broadcasting transaction...');
-        const broadcastTxId = await rpcClient.sendTransaction(protobufTx);
-
-        console.log('[Vault]  Transaction broadcasted successfully:', broadcastTxId);
 
         return {
           txId: constructedTx.txId,
-          broadcasted: true,
-          protobufTx, // Include protobuf for debugging/export
+          protobufTx,
         };
       } finally {
         // Clean up WASM memory
@@ -1092,11 +1032,47 @@ export class Vault {
         masterKey.free();
       }
     } catch (error) {
-      console.error('[Vault] Error sending transaction:', error);
+      console.error('[Vault] Error building transaction:', error);
       return {
-        error: `Failed to send transaction: ${error instanceof Error ? error.message : String(error)}`,
+        error: `Failed to build transaction: ${error instanceof Error ? error.message : String(error)}`,
       };
     }
+  }
+
+  /**
+   * Send a transaction to the network
+   * This is the high-level API for sending NOCK to a recipient
+   * Combines buildAndSignTransaction + broadcastTransaction
+   *
+   * @param to - Recipient PKH address (base58-encoded digest string)
+   * @param amount - Amount in nicks
+   * @param fee - Transaction fee in nicks
+   * @returns Transaction ID and broadcast status
+   */
+  async sendTransaction(
+    to: string,
+    amount: number,
+    fee: number
+  ): Promise<{ txId: string; broadcasted: boolean; protobufTx?: any } | { error: string }> {
+    // Build and sign the transaction
+    const buildResult = await this.buildAndSignTransaction(to, amount, fee);
+
+    if ('error' in buildResult) {
+      return buildResult;
+    }
+
+    // Broadcast the signed transaction
+    const broadcastResult = await this.broadcastTransaction(buildResult.protobufTx);
+
+    if ('error' in broadcastResult) {
+      return broadcastResult;
+    }
+
+    return {
+      txId: buildResult.txId,
+      broadcasted: true,
+      protobufTx: buildResult.protobufTx,
+    };
   }
 
   /**

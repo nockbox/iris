@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { truncateAddress } from '../utils/format';
 import { AccountIcon } from '../components/AccountIcon';
 import { send } from '../utils/messaging';
-import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../shared/constants';
+import { INTERNAL_METHODS } from '../../shared/constants';
 import { nockToNick, formatNock, formatNick } from '../../shared/currency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
@@ -26,13 +26,69 @@ export function SendReviewScreen() {
   const feeInNicks = nockToNick(lastTransaction.fee);
   const total = formatNock(lastTransaction.amount + lastTransaction.fee);
   const totalInNicks = nockToNick(lastTransaction.amount + lastTransaction.fee);
-  const remainingBalance = formatNock(wallet.balance - lastTransaction.amount - lastTransaction.fee);
-  const usdValue = '$0.00'; // TODO: Get from real price feed
+  const remainingBalance = formatNock(
+    wallet.balance - lastTransaction.amount - lastTransaction.fee
+  );
   const fromAddress = truncateAddress(lastTransaction.from);
   const toAddress = truncateAddress(lastTransaction.to);
 
   const [isSending, setIsSending] = useState(false);
+  const [isBuilding, setIsBuilding] = useState(false);
   const [error, setError] = useState('');
+  const [builtTx, setBuiltTx] = useState<{
+    txid: string;
+    protobufTx: any;
+  } | null>(null);
+
+  // Build and sign transaction on screen load
+  useEffect(() => {
+    async function buildTransaction() {
+      if (!lastTransaction || builtTx) return;
+
+      setIsBuilding(true);
+      setError('');
+
+      try {
+        console.log('[SendReview] Building and signing transaction...');
+
+        const amountInNicks = nockToNick(lastTransaction.amount);
+        const feeInNicks = nockToNick(lastTransaction.fee);
+
+        // Build and sign (but don't broadcast) the transaction
+        const result = await send<{
+          txid?: string;
+          protobufTx?: any;
+          error?: string;
+        }>(INTERNAL_METHODS.BUILD_AND_SIGN_TRANSACTION, [
+          lastTransaction.to,
+          amountInNicks,
+          feeInNicks,
+        ]);
+
+        if (result?.error) {
+          setError(result.error);
+          setIsBuilding(false);
+          return;
+        }
+
+        if (result?.txid && result?.protobufTx) {
+          console.log('[SendReview] Transaction built and signed:', result.txid);
+          setBuiltTx({
+            txid: result.txid,
+            protobufTx: result.protobufTx,
+          });
+        }
+
+        setIsBuilding(false);
+      } catch (err) {
+        console.error('[SendReview] Error building transaction:', err);
+        setError(err instanceof Error ? err.message : 'Failed to build transaction');
+        setIsBuilding(false);
+      }
+    }
+
+    buildTransaction();
+  }, [lastTransaction, builtTx]);
 
   function handleBack() {
     navigate('send');
@@ -41,28 +97,43 @@ export function SendReviewScreen() {
     navigate('send');
   }
 
+  // Dev function: Download signed transaction for debugging
+  function handleDownloadTx() {
+    if (!builtTx?.protobufTx) {
+      console.warn('[SendReview] No transaction built yet');
+      return;
+    }
+
+    try {
+      const txJson = JSON.stringify(builtTx.protobufTx, null, 2);
+      const blob = new Blob([txJson], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tx-${builtTx.txid || 'unsigned'}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      console.log('[SendReview] Transaction downloaded');
+    } catch (err) {
+      console.error('[SendReview] Failed to download transaction:', err);
+    }
+  }
+
   async function handleSend() {
-    if (!lastTransaction) return;
+    if (!lastTransaction || !builtTx) return;
 
     setIsSending(true);
     setError('');
 
     try {
-      console.log('[SendReview] Sending transaction...');
+      console.log('[SendReview] Broadcasting transaction...');
 
-      const amountInNicks = nockToNick(lastTransaction.amount);
-      const feeInNicks = nockToNick(lastTransaction.fee);
-
-      // Call vault to build, sign, and broadcast transaction
+      // Broadcast the pre-built transaction
       const result = await send<{
         txid?: string;
         broadcasted?: boolean;
-        protobufTx?: any;
         error?: string;
-      }>(
-        INTERNAL_METHODS.SEND_TRANSACTION,
-        [lastTransaction.to, amountInNicks, feeInNicks]
-      );
+      }>(INTERNAL_METHODS.BROADCAST_TRANSACTION, [builtTx.protobufTx]);
 
       if (result?.error) {
         setError(result.error);
@@ -71,34 +142,31 @@ export function SendReviewScreen() {
       }
 
       if (result?.txid) {
-        console.log('[SendReview] Transaction sent! txid:', result.txid);
+        console.log('[SendReview] Transaction broadcasted! txid:', result.txid);
 
-        // Update lastTransaction with real txid and protobuf
+        // Update lastTransaction with txid and protobuf
         useStore.getState().setLastTransaction({
           ...lastTransaction,
-          txid: result.txid,
-          protobufTx: result.protobufTx,
+          txid: builtTx.txid,
+          protobufTx: builtTx.protobufTx,
         });
 
         // Add to transaction cache with pending status
         await useStore
           .getState()
           .addSentTransactionToCache(
-            result.txid,
+            builtTx.txid,
             lastTransaction.amount,
             lastTransaction.fee,
             lastTransaction.to || ''
           );
 
-        // Don't refresh balance immediately - transaction is pending mining
-        // Balance will update when transaction is mined into a block
-
         // Navigate to success screen
         navigate('send-submitted');
       }
     } catch (err) {
-      console.error('[SendReview] Error sending transaction:', err);
-      setError(err instanceof Error ? err.message : 'Failed to send transaction');
+      console.error('[SendReview] Error broadcasting transaction:', err);
+      setError(err instanceof Error ? err.message : 'Failed to broadcast transaction');
       setIsSending(false);
     }
   }
@@ -190,10 +258,7 @@ export function SendReviewScreen() {
             </div>
 
             {/* Network fee & Total */}
-            <div
-              className="rounded-lg p-3"
-              style={{ backgroundColor: 'var(--color-surface-800)' }}
-            >
+            <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--color-surface-800)' }}>
               <div className="flex flex-col gap-2.5 w-full">
                 {/* Fee row */}
                 <div className="flex items-center justify-between w-full">
@@ -212,10 +277,13 @@ export function SendReviewScreen() {
                     </div>
                   </div>
                 </div>
-                
+
                 {/* Divider */}
-                <div className="w-full h-px" style={{ backgroundColor: 'var(--color-surface-700)' }} />
-                
+                <div
+                  className="w-full h-px"
+                  style={{ backgroundColor: 'var(--color-surface-700)' }}
+                />
+
                 {/* Total row */}
                 <div className="flex items-center justify-between w-full">
                   <div className="text-sm font-semibold leading-[18px] tracking-[0.14px]">
@@ -246,12 +314,36 @@ export function SendReviewScreen() {
           </div>
 
           {/* Error message */}
-          {/* {error && (
+          {error && (
             <div className="px-4">
-              <Alert type="error">{error}</Alert>
+              <div
+                className="rounded-lg p-3 text-sm"
+                style={{ backgroundColor: 'var(--color-surface-800)', color: '#ff6b6b' }}
+              >
+                {error}
+              </div>
             </div>
-          )} */}
+          )}
         </div>
+
+        {/* DEV: Download signed transaction button */}
+        {builtTx?.protobufTx && (
+          <div className="px-4 pb-2">
+            <button
+              type="button"
+              onClick={handleDownloadTx}
+              className="w-full rounded-lg p-3 flex items-center justify-center transition-opacity hover:opacity-80"
+              style={{ backgroundColor: 'var(--color-surface-800)' }}
+            >
+              <span
+                className="text-sm font-medium leading-[18px] tracking-[0.14px]"
+                style={{ color: 'var(--color-text-primary)' }}
+              >
+                Download Signed Transaction (Dev)
+              </span>
+            </button>
+          </div>
+        )}
 
         {/* Actions */}
         <div
@@ -275,13 +367,13 @@ export function SendReviewScreen() {
             <button
               type="button"
               onClick={handleSend}
-              disabled={isSending}
+              disabled={isSending || isBuilding || !builtTx}
               className="flex-1 h-12 inline-flex items-center justify-center rounded-lg text-sm font-medium leading-[18px] tracking-[0.14px] transition-opacity focus:outline-none focus-visible:ring-2"
               style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
               onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
               onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
             >
-              {isSending ? 'Sending...' : 'Send'}
+              {isBuilding ? 'Building...' : isSending ? 'Sending...' : 'Send'}
             </button>
           </div>
         </div>

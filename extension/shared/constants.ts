@@ -10,13 +10,13 @@
  */
 export const PROVIDER_METHODS = {
   /** Request user's wallet accounts */
-  REQUEST_ACCOUNTS: "nock_requestAccounts",
+  REQUEST_ACCOUNTS: 'nock_requestAccounts',
 
   /** Sign an arbitrary message */
-  SIGN_MESSAGE: "nock_signMessage",
+  SIGN_MESSAGE: 'nock_signMessage',
 
   /** Sign and send a transaction */
-  SEND_TRANSACTION: "nock_sendTransaction",
+  SEND_TRANSACTION: 'nock_sendTransaction',
 } as const;
 
 /**
@@ -25,100 +25,103 @@ export const PROVIDER_METHODS = {
  */
 export const INTERNAL_METHODS = {
   /** Get current wallet state */
-  GET_STATE: "wallet:getState",
+  GET_STATE: 'wallet:getState',
 
   /** Unlock the wallet with password */
-  UNLOCK: "wallet:unlock",
+  UNLOCK: 'wallet:unlock',
 
   /** Lock the wallet */
-  LOCK: "wallet:lock",
+  LOCK: 'wallet:lock',
 
   /** Reset/delete the wallet (clears all data) */
-  RESET_WALLET: "wallet:resetWallet",
+  RESET_WALLET: 'wallet:resetWallet',
 
   /** Setup/create a new wallet */
-  SETUP: "wallet:setup",
+  SETUP: 'wallet:setup',
 
   /** Set auto-lock timeout in minutes */
-  SET_AUTO_LOCK: "wallet:setAutoLock",
+  SET_AUTO_LOCK: 'wallet:setAutoLock',
 
   /** Create a new account */
-  CREATE_ACCOUNT: "wallet:createAccount",
+  CREATE_ACCOUNT: 'wallet:createAccount',
 
   /** Switch to a different account */
-  SWITCH_ACCOUNT: "wallet:switchAccount",
+  SWITCH_ACCOUNT: 'wallet:switchAccount',
 
   /** Get all accounts */
-  GET_ACCOUNTS: "wallet:getAccounts",
+  GET_ACCOUNTS: 'wallet:getAccounts',
 
   /** Rename an account */
-  RENAME_ACCOUNT: "wallet:renameAccount",
+  RENAME_ACCOUNT: 'wallet:renameAccount',
 
   /** Update account styling (icon and color) */
-  UPDATE_ACCOUNT_STYLING: "wallet:updateAccountStyling",
+  UPDATE_ACCOUNT_STYLING: 'wallet:updateAccountStyling',
 
   /** Hide an account from the UI */
-  HIDE_ACCOUNT: "wallet:hideAccount",
+  HIDE_ACCOUNT: 'wallet:hideAccount',
 
   /** Get mnemonic phrase (requires password verification) */
-  GET_MNEMONIC: "wallet:getMnemonic",
+  GET_MNEMONIC: 'wallet:getMnemonic',
 
   /** Get auto-lock timeout setting */
-  GET_AUTO_LOCK: "wallet:getAutoLock",
+  GET_AUTO_LOCK: 'wallet:getAutoLock',
 
   /** Get wallet balance from blockchain */
-  GET_BALANCE: "wallet:getBalance",
+  GET_BALANCE: 'wallet:getBalance',
 
   /** Get pending transaction request for approval */
-  GET_PENDING_TRANSACTION: "wallet:getPendingTransaction",
+  GET_PENDING_TRANSACTION: 'wallet:getPendingTransaction',
 
   /** Add a transaction to the cache */
-  ADD_TRANSACTION_TO_CACHE: "wallet:addTransactionToCache",
+  ADD_TRANSACTION_TO_CACHE: 'wallet:addTransactionToCache',
 
   /** Update transaction status in cache */
-  UPDATE_TRANSACTION_STATUS: "wallet:updateTransactionStatus",
+  UPDATE_TRANSACTION_STATUS: 'wallet:updateTransactionStatus',
 
   /** Get cached transactions for current account */
-  GET_CACHED_TRANSACTIONS: "wallet:getCachedTransactions",
+  GET_CACHED_TRANSACTIONS: 'wallet:getCachedTransactions',
 
   /** Check if cache should be refreshed */
-  SHOULD_REFRESH_CACHE: "wallet:shouldRefreshCache",
+  SHOULD_REFRESH_CACHE: 'wallet:shouldRefreshCache',
 
   /** Approve pending transaction request */
-  APPROVE_TRANSACTION: "wallet:approveTransaction",
+  APPROVE_TRANSACTION: 'wallet:approveTransaction',
 
   /** Reject pending transaction request */
-  REJECT_TRANSACTION: "wallet:rejectTransaction",
+  REJECT_TRANSACTION: 'wallet:rejectTransaction',
 
   /** Get pending sign message request for approval */
-  GET_PENDING_SIGN_REQUEST: "wallet:getPendingSignRequest",
+  GET_PENDING_SIGN_REQUEST: 'wallet:getPendingSignRequest',
 
   /** Approve pending sign message request */
-  APPROVE_SIGN_MESSAGE: "wallet:approveSignMessage",
+  APPROVE_SIGN_MESSAGE: 'wallet:approveSignMessage',
 
   /** Reject pending sign message request */
-  REJECT_SIGN_MESSAGE: "wallet:rejectSignMessage",
+  REJECT_SIGN_MESSAGE: 'wallet:rejectSignMessage',
 
   /** Get pending connection request for approval */
-  GET_PENDING_CONNECTION: "wallet:getPendingConnection",
+  GET_PENDING_CONNECTION: 'wallet:getPendingConnection',
 
   /** Approve pending connection request */
-  APPROVE_CONNECTION: "wallet:approveConnection",
+  APPROVE_CONNECTION: 'wallet:approveConnection',
 
   /** Reject pending connection request */
-  REJECT_CONNECTION: "wallet:rejectConnection",
+  REJECT_CONNECTION: 'wallet:rejectConnection',
 
   /** Revoke origin permissions */
-  REVOKE_ORIGIN: "wallet:revokeOrigin",
+  REVOKE_ORIGIN: 'wallet:revokeOrigin',
 
   /** Sign a transaction (internal popup-initiated transactions) */
-  SIGN_TRANSACTION: "wallet:signTransaction",
+  SIGN_TRANSACTION: 'wallet:signTransaction',
+
+  /** Build and sign a transaction without broadcasting */
+  BUILD_AND_SIGN_TRANSACTION: 'wallet:buildAndSignTransaction',
 
   /** Send a transaction (internal popup-initiated transactions - builds, signs, and broadcasts) */
-  SEND_TRANSACTION: "wallet:sendTransaction",
+  SEND_TRANSACTION: 'wallet:sendTransaction',
 
   /** Broadcast a raw signed transaction (internal popup-initiated transactions) */
-  BROADCAST_TRANSACTION: "wallet:broadcastTransaction",
+  BROADCAST_TRANSACTION: 'wallet:broadcastTransaction',
 } as const;
 
 /**
@@ -134,40 +137,40 @@ export const RPC_METHODS = {
  */
 export const ERROR_CODES = {
   /** Wallet is locked, user needs to unlock */
-  LOCKED: "LOCKED",
+  LOCKED: 'LOCKED',
 
   /** No vault exists, user needs to create wallet */
-  NO_VAULT: "NO_VAULT",
+  NO_VAULT: 'NO_VAULT',
 
   /** Incorrect password provided */
-  BAD_PASSWORD: "BAD_PASSWORD",
+  BAD_PASSWORD: 'BAD_PASSWORD',
 
   /** Invalid address format */
-  BAD_ADDRESS: "BAD_ADDRESS",
+  BAD_ADDRESS: 'BAD_ADDRESS',
 
   /** Invalid mnemonic phrase provided */
-  INVALID_MNEMONIC: "INVALID_MNEMONIC",
+  INVALID_MNEMONIC: 'INVALID_MNEMONIC',
 
   /** Invalid account index provided */
-  INVALID_ACCOUNT_INDEX: "INVALID_ACCOUNT_INDEX",
+  INVALID_ACCOUNT_INDEX: 'INVALID_ACCOUNT_INDEX',
 
   /** No account selected */
-  NO_ACCOUNT: "NO_ACCOUNT",
+  NO_ACCOUNT: 'NO_ACCOUNT',
 
   /** Cannot hide the last visible account */
-  CANNOT_HIDE_LAST_ACCOUNT: "CANNOT_HIDE_LAST_ACCOUNT",
+  CANNOT_HIDE_LAST_ACCOUNT: 'CANNOT_HIDE_LAST_ACCOUNT',
 
   /** Unsupported RPC method requested */
-  METHOD_NOT_SUPPORTED: "METHOD_NOT_SUPPORTED",
+  METHOD_NOT_SUPPORTED: 'METHOD_NOT_SUPPORTED',
 
   /** Unauthorized: internal methods can only be called from popup/extension pages */
-  UNAUTHORIZED: "UNAUTHORIZED",
+  UNAUTHORIZED: 'UNAUTHORIZED',
 
   /** Requested resource not found (e.g., pending approval request) */
-  NOT_FOUND: "NOT_FOUND",
+  NOT_FOUND: 'NOT_FOUND',
 
   /** Invalid parameters provided to method */
-  INVALID_PARAMS: "INVALID_PARAMS",
+  INVALID_PARAMS: 'INVALID_PARAMS',
 } as const;
 
 /**
@@ -175,28 +178,28 @@ export const ERROR_CODES = {
  */
 export const STORAGE_KEYS = {
   /** Encrypted mnemonic data (iv, ct, salt) */
-  ENCRYPTED_VAULT: "enc",
+  ENCRYPTED_VAULT: 'enc',
 
   /** Array of accounts with name, address, and derivation index */
-  ACCOUNTS: "accounts",
+  ACCOUNTS: 'accounts',
 
   /** Current active account index */
-  CURRENT_ACCOUNT_INDEX: "currentAccountIndex",
+  CURRENT_ACCOUNT_INDEX: 'currentAccountIndex',
 
   /** Auto-lock timeout in minutes */
-  AUTO_LOCK_MINUTES: "autoLockMinutes",
+  AUTO_LOCK_MINUTES: 'autoLockMinutes',
 
   /** Onboarding state - tracks whether seed phrase backup is complete */
-  ONBOARDING_STATE: "onboardingState",
+  ONBOARDING_STATE: 'onboardingState',
 
   /** Array of approved origins (websites that can access wallet) */
-  APPROVED_ORIGINS: "approvedOrigins",
+  APPROVED_ORIGINS: 'approvedOrigins',
 
   /** Cached transaction history per account address */
-  TRANSACTION_CACHE: "transactionCache",
+  TRANSACTION_CACHE: 'transactionCache',
 
   /** Last transaction sync timestamp per account address */
-  LAST_TX_SYNC: "lastTxSync",
+  LAST_TX_SYNC: 'lastTxSync',
 } as const;
 
 /**
@@ -204,7 +207,7 @@ export const STORAGE_KEYS = {
  */
 export const ALARM_NAMES = {
   /** Auto-lock timeout alarm */
-  AUTO_LOCK: "autoLock",
+  AUTO_LOCK: 'autoLock',
 } as const;
 
 /**
@@ -212,7 +215,7 @@ export const ALARM_NAMES = {
  */
 export const MESSAGE_TARGETS = {
   /** Target identifier for wallet bridge messages */
-  WALLET_BRIDGE: "IRIS",
+  WALLET_BRIDGE: 'IRIS',
 } as const;
 
 /**
@@ -291,27 +294,27 @@ export const ACCOUNT_COLORS = [
  * After preset limit, random combinations are used
  */
 export const PRESET_WALLET_STYLES = [
-  { iconStyleId: 1, iconColor: '#FFC413' },  // Wallet 1: yellow, style 1
-  { iconStyleId: 5, iconColor: '#2C9AEF' },  // Wallet 2: blue, style 5
-  { iconStyleId: 9, iconColor: '#EF2C2F' },  // Wallet 3: red, style 9
-  { iconStyleId: 3, iconColor: '#96B839' },  // Wallet 4: green, style 3
+  { iconStyleId: 1, iconColor: '#FFC413' }, // Wallet 1: yellow, style 1
+  { iconStyleId: 5, iconColor: '#2C9AEF' }, // Wallet 2: blue, style 5
+  { iconStyleId: 9, iconColor: '#EF2C2F' }, // Wallet 3: red, style 9
+  { iconStyleId: 3, iconColor: '#96B839' }, // Wallet 4: green, style 3
   { iconStyleId: 12, iconColor: '#3C2CEF' }, // Wallet 5: purple, style 12
-  { iconStyleId: 7, iconColor: '#EF2CB1' },  // Wallet 6: pink, style 7
+  { iconStyleId: 7, iconColor: '#EF2CB1' }, // Wallet 6: pink, style 7
   { iconStyleId: 15, iconColor: '#2C6AEF' }, // Wallet 7: dark blue, style 15
-  { iconStyleId: 2, iconColor: '#EF2C2F' },  // Wallet 8: red, style 2
-  { iconStyleId: 6, iconColor: '#FFC413' },  // Wallet 9: yellow, style 6
+  { iconStyleId: 2, iconColor: '#EF2C2F' }, // Wallet 8: red, style 2
+  { iconStyleId: 6, iconColor: '#FFC413' }, // Wallet 9: yellow, style 6
   { iconStyleId: 10, iconColor: '#96B839' }, // Wallet 10: green, style 10
-  { iconStyleId: 4, iconColor: '#2C9AEF' },  // Wallet 11: blue, style 4
+  { iconStyleId: 4, iconColor: '#2C9AEF' }, // Wallet 11: blue, style 4
   { iconStyleId: 13, iconColor: '#EF2CB1' }, // Wallet 12: pink, style 13
-  { iconStyleId: 8, iconColor: '#3C2CEF' },  // Wallet 13: purple, style 8
+  { iconStyleId: 8, iconColor: '#3C2CEF' }, // Wallet 13: purple, style 8
   { iconStyleId: 14, iconColor: '#2C6AEF' }, // Wallet 14: dark blue, style 14
   { iconStyleId: 11, iconColor: '#EF2C2F' }, // Wallet 15: red, style 11
-  { iconStyleId: 1, iconColor: '#96B839' },  // Wallet 16: green, style 1
-  { iconStyleId: 5, iconColor: '#FFC413' },  // Wallet 17: yellow, style 5
-  { iconStyleId: 9, iconColor: '#2C9AEF' },  // Wallet 18: blue, style 9
-  { iconStyleId: 3, iconColor: '#3C2CEF' },  // Wallet 19: purple, style 3
+  { iconStyleId: 1, iconColor: '#96B839' }, // Wallet 16: green, style 1
+  { iconStyleId: 5, iconColor: '#FFC413' }, // Wallet 17: yellow, style 5
+  { iconStyleId: 9, iconColor: '#2C9AEF' }, // Wallet 18: blue, style 9
+  { iconStyleId: 3, iconColor: '#3C2CEF' }, // Wallet 19: purple, style 3
   { iconStyleId: 12, iconColor: '#EF2CB1' }, // Wallet 20: pink, style 12
-  { iconStyleId: 7, iconColor: '#2C6AEF' },  // Wallet 21: dark blue, style 7
+  { iconStyleId: 7, iconColor: '#2C6AEF' }, // Wallet 21: dark blue, style 7
 ] as const;
 
 /**

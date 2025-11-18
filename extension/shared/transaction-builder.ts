@@ -14,6 +14,7 @@ import initTxWasm, {
   WasmLockPrimitive,
   WasmLockTim,
   WasmTimelockRange,
+  wasmBuildId,
 } from '../lib/nbx-wasm/nbx_wasm.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { deriveFirstNameFromLockHash } from './first-name-derivation.js';
@@ -42,6 +43,8 @@ async function ensureTxWasmInit(): Promise<void> {
     const txWasmUrl = chrome.runtime.getURL('lib/nbx-wasm/nbx_wasm_bg.wasm');
     await initTxWasm({ module_or_path: txWasmUrl });
     txWasmInitialized = true;
+    // CANARY: Verify which WASM build is loaded
+    console.log('[TxBuilder] 🐤 WASM build:', wasmBuildId());
   }
 }
 
