@@ -489,7 +489,7 @@ export function HomeScreen() {
               <DropdownItem
                 icon={ExplorerIcon}
                 label="View on explorer"
-                onClick={() => window.open('https://nockscan.net/holders', '_blank')}
+                onClick={() => window.open(`https://nockscan.net/address/${currentAccount?.address}`, '_blank')}
               />
               <DropdownItem
                 icon={PermissionsIcon}
