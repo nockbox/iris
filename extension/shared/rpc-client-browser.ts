@@ -9,7 +9,7 @@ import { base58 } from '@scure/base';
 import { ensureWasmInitialized } from './wasm-utils.js';
 
 // RPC endpoint configuration
-// NOTE: Using local grpcwebproxy (gRPC-web → gRPC for rpc.nockchain.net)
+
 const DEFAULT_ENDPOINT = 'https://rpc.nockbox.org';
 
 /**
@@ -214,23 +214,22 @@ export class NockchainBrowserRPCClient {
     const noteData = noteVersion?.V1 || protoNote.v1;
 
     // DEBUG: Log what we're getting from RPC
-    console.log('[RPC Browser] convertProtoNote - balanceEntry keys:', Object.keys(balanceEntry));
-    console.log('[RPC Browser] convertProtoNote - noteDataHash:', noteDataHash);
-    console.log(
-      '[RPC Browser] convertProtoNote - balanceEntry.note_data_hash:',
-      balanceEntry.note_data_hash
-    );
-    console.log(
-      '[RPC Browser] convertProtoNote - protoNote.note_data_hash:',
-      protoNote.note_data_hash
-    );
-    console.log('[RPC Browser] convertProtoNote - protoNote keys:', Object.keys(protoNote));
-    console.log('[RPC Browser] convertProtoNote - noteVersion:', noteVersion);
+    console.log('[RPC Browser] ===== FULL BALANCE ENTRY DEBUG =====');
+    console.log('[RPC Browser] balanceEntry keys:', Object.keys(balanceEntry));
+    console.log('[RPC Browser] balanceEntry.source:', balanceEntry.source);
+    console.log('[RPC Browser] balanceEntry.output_source:', balanceEntry.output_source);
+    console.log('[RPC Browser] protoNote keys:', Object.keys(protoNote));
+    console.log('[RPC Browser] protoNote.source:', protoNote.source);
+    console.log('[RPC Browser] protoNote.output_source:', protoNote.output_source);
+    console.log('[RPC Browser] noteVersion:', noteVersion);
+    console.log('[RPC Browser] noteDataHash:', noteDataHash);
 
     // Check if there's noteData in the response
     if (noteData) {
-      console.log('[RPC Browser] convertProtoNote - noteData keys:', Object.keys(noteData));
-      console.log('[RPC Browser] convertProtoNote - noteData.note_data:', noteData.note_data);
+      console.log('[RPC Browser] noteData keys:', Object.keys(noteData));
+      console.log('[RPC Browser] noteData.source:', noteData.source);
+      console.log('[RPC Browser] noteData.output_source:', noteData.output_source);
+      console.log('[RPC Browser] noteData.note_data:', noteData.note_data);
       if (noteData.note_data) {
         console.log(
           '[RPC Browser] convertProtoNote - noteData.note_data.entries:',

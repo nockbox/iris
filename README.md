@@ -8,7 +8,6 @@ Chrome extension wallet for Nockchain. Manage accounts, sign transactions, and i
 
 - Node.js 18+
 - Chrome browser
-- [grpcwebproxy](https://github.com/improbable-eng/grpc-web/tree/master/go/grpcwebproxy) (install with `go install github.com/improbable-eng/grpc-web/go/grpcwebproxy@latest`)
 
 ### Setup
 
@@ -23,17 +22,6 @@ npm install
 # Build extension
 npm run build
 ```
-
-### Start gRPC Proxy
-
-The extension requires a local gRPC-web proxy to communicate with the blockchain:
-
-```bash
-grpcwebproxy --backend_addr=rpc.nockchain.net:443 --backend_tls=true \
-  --run_tls_server=false --allow_all_origins --server_http_debug_port=8080
-```
-
-Keep this running in a separate terminal.
 
 ### Load in Chrome
 
