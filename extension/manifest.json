@@ -43,8 +43,6 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "lib/nbx-crypto/*.wasm",
-        "lib/nbx-crypto/*.js",
         "lib/nbx-wasm/*.wasm",
         "lib/nbx-wasm/*.js"
       ],

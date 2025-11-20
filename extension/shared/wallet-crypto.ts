@@ -8,7 +8,7 @@ import {
   validateMnemonic as validateMnemonicScure,
 } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import { deriveMasterKeyFromMnemonic } from "../lib/nbx-crypto/nbx_crypto.js";
+import { deriveMasterKeyFromMnemonic } from "../lib/nbx-wasm/nbx_wasm.js";
 import { publicKeyToPKH } from "./address-encoding";
 import { ensureWasmInitialized as ensureWasmInit } from "./wasm-utils";
 

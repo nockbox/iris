@@ -7,17 +7,9 @@ This directory contains WebAssembly modules used by the wallet extension.
 ### nbx-wasm
 
 **Source**: `github.com/nockbox/wallet`
-**Purpose**: Transaction building, gRPC client, address derivation, first-name derivation
-
-### nbx-crypto (External Module)
-
-**Source**: External `nockchain-tx` repo
-**Purpose**: Message signing only (`signDigest`, `tip5Hash`)
-**Note**: WASM file is committed to repo - no build needed
+**Purpose**: Transaction building, gRPC client, address derivation, first-name derivation, message signing
 
 ## Building & Updating
-
-**Only nbx-wasm needs to be built.** The nbx-crypto module is external and already included in the repo.
 
 ### Prerequisites
 
@@ -51,9 +43,9 @@ npm run build
 
 - **Transactions**: nbx-wasm (TxBuilder, GrpcClient)
 - **Balance Queries**: nbx-wasm (GrpcClient, SpendCondition.firstName)
-- **Address Derivation**: nbx-wasm (hashPublicKey)
-- **Message Signing**: nbx-crypto (tip5Hash, signDigest)
+- **Address Derivation**: nbx-wasm (hashPublicKey, deriveMasterKeyFromMnemonic)
+- **Message Signing**: nbx-wasm (signMessage)
 
 **Initialization:**
-- nbx-crypto and nbx-wasm: `extension/shared/wasm-utils.ts`
+- nbx-wasm: `extension/shared/wasm-utils.ts`
 - First-name derivation: `extension/shared/first-name-derivation.ts`

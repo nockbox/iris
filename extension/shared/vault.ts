@@ -12,8 +12,10 @@ import {
 import { ERROR_CODES, STORAGE_KEYS, ACCOUNT_COLORS, PRESET_WALLET_STYLES } from './constants';
 import { Account } from './types';
 import { buildPayment, type Note as TxBuilderNote } from './transaction-builder';
-import { signDigest, tip5Hash } from '../lib/nbx-crypto/nbx_crypto.js';
-import { deriveMasterKeyFromMnemonic } from '../lib/nbx-wasm/nbx_wasm.js';
+import {
+  deriveMasterKeyFromMnemonic,
+  signMessage as wasmSignMessage,
+} from '../lib/nbx-wasm/nbx_wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
 import type { Note as BalanceNote } from './types';
@@ -710,7 +712,7 @@ export class Vault {
     await initWasmModules();
 
     const msg = (Array.isArray(params) ? params[0] : params) ?? '';
-    const msgBytes = new TextEncoder().encode(String(msg));
+    const msgString = String(msg);
 
     // Derive the account's private key based on derivation method
     const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
@@ -730,13 +732,17 @@ export class Vault {
       throw new Error('Cannot sign: no private key available');
     }
 
-    // Hash the message with TIP5
-    const digest = tip5Hash(msgBytes);
+    // Sign the message
+    const signature = wasmSignMessage(accountKey.private_key, msgString);
 
-    // Sign the digest
-    const signatureJson = signDigest(accountKey.private_key, digest);
+    // Convert signature to JSON format
+    const signatureJson = JSON.stringify({
+      c: Array.from(signature.c),
+      s: Array.from(signature.s),
+    });
 
     // Clean up WASM memory
+    signature.free();
     if (currentAccount?.derivation !== 'master') {
       accountKey.free();
     }
@@ -833,7 +839,7 @@ export class Vault {
         amount,
         accountKey.public_key, // For creating spend condition
         accountKey.private_key,
-        fee,
+        fee
       );
 
       // Return constructed transaction (for caller to broadcast)
@@ -939,7 +945,7 @@ export class Vault {
           amount,
           accountKey.public_key,
           accountKey.private_key,
-          fee,
+          fee
         );
 
         console.log('[Vault] Transaction signed:', constructedTx.txId);
@@ -1108,7 +1114,7 @@ export class Vault {
           amount,
           accountKey.public_key,
           accountKey.private_key,
-          fee,
+          fee
         );
 
         console.log('[Vault] Transaction signed:', constructedTx.txId);

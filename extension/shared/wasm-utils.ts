@@ -3,15 +3,13 @@
  * Centralized utilities for loading and initializing WASM modules
  */
 
-import initCryptoWasm from '../lib/nbx-crypto/nbx_crypto';
-import initWasmTx from '../lib/nbx-wasm/nbx_wasm';
+import initWasm from '../lib/nbx-wasm/nbx_wasm';
 
 /**
  * WASM module paths relative to extension root
  */
 export const WASM_PATHS = {
-  CRYPTO: 'lib/nbx-crypto/nbx_crypto_bg.wasm',
-  TX_BUILDER: 'lib/nbx-wasm/nbx_wasm_bg.wasm',
+  NBX_WASM: 'lib/nbx-wasm/nbx_wasm_bg.wasm',
 } as const;
 
 /**
@@ -27,21 +25,17 @@ export function getWasmUrl(path: string): string {
  */
 export function getWasmUrls() {
   return {
-    crypto: getWasmUrl(WASM_PATHS.CRYPTO),
-    txBuilder: getWasmUrl(WASM_PATHS.TX_BUILDER),
+    nbxWasm: getWasmUrl(WASM_PATHS.NBX_WASM),
   };
 }
 
 /**
- * Initialize both crypto and transaction builder WASM modules
+ * Initialize WASM modules
  * This is a common pattern used throughout the codebase
  */
 export async function initWasmModules(): Promise<void> {
   const urls = getWasmUrls();
-  await Promise.all([
-    initCryptoWasm({ module_or_path: urls.crypto }),
-    initWasmTx({ module_or_path: urls.txBuilder }),
-  ]);
+  await initWasm({ module_or_path: urls.nbxWasm });
 }
 
 /**

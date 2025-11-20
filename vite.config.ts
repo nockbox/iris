@@ -48,9 +48,6 @@ export default defineConfig({
             if (assetInfo.name.includes('nbx_wasm')) {
               return 'lib/nbx-wasm/[name][extname]';
             }
-            if (assetInfo.name.includes('nbx_crypto')) {
-              return 'lib/nbx-crypto/[name][extname]';
-            }
             return 'lib/[name][extname]';
           }
           return 'assets/[name]-[hash][extname]';
