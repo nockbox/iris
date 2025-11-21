@@ -224,7 +224,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     spendConditions,
     new WasmDigest(recipientPKH),
     BigInt(amount), // gift
-    BigInt(1 << 16), // fee_per_word: 65,536 nicks = 1 NOCK per word
+    BigInt(1 << 15), // fee_per_word: 32,768 nicks = 0.5 NOCK per word
     fee !== undefined ? BigInt(fee) : null, // fee_override (null = auto-calculate)
     new WasmDigest(refundPKH),
     includeLockData,
