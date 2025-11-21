@@ -7,10 +7,7 @@ import { GrpcClient } from '../lib/nbx-wasm/nbx_wasm.js';
 import type { Note } from './types';
 import { base58 } from '@scure/base';
 import { ensureWasmInitialized } from './wasm-utils.js';
-
-// RPC endpoint configuration
-
-const DEFAULT_ENDPOINT = 'https://rpc.nockbox.org';
+import { RPC_ENDPOINT } from './constants.js';
 
 /**
  * Browser RPC client for Nockchain blockchain
@@ -21,7 +18,7 @@ export class NockchainBrowserRPCClient {
   private client: GrpcClient | null = null;
   private endpoint: string;
 
-  constructor(endpoint: string = DEFAULT_ENDPOINT) {
+  constructor(endpoint: string = RPC_ENDPOINT) {
     this.endpoint = endpoint;
   }
 
@@ -368,8 +365,8 @@ export class NockchainBrowserRPCClient {
 
 /**
  * Create a browser client instance
- * @param endpoint - gRPC-web endpoint URL (defaults to local proxy)
+ * @param endpoint - gRPC-web endpoint URL (defaults to RPC_ENDPOINT)
  */
-export function createBrowserClient(endpoint = DEFAULT_ENDPOINT): NockchainBrowserRPCClient {
+export function createBrowserClient(endpoint = RPC_ENDPOINT): NockchainBrowserRPCClient {
   return new NockchainBrowserRPCClient(endpoint);
 }

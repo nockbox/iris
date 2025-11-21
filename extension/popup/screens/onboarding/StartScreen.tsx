@@ -3,7 +3,7 @@
  */
 
 import { useStore } from "../../store";
-import logoSvg from "../../assets/iris-logo.svg";
+import { AnimatedLogo } from "../../components/AnimatedLogo";
 import vectorLeft from "../../assets/vector-left.svg";
 import vectorRight from "../../assets/vector-right.svg";
 import vectorTopRight from "../../assets/vector-top-right.svg";
@@ -62,8 +62,8 @@ export function StartScreen() {
         {/* Top section: Logo and text */}
         <div className="flex flex-col items-center gap-8 w-full">
           {/* Logo */}
-          <div className="w-[104px] h-[104px]">
-            <img src={logoSvg} alt="Iris Logo" className="w-full h-full" />
+          <div className="w-[104px] h-[104px] flex items-center justify-center">
+            <AnimatedLogo />
           </div>
 
           {/* Text content */}

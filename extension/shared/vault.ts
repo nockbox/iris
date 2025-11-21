@@ -11,7 +11,7 @@ import {
 } from './wallet-crypto';
 import { ERROR_CODES, STORAGE_KEYS, ACCOUNT_COLORS, PRESET_WALLET_STYLES } from './constants';
 import { Account } from './types';
-import { buildPayment, type Note as TxBuilderNote } from './transaction-builder';
+import { buildMultiNotePayment, type Note as TxBuilderNote } from './transaction-builder';
 import {
   deriveMasterKeyFromMnemonic,
   signMessage as wasmSignMessage,
@@ -809,35 +809,25 @@ export class Vault {
       // Combine simple and coinbase notes
       const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
 
-      // Calculate total amount needed (amount + fee)
-      const totalNeeded = amount + (fee || 0);
+      // Calculate total available
+      const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
+      console.log(
+        `[Vault] Passing ${notes.length} UTXO(s) to WASM (total: ${totalAvailable} nicks, need: ${amount} + fee)`
+      );
 
-      // UTXO selection: find a note with sufficient balance
-      // Simple strategy: use the first note that has enough funds
-      const selectedNote = notes.find(note => note.assets >= totalNeeded);
-
-      if (!selectedNote) {
-        // Calculate total balance
-        const totalBalance = notes.reduce((sum, note) => sum + note.assets, 0);
-        throw new Error(
-          `Insufficient balance. Need ${totalNeeded} nicks (${amount} + ${fee} fee), ` +
-            `but wallet only has ${totalBalance} nicks across ${notes.length} UTXOs. ` +
-            `Multi-UTXO transactions not yet implemented.`
-        );
-      }
-
-      console.log('[Vault] Selected UTXO with', selectedNote.assets, 'nicks');
-
-      // Convert note to transaction builder format
-      // Pass owner's PKH to compute correct note_data_hash for input note
-      const txBuilderNote = await convertNoteForTxBuilder(selectedNote, currentAccount.address);
+      // Convert ALL notes to transaction builder format
+      // WASM will automatically select the minimum number needed
+      const txBuilderNotes = await Promise.all(
+        notes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
+      );
 
       // Build and sign the transaction
-      const constructedTx = await buildPayment(
-        txBuilderNote,
-        to, // Recipient PKH digest string
+      // WASM will automatically select the minimum number of notes needed
+      const constructedTx = await buildMultiNotePayment(
+        txBuilderNotes,
+        to,
         amount,
-        accountKey.public_key, // For creating spend condition
+        accountKey.public_key,
         accountKey.private_key,
         fee
       );
@@ -854,12 +844,130 @@ export class Vault {
   }
 
   /**
+   * Estimate transaction fee by building (but not broadcasting) a tx via WASM
+   * Uses the same path as real sends (buildMultiNotePayment) so it's SW-safe
+   *
+   * @param to - Recipient PKH address (base58-encoded)
+   * @param amount - Amount in nicks
+   * @returns Estimated fee in nicks, or { error } if estimation fails
+   */
+  async estimateTransactionFee(
+    to: string,
+    amount: number
+  ): Promise<{ fee: number } | { error: string }> {
+    if (this.state.locked || !this.mnemonic) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    try {
+      // Initialize WASM modules (same as sign/send)
+      await initWasmModules();
+
+      // Derive keys
+      const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
+      const accountKey =
+        currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+
+      if (!accountKey.private_key || !accountKey.public_key) {
+        if (currentAccount.derivation !== 'master') {
+          accountKey.free();
+        }
+        masterKey.free();
+        return { error: 'Cannot estimate fee: keys unavailable' };
+      }
+
+      try {
+        const rpcClient = createBrowserClient();
+
+        console.log('[Vault] Fetching UTXOs for fee estimation...');
+        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
+
+        if (balanceResult.utxoCount === 0) {
+          return { error: 'No UTXOs available. Your wallet may have zero balance.' };
+        }
+
+        const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+
+        const txBuilderNotes = await Promise.all(
+          notes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
+        );
+
+        // Build a tx with fee = undefined → WASM auto-calculates using DEFAULT_FEE_PER_WORD
+        // If the first pass fails with "Insufficient fee", try again with the needed fee
+        let feeNicks: number;
+
+        try {
+          const constructedTx = await buildMultiNotePayment(
+            txBuilderNotes,
+            to,
+            amount,
+            accountKey.public_key,
+            accountKey.private_key,
+            undefined // let WASM auto-calc
+          );
+
+          // Inspect protobuf to read fee from witness
+          const protobufTx = constructedTx.rawTx.toProtobuf();
+
+          // Extract fee from the witness structure
+          const spendEntry = protobufTx.spends?.[0];
+          const feeValue =
+            spendEntry?.spend?.spend_kind?.witness?.fee ?? spendEntry?.spend?.witness?.fee;
+
+          if (feeValue === undefined || feeValue === null) {
+            return { error: 'Could not determine fee from constructed transaction' };
+          }
+
+          // Normalize to number (handle bigint/string/number)
+          const normalize = (v: any): number => {
+            if (typeof v === 'bigint') return Number(v);
+            if (typeof v === 'string') return Number(BigInt(v));
+            return Number(v);
+          };
+
+          feeNicks = normalize(feeValue);
+        } catch (error) {
+          // If we get "Insufficient fee", extract the needed fee from the error
+          const errorMsg = error instanceof Error ? error.message : String(error);
+          const insufficientFeeMatch = errorMsg.match(/needed: (\d+)/);
+
+          if (insufficientFeeMatch) {
+            feeNicks = parseInt(insufficientFeeMatch[1], 10);
+            console.log('[Vault] Extracted needed fee from error:', feeNicks, 'nicks');
+          } else {
+            throw error; // Re-throw if it's not an insufficient fee error
+          }
+        }
+
+        console.log('[Vault] Estimated fee:', feeNicks, 'nicks');
+        return { fee: feeNicks };
+      } finally {
+        if (currentAccount.derivation !== 'master') {
+          accountKey.free();
+        }
+        masterKey.free();
+      }
+    } catch (error) {
+      console.error('[Vault] Fee estimation failed:', error);
+      return {
+        error: 'Fee estimation failed: ' + (error instanceof Error ? error.message : String(error)),
+      };
+    }
+  }
+
+  /**
    * Build and sign a transaction without broadcasting it
    * This allows the UI to pre-build transactions for review before broadcasting
    *
    * @param to - Recipient PKH address (base58-encoded digest string)
    * @param amount - Amount in nicks
-   * @param fee - Transaction fee in nicks
+   * @param fee - Transaction fee in nicks (optional, WASM will auto-calculate if not provided)
    * @returns Transaction ID and protobuf transaction object (not broadcasted)
    */
   async buildAndSignTransaction(
@@ -910,37 +1018,31 @@ export class Vault {
         // Combine simple and coinbase notes
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
 
-        // Calculate total amount needed (amount + fee)
-        const totalNeeded = amount + fee;
+        // Calculate total available
+        const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
+        console.log(
+          `[Vault] Passing ${notes.length} UTXO(s) to WASM (total: ${totalAvailable} nicks, need: ${amount} + fee)`
+        );
 
-        // UTXO selection: find a note with sufficient balance
-        const selectedNote = notes.find(note => note.assets >= totalNeeded);
-
-        if (!selectedNote) {
-          const totalBalance = notes.reduce((sum, note) => sum + note.assets, 0);
-          return {
-            error:
-              `Insufficient balance. Need ${totalNeeded} nicks (${amount} + ${fee} fee), ` +
-              `but wallet only has ${totalBalance} nicks across ${notes.length} UTXOs. ` +
-              `Multi-UTXO transactions not yet implemented.`,
-          };
-        }
-
-        console.log('[Vault] Selected UTXO with', selectedNote.assets, 'nicks');
-
-        // Convert note to transaction builder format
-        const txBuilderNote = await convertNoteForTxBuilder(selectedNote, currentAccount.address);
+        // Convert ALL notes to transaction builder format
+        // WASM will automatically select the minimum number needed
+        const txBuilderNotes = await Promise.all(
+          notes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
+        );
 
         // Build and sign the transaction
         console.log('[Vault] Building transaction with params:', {
           recipientPKH: to.slice(0, 20) + '...',
+          availableInputs: txBuilderNotes.length,
           amount,
-          fee,
+          fee: fee !== undefined ? fee : 'auto-calculated by WASM',
           senderPublicKey: base58.encode(accountKey.public_key).slice(0, 20) + '...',
         });
 
-        const constructedTx = await buildPayment(
-          txBuilderNote,
+        // Always use buildMultiNotePayment - it handles both single and multiple notes
+        // WASM will automatically select the minimum number of notes needed
+        const constructedTx = await buildMultiNotePayment(
+          txBuilderNotes,
           to,
           amount,
           accountKey.public_key,
@@ -1064,52 +1166,31 @@ export class Vault {
         // Combine simple and coinbase notes
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
 
-        // Calculate total amount needed (amount + fee)
-        const totalNeeded = amount + (fee || 0);
+        // Calculate total available
+        const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
+        console.log(
+          `[Vault] Passing ${notes.length} UTXO(s) to WASM (total: ${totalAvailable} nicks, need: ${amount} + fee)`
+        );
 
-        // UTXO selection: find a note with sufficient balance
-        const selectedNote = notes.find(note => note.assets >= totalNeeded);
-
-        if (!selectedNote) {
-          const totalBalance = notes.reduce((sum, note) => sum + note.assets, 0);
-          return {
-            error:
-              `Insufficient balance. Need ${totalNeeded} nicks (${amount} + ${fee} fee), ` +
-              `but wallet only has ${totalBalance} nicks across ${notes.length} UTXOs. ` +
-              `Multi-UTXO transactions not yet implemented.`,
-          };
-        }
-
-        console.log('[Vault] Selected UTXO with', selectedNote.assets, 'nicks');
-        console.log('[Vault] Selected note details:', {
-          version: selectedNote.version,
-          originPage: selectedNote.originPage.toString(),
-          assets: selectedNote.assets,
-          hasNameFirstBase58: !!selectedNote.nameFirstBase58,
-          hasNoteDataHashBase58: !!selectedNote.noteDataHashBase58,
-        });
-
-        // Convert note to transaction builder format
-        // Pass owner's PKH to compute correct note_data_hash for input note
-        const txBuilderNote = await convertNoteForTxBuilder(selectedNote, currentAccount.address);
-        console.log('[Vault] Converted note for tx builder:', {
-          originPage: txBuilderNote.originPage,
-          nameFirst: txBuilderNote.nameFirst.slice(0, 20) + '...',
-          nameLast: txBuilderNote.nameLast.slice(0, 20) + '...',
-          noteDataHash: txBuilderNote.noteDataHash.slice(0, 20) + '...',
-          assets: txBuilderNote.assets,
-        });
+        // Convert ALL notes to transaction builder format
+        // WASM will automatically select the minimum number needed
+        const txBuilderNotes = await Promise.all(
+          notes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
+        );
 
         // Build and sign the transaction
         console.log('[Vault] Building transaction with params:', {
           recipientPKH: to.slice(0, 20) + '...',
+          availableInputs: txBuilderNotes.length,
           amount,
-          fee,
+          fee: fee !== undefined ? fee : 'auto-calculated by WASM',
           senderPublicKey: base58.encode(accountKey.public_key).slice(0, 20) + '...',
         });
 
-        const constructedTx = await buildPayment(
-          txBuilderNote,
+        // Always use buildMultiNotePayment - it handles both single and multiple notes
+        // WASM will automatically select the minimum number of notes needed
+        const constructedTx = await buildMultiNotePayment(
+          txBuilderNotes,
           to,
           amount,
           accountKey.public_key,

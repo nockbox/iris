@@ -16,7 +16,6 @@ import { SentArrowIcon } from '../components/icons/SentArrowIcon';
 import { ArrowUpRightIcon } from '../components/icons/ArrowUpRightIcon';
 
 import WalletDropdownArrow from '../assets/wallet-dropdown-arrow.svg';
-import GreenStatusDot from '../assets/green-status-dot.svg';
 import LockIconAsset from '../assets/lock-icon.svg';
 import SettingsIconAsset from '../assets/settings-icon.svg';
 import TrendUpArrow from '../assets/trend-up-arrow.svg';
@@ -56,6 +55,7 @@ export function HomeScreen() {
   const [settingsDropdownOpen, setSettingsDropdownOpen] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedAddress, setCopiedAddress] = useState(false);
+  const [isConnected, setIsConnected] = useState(true);
 
   const headerRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -104,6 +104,21 @@ export function HomeScreen() {
   useEffect(() => {
     console.log('[HomeScreen] Cached transactions updated:', cachedTransactions);
   }, [cachedTransactions]);
+
+  // Poll RPC connection status
+  useEffect(() => {
+    async function checkConnection() {
+      const result = await send<{ connected?: boolean }>(
+        INTERNAL_METHODS.GET_CONNECTION_STATUS,
+        []
+      );
+      setIsConnected(result?.connected ?? true);
+    }
+
+    checkConnection(); // Initial check
+    const interval = setInterval(checkConnection, 5000); // Check every 5 seconds
+    return () => clearInterval(interval);
+  }, []);
 
   // Get accounts from vault (filter out hidden accounts)
   const accounts = (wallet.accounts || []).filter(acc => !acc.hidden);
@@ -313,10 +328,12 @@ export function HomeScreen() {
                   color={currentAccount?.iconColor}
                   className="h-6 w-6"
                 />
-                <img
-                  src={GreenStatusDot}
-                  alt="Active"
-                  className="absolute -bottom-px -right-0.5 h-2 w-2"
+                <div
+                  className="absolute -bottom-px -right-0.5 h-2 w-2 rounded-full"
+                  style={{
+                    backgroundColor: isConnected ? 'var(--color-green)' : 'var(--color-red)',
+                  }}
+                  title={isConnected ? 'Connected' : 'Disconnected'}
                 />
               </div>
               <div className="flex flex-col min-w-0">

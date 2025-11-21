@@ -258,13 +258,18 @@ export const useStore = create<AppStore>((set, get) => ({
         currentAccount: Account | null;
       }>(INTERNAL_METHODS.GET_STATE);
 
+      // Load cached balances from storage (for offline access)
+      const { STORAGE_KEYS } = await import('../shared/constants');
+      const stored = await chrome.storage.local.get([STORAGE_KEYS.CACHED_BALANCES]);
+      const cachedBalances = (stored[STORAGE_KEYS.CACHED_BALANCES] || {}) as Record<string, number>;
+
       const walletState: WalletState = {
         locked: state.locked,
         address: state.address || null,
         accounts: state.accounts || [],
         currentAccount: state.currentAccount || null,
-        balance: 0, // Will be fetched separately
-        accountBalances: {}, // Will be populated when fetching balances
+        balance: state.currentAccount ? cachedBalances[state.currentAccount.address] || 0 : 0,
+        accountBalances: cachedBalances, // Load all cached balances
       };
 
       // Determine initial screen
@@ -328,6 +333,7 @@ export const useStore = create<AppStore>((set, get) => ({
       // Import balance query functions lazily to avoid circular dependencies
       const { createBrowserClient } = await import('../shared/rpc-client-browser');
       const { queryV1Balance } = await import('../shared/balance-query');
+      const { STORAGE_KEYS } = await import('../shared/constants');
 
       const currentAccount = get().wallet.currentAccount;
       if (!currentAccount) {
@@ -344,19 +350,28 @@ export const useStore = create<AppStore>((set, get) => ({
       console.log('[Store] ✅ Balance fetched:', balanceResult.totalNock, 'NOCK');
 
       const currentWallet = get().wallet;
+      const updatedBalances = {
+        ...currentWallet.accountBalances,
+        [currentAccount.address]: balanceResult.totalNock || 0,
+      };
+
+      // Save updated balances to storage for offline access
+      await chrome.storage.local.set({
+        [STORAGE_KEYS.CACHED_BALANCES]: updatedBalances,
+      });
+
       set({
         wallet: {
           ...currentWallet,
           balance: balanceResult.totalNock || 0,
-          accountBalances: {
-            ...currentWallet.accountBalances,
-            [currentAccount.address]: balanceResult.totalNock || 0,
-          },
+          accountBalances: updatedBalances,
         },
         isBalanceFetching: false,
       });
     } catch (error) {
       console.error('[Store] Failed to fetch balance:', error);
+      // Don't reset balance on error - keep showing cached value
+      // Offline doesn't mean zero balance
       set({ isBalanceFetching: false });
     }
   },

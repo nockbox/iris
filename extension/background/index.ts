@@ -13,9 +13,9 @@ import {
   AUTOLOCK_MINUTES,
   STORAGE_KEYS,
   USER_ACTIVITY_METHODS,
-  DEFAULT_TRANSACTION_FEE,
   UI_CONSTANTS,
   APPROVAL_CONSTANTS,
+  RPC_ENDPOINT,
 } from '../shared/constants';
 import type { TransactionRequest, SignRequest, ConnectRequest } from '../shared/types';
 
@@ -39,6 +39,43 @@ let approvedOrigins = new Set<string>();
  * Prevents replay attacks on approval requests
  */
 const REQUEST_EXPIRATION_MS = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * RPC connection status
+ */
+let isRpcConnected = true;
+
+/**
+ * Check RPC connection health
+ * Uses a simple fetch to avoid document/DOM dependencies in service worker
+ */
+async function checkRpcConnection() {
+  try {
+    // Simple connectivity check with timeout - ping the RPC endpoint
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+
+    await fetch(RPC_ENDPOINT, {
+      method: 'HEAD',
+      mode: 'no-cors', // Avoid CORS issues for health check
+      signal: controller.signal,
+    });
+
+    clearTimeout(timeoutId);
+
+    // If we get here without throwing, connection is OK
+    if (!isRpcConnected) {
+      isRpcConnected = true;
+      console.log('[Background] RPC connection restored');
+    }
+  } catch (error) {
+    // Connection failed (timeout, network error, etc.)
+    if (isRpcConnected) {
+      isRpcConnected = false;
+      console.warn('[Background] RPC connection lost:', error);
+    }
+  }
+}
 
 /**
  * Load approved origins from storage
@@ -266,13 +303,17 @@ async function emitWalletEvent(eventType: string, data: unknown) {
   }
 }
 
-// Initialize auto-lock setting, load approved origins, vault state, and schedule alarm
+// Initialize auto-lock setting, load approved origins, vault state, connection monitoring, and schedule alarm
 (async () => {
   const stored = await chrome.storage.local.get([STORAGE_KEYS.AUTO_LOCK_MINUTES]);
   autoLockMinutes = stored[STORAGE_KEYS.AUTO_LOCK_MINUTES] ?? AUTOLOCK_MINUTES;
   await loadApprovedOrigins();
   await vault.init(); // Load encrypted vault header to detect vault existence
   scheduleAlarm();
+
+  // Initialize RPC connection monitoring
+  checkRpcConnection(); // Initial check
+  setInterval(checkRpcConnection, 10000); // Check every 10 seconds
 })();
 
 // Clean up approval window ID when window is closed
@@ -442,7 +483,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
-        const { to, amount, fee = DEFAULT_TRANSACTION_FEE } = payload.params?.[0] ?? {};
+        const { to, amount, fee } = payload.params?.[0] ?? {};
         if (!isNockAddress(to)) {
           sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
@@ -638,6 +679,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             utxoCount: balanceResult.utxoCount,
           });
         }
+        return;
+
+      case INTERNAL_METHODS.GET_CONNECTION_STATUS:
+        sendResponse({ connected: isRpcConnected });
         return;
 
       // Transaction cache handlers
@@ -900,6 +945,45 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           console.error('[Background] Transaction signing failed:', error);
           sendResponse({
             error: error instanceof Error ? error.message : 'Transaction signing failed',
+          });
+        }
+        return;
+
+      case INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE:
+        // params: [to, amount] - amount in nicks
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
+        const [estimateTo, estimateAmount] = payload.params || [];
+        if (!isNockAddress(estimateTo)) {
+          sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
+          return;
+        }
+
+        if (typeof estimateAmount !== 'number' || estimateAmount <= 0) {
+          sendResponse({ error: 'Invalid amount' });
+          return;
+        }
+
+        try {
+          console.log('[Background] Estimating transaction fee via vault:', {
+            to: estimateTo.slice(0, 20) + '...',
+            amount: estimateAmount,
+          });
+
+          const result = await vault.estimateTransactionFee(estimateTo, estimateAmount);
+
+          if ('error' in result) {
+            sendResponse({ error: result.error });
+          } else {
+            sendResponse({ fee: result.fee });
+          }
+        } catch (error) {
+          console.error('[Background] Fee estimation error:', error);
+          sendResponse({
+            error: error instanceof Error ? error.message : 'Fee estimation failed',
           });
         }
         return;

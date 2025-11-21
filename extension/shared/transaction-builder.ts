@@ -16,7 +16,7 @@ import {
 } from '../lib/nbx-wasm/nbx_wasm.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
-import { NOCK_TO_NICKS } from './constants.js';
+import { DEFAULT_FEE_PER_WORD } from './constants.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
 
 /**
@@ -129,8 +129,8 @@ export interface Note {
 export interface TransactionParams {
   /** Notes (UTXOs) to spend */
   notes: Note[];
-  /** Spend condition (determines who can unlock the notes) */
-  spendCondition: WasmSpendCondition;
+  /** Spend condition(s) - single condition applied to all notes, or array with one per note */
+  spendCondition: WasmSpendCondition | WasmSpendCondition[];
   /** Recipient's PKH as digest string */
   recipientPKH: string;
   /** Amount to send in nicks */
@@ -167,7 +167,16 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   // Initialize both WASM modules
   await ensureWasmInitialized();
 
-  const { notes, spendCondition, recipientPKH, amount, fee, refundPKH, privateKey, includeLockData } = params;
+  const {
+    notes,
+    spendCondition,
+    recipientPKH,
+    amount,
+    fee,
+    refundPKH,
+    privateKey,
+    includeLockData,
+  } = params;
 
   // Validate inputs
   if (notes.length === 0) {
@@ -201,6 +210,15 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
       hasProtoNote: !!note.protoNote,
     });
 
+    // DEBUG: Log the actual protoNote data to verify note_data.entries
+    console.log('[TxBuilder] DEBUG: protoNote data:', note.protoNote);
+    if (note.protoNote?.note_version?.V1?.note_data) {
+      console.log(
+        '[TxBuilder] DEBUG: note_data.entries:',
+        note.protoNote.note_version.V1.note_data.entries
+      );
+    }
+
     // Use fromProtobuf to correctly deserialize NoteData entries
     // This ensures parent_hash is computed correctly
     return WasmNote.fromProtobuf(note.protoNote);
@@ -218,31 +236,55 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   // Create transaction builder with PKH digests (builder computes lock-roots)
   // include_lock_data: false keeps note-data empty (0.5 NOCK fee component)
   // Each note needs its own spend condition (array of conditions, one per note)
-  const spendConditions = notes.map(() => spendCondition);
-  const builder = new WasmTxBuilder(BigInt(1 << 15));
+  const spendConditions = Array.isArray(spendCondition)
+    ? spendCondition // Use provided array (one per note)
+    : notes.map(() => spendCondition); // Single condition applied to all notes
 
+  if (spendConditions.length !== notes.length) {
+    throw new Error(
+      `Spend condition count mismatch: ${spendConditions.length} conditions for ${notes.length} notes`
+    );
+  }
+
+  // New WASM API: constructor takes fee_per_word
+  const builder = new WasmTxBuilder(BigInt(DEFAULT_FEE_PER_WORD));
+
+  // simpleSpend now takes fee_override (user-specified fee) instead of fee_per_word
   builder.simpleSpend(
     wasmNotes,
     spendConditions,
     new WasmDigest(recipientPKH),
     BigInt(amount), // gift
-    fee !== undefined ? BigInt(fee) : null,
+    fee !== undefined ? BigInt(fee) : null, // fee_override (user-specified fee)
     new WasmDigest(refundPKH),
-    includeLockData,
+    includeLockData
   );
+
+  // Log calculated fees before signing (new method names: curFee, calcFee)
+  const calculatedFee = builder.calcFee();
+  const currentFee = builder.curFee();
+  console.log('[TxBuilder] Fee info:', {
+    calculatedFee: Number(calculatedFee),
+    currentFee: Number(currentFee),
+    userProvidedFee: fee,
+  });
 
   console.log('[TxBuilder] Signing transaction...');
 
-  // Sign the transaction
-  console.log(builder.curFee());
-  console.log(builder.calcFee());
+  // Sign the transaction (new API - sign() now returns void)
   builder.sign(privateKey);
-  console.log(builder.curFee());
-  console.log(builder.calcFee());
+
+  console.log('[TxBuilder] Validating transaction...');
+
+  // Validate the transaction
   builder.validate();
+
+  console.log('[TxBuilder] Building final transaction...');
+
+  // Build the final transaction (new API - build() returns WasmRawTx)
   const rawTx = builder.build();
 
-  console.log('[TxBuilder]  Transaction signed, txId:', rawTx.id.value);
+  console.log('[TxBuilder]  Transaction signed and built, txId:', rawTx.id.value);
 
   // DEBUG: Log parent_hash from seeds to diagnose rejection
   try {
@@ -313,7 +355,7 @@ export async function buildPayment(
   amount: number,
   senderPublicKey: Uint8Array,
   privateKey: Uint8Array,
-  fee?: number,
+  fee?: number
 ): Promise<ConstructedTransaction> {
   // Initialize WASM
   await ensureWasmInitialized();
@@ -353,7 +395,92 @@ export async function buildPayment(
     fee,
     refundPKH: senderPKH,
     privateKey,
-     // include_lock_data: false for empty note-data (lower fee)
+    // include_lock_data: false for lower fees (0.5 NOCK per word saved)
+    includeLockData: false,
+  });
+}
+
+/**
+ * Create a payment transaction using multiple notes (UTXOs)
+ *
+ * This allows spending from multiple UTXOs when a single UTXO doesn't have
+ * sufficient balance. The transaction will use all provided notes as inputs.
+ *
+ * @param notes - Array of UTXOs to spend
+ * @param recipientPKH - Recipient's PKH digest string
+ * @param amount - Amount to send in nicks
+ * @param senderPublicKey - Your public key (97 bytes, for creating spend condition)
+ * @param privateKey - Your private key (32 bytes)
+ * @param fee - Transaction fee in nicks (optional, WASM will auto-calculate if not provided)
+ * @returns Constructed transaction
+ */
+export async function buildMultiNotePayment(
+  notes: Note[],
+  recipientPKH: string,
+  amount: number,
+  senderPublicKey: Uint8Array,
+  privateKey: Uint8Array,
+  fee?: number
+): Promise<ConstructedTransaction> {
+  // Initialize WASM
+  await ensureWasmInitialized();
+
+  if (notes.length === 0) {
+    throw new Error('At least one note is required');
+  }
+
+  // Calculate total available from all notes
+  const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
+  const totalNeeded = amount + (fee || 0);
+
+  if (totalAvailable < totalNeeded) {
+    throw new Error(
+      `Insufficient funds: have ${totalAvailable} nicks across ${notes.length} notes, need ${totalNeeded}`
+    );
+  }
+
+  console.log(`[TxBuilder] Building multi-note transaction with ${notes.length} inputs`);
+
+  // Create sender's PKH digest string for change
+  const senderPKH = publicKeyToPKHDigest(senderPublicKey);
+
+  // Discover the correct spend condition for each note
+  // Each note may have different spend conditions (e.g., some are coinbase with timelocks)
+  const spendConditions: WasmSpendCondition[] = [];
+
+  for (let i = 0; i < notes.length; i++) {
+    const note = notes[i];
+    console.log(`[TxBuilder] Discovering spend condition for note ${i + 1}/${notes.length}...`);
+
+    const spendCondition = await discoverSpendConditionForNote(senderPKH, {
+      nameFirst: note.nameFirst,
+      originPage: note.originPage,
+    });
+
+    // Sanity check: verify the derived first-name matches
+    const derivedFirstName = spendCondition.firstName().value;
+    if (derivedFirstName !== note.nameFirst) {
+      throw new Error(
+        `First-name mismatch for note ${i}! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
+          `Expected: ${note.nameFirst.slice(0, 20)}...`
+      );
+    }
+
+    spendConditions.push(spendCondition);
+  }
+
+  console.log('[TxBuilder] All spend conditions verified, building transaction...');
+
+  // Build transaction with all notes and their individual spend conditions
+  return buildTransaction({
+    notes,
+    spendCondition: spendConditions, // Array of spend conditions (one per note)
+    recipientPKH,
+    amount,
+    fee,
+    refundPKH: senderPKH,
+    privateKey,
+    // include_lock_data: false for lower fees (0.5 NOCK per word saved)
     includeLockData: false,
   });
 }
