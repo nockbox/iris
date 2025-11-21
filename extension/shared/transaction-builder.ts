@@ -219,12 +219,13 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   // include_lock_data: false keeps note-data empty (0.5 NOCK fee component)
   // Each note needs its own spend condition (array of conditions, one per note)
   const spendConditions = notes.map(() => spendCondition);
-  const builder = WasmTxBuilder.newSimple(
+  const builder = new WasmTxBuilder(BigInt(1 << 15));
+
+  builder.simpleSpend(
     wasmNotes,
     spendConditions,
     new WasmDigest(recipientPKH),
     BigInt(amount), // gift
-    BigInt(1 << 1),
     fee !== undefined ? BigInt(fee) : null,
     new WasmDigest(refundPKH),
     includeLockData,
@@ -233,13 +234,21 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   console.log('[TxBuilder] Signing transaction...');
 
   // Sign the transaction
-  const rawTx = builder.sign(privateKey);
+  console.log(builder.curFee());
+  console.log(builder.calcFee());
+  builder.sign(privateKey);
+  console.log(builder.curFee());
+  console.log(builder.calcFee());
+  builder.validate();
+  const rawTx = builder.build();
 
   console.log('[TxBuilder]  Transaction signed, txId:', rawTx.id.value);
 
   // DEBUG: Log parent_hash from seeds to diagnose rejection
   try {
+    const pbTx = rawTx.toProtobuf();
     console.log('[TxBuilder]  DEBUG: Inspecting transaction seeds...');
+    console.log(pbTx);
     // Try to access seeds if available (rawTx is WASM object with potentially hidden properties)
     const rawTxAny = rawTx as any;
     if (rawTxAny.seeds && Array.isArray(rawTxAny.seeds)) {
