@@ -10,7 +10,7 @@ import { Alert } from "../../components/Alert";
 import { ConfirmModal } from "../../components/ConfirmModal";
 import { EyeIcon } from "../../components/icons/EyeIcon";
 import { EyeOffIcon } from "../../components/icons/EyeOffIcon";
-import logoSvg from "../../assets/iris-logo.svg";
+import { AnimatedLogo } from "../../components/AnimatedLogo";
 
 export function LockedScreen() {
   const [password, setPassword] = useState("");
@@ -90,9 +90,7 @@ export function LockedScreen() {
         <div className="flex flex-col gap-8 w-full">
           {/* Logo and heading */}
           <div className="flex flex-col items-center gap-3 w-full">
-            <div className="w-24 h-24">
-              <img src={logoSvg} alt="Iris Logo" className="w-full h-full" />
-            </div>
+            <AnimatedLogo />
             <div className="flex flex-col gap-2 items-center text-center w-full">
               <h1
                 className="font-serif font-medium text-[var(--color-text-primary)]"
