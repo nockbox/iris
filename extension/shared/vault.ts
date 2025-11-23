@@ -1,3 +1,4 @@
+/// <reference types="chrome" />
 /**
  * Vault: manages encrypted mnemonic storage and wallet state
  */
@@ -15,6 +16,11 @@ import { buildMultiNotePayment, type Note as TxBuilderNote } from './transaction
 import {
   deriveMasterKeyFromMnemonic,
   signMessage as wasmSignMessage,
+  WasmRawTx,
+  WasmNote,
+  WasmSpendCondition,
+  WasmPkh,
+  WasmTxBuilder,
 } from '../lib/nbx-wasm/nbx_wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
@@ -613,10 +619,10 @@ export class Vault {
    */
   async getBalance(): Promise<
     | {
-        totalNock: number;
-        totalNicks: bigint;
-        utxoCount: number;
-      }
+      totalNock: number;
+      totalNicks: bigint;
+      utxoCount: number;
+    }
     | { error: string }
   > {
     if (this.state.locked) {
@@ -1219,9 +1225,9 @@ export class Vault {
             hasSpend: !!spendEntry.spend,
             name: spendEntry.name
               ? {
-                  first: spendEntry.name.first?.slice(0, 20) + '...',
-                  last: spendEntry.name.last?.slice(0, 20) + '...',
-                }
+                first: spendEntry.name.first?.slice(0, 20) + '...',
+                last: spendEntry.name.last?.slice(0, 20) + '...',
+              }
               : 'missing',
           });
 
@@ -1399,5 +1405,130 @@ export class Vault {
     const lastSync = await this.getLastSync(accountAddress);
     const fiveMinutes = 5 * 60 * 1000;
     return Date.now() - lastSync > fiveMinutes;
+  }
+
+  /**
+   * Sign a raw transaction using nbx-wasm
+   */
+  async signRawTx(params: {
+    rawTx: any;
+    notes: any[];
+    spendConditions: any[];
+  }): Promise<string> {
+    if (this.state.locked || !this.mnemonic) {
+      throw new Error('Wallet is locked');
+    }
+
+    // Initialize WASM modules
+    await initWasmModules();
+
+    const { rawTx, notes, spendConditions } = params;
+
+    // Derive the account's private key
+    const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const currentAccount = this.getCurrentAccount();
+    const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
+    const accountKey =
+      currentAccount?.derivation === 'master'
+        ? masterKey
+        : masterKey.deriveChild(childIndex);
+
+    if (!accountKey.private_key) {
+      if (currentAccount?.derivation !== 'master') {
+        accountKey.free();
+      }
+      masterKey.free();
+      throw new Error('Cannot sign: no private key available');
+    }
+
+    try {
+      // Deserialize inputs
+      // rawTx is expected to be a hex string (from RPC)
+      // WasmRawTx.fromJam expects Uint8Array.
+      let jamBytes: Uint8Array;
+      if (typeof rawTx === 'string') {
+        // Convert hex string to Uint8Array
+        if (!/^[0-9a-fA-F]*$/.test(rawTx)) {
+          throw new Error('Invalid rawTx format: expected hex string');
+        }
+        jamBytes = new Uint8Array(
+          rawTx.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
+        );
+      } else {
+        throw new Error('Invalid rawTx format: expected hex string');
+      }
+
+      const wasmRawTx = WasmRawTx.fromJam(jamBytes);
+
+      // Deserialize notes
+      // Assume notes are protobuf bytes (Uint8Array or array)
+      const wasmNotes = notes.map((n: any) => {
+        let noteBytes: Uint8Array;
+        if (n instanceof Uint8Array) {
+          noteBytes = n;
+        } else if (typeof n === 'object') {
+          noteBytes = new Uint8Array(Object.values(n));
+        } else {
+          throw new Error('Invalid note format');
+        }
+        return WasmNote.fromProtobuf(noteBytes);
+      });
+
+      // Deserialize spend conditions
+      // Assume they are passed as objects describing the condition
+      // For now, we support PKH conditions: { type: 'pkh', value: 'pkh_string' }
+      const wasmSpendConditions = spendConditions.map((sc: any) => {
+        if (sc.type === 'pkh') {
+          // We need WasmPkh
+          // WasmSpendCondition.newPkh(WasmPkh.single(pkh))
+          // But WasmPkh is not imported here. I need to import it.
+          // Or use WasmLockPrimitive?
+          // WasmSpendCondition.newPkh takes WasmPkh.
+          // Let's assume we can use WasmSpendCondition.newPkh
+
+          // Wait, I need to import WasmPkh.
+          // I'll add imports later.
+
+          // For now, I'll use a placeholder and fix imports.
+          return WasmSpendCondition.newPkh(WasmPkh.single(sc.value));
+        }
+        throw new Error(`Unsupported spend condition type: ${sc.type}`);
+      });
+
+      // Reconstruct the transaction builder
+      const builder = WasmTxBuilder.fromTx(wasmRawTx, wasmNotes, wasmSpendConditions);
+
+      // Sign
+      builder.sign(accountKey.private_key);
+
+      // Build signed tx
+      const signedTx = builder.build();
+      const signedJam = signedTx.toJam();
+
+      // Convert to hex string or return as is?
+      // RPC usually expects hex or base64 or array.
+      // The existing signMessage returns JSON string of signature.
+      // signTransaction returns txid (string).
+      // signRawTx should probably return the signed jam as hex string.
+
+      // Helper to convert Uint8Array to hex
+      const hex = Array.from(signedJam)
+        .map((b: number) => b.toString(16).padStart(2, '0'))
+        .join('');
+
+      // Clean up
+      builder.free();
+      wasmRawTx.free();
+      wasmNotes.forEach(n => n.free());
+      wasmSpendConditions.forEach(sc => sc.free());
+      signedTx.free();
+
+      return hex;
+    } finally {
+      if (currentAccount?.derivation !== 'master') {
+        accountKey.free();
+      }
+      masterKey.free();
+    }
   }
 }

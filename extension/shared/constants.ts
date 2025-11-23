@@ -17,6 +17,12 @@ export const PROVIDER_METHODS = {
 
   /** Sign and send a transaction */
   SEND_TRANSACTION: "nock_sendTransaction",
+
+  /** Get wallet information (PKH + gRPC endpoint) */
+  GET_WALLET_INFO: "nock_getWalletInfo",
+
+  /** Sign a raw transaction */
+  SIGN_RAW_TX: "nock_signRawTx",
 } as const;
 
 /**
@@ -128,6 +134,15 @@ export const INTERNAL_METHODS = {
 
   /** Broadcast a raw signed transaction (internal popup-initiated transactions) */
   BROADCAST_TRANSACTION: "wallet:broadcastTransaction",
+
+  /** Approve pending sign raw transaction request */
+  APPROVE_SIGN_RAW_TX: "wallet:approveSignRawTx",
+
+  /** Reject pending sign raw transaction request */
+  REJECT_SIGN_RAW_TX: "wallet:rejectSignRawTx",
+
+  /** Get pending sign raw transaction request */
+  GET_PENDING_RAW_TX_REQUEST: "wallet:getPendingRawTxRequest",
 } as const;
 
 /**
@@ -346,4 +361,6 @@ export const APPROVAL_CONSTANTS = {
   TRANSACTION_HASH_PREFIX: 'transaction-approval-',
   /** Hash prefix for sign message approval requests */
   SIGN_MESSAGE_HASH_PREFIX: 'sign-message-approval-',
+  /** Hash prefix for sign raw transaction approval requests */
+  SIGN_RAW_TX_HASH_PREFIX: 'sign-raw-tx-approval-',
 } as const;

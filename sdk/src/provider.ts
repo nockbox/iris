@@ -140,6 +140,45 @@ export class NockchainProvider {
   }
 
   /**
+   * Sign a raw transaction
+   * @param params - The transaction parameters (toJam, notes, spendConditions)
+   * @returns Promise resolving to the signed raw transaction jam
+   * @throws {NoAccountError} If no account is connected
+   * @throws {UserRejectedError} If the user rejects the signing request
+   * @throws {RpcError} If the RPC call fails
+   */
+  async signRawTx(params: {
+    toJam: any;
+    notes: any[];
+    spendConditions: any[];
+  }): Promise<string> {
+    if (!this.isConnected) {
+      throw new NoAccountError();
+    }
+
+    return this.request<string>({
+      method: 'nock_signRawTx',
+      params: [params],
+    });
+  }
+
+  /**
+   * Get wallet information
+   * @returns Promise resolving to the wallet info (PKH and gRPC endpoint)
+   * @throws {NoAccountError} If no account is connected
+   * @throws {RpcError} If the RPC call fails
+   */
+  async getWalletInfo(): Promise<{ pkh: string; grpcEndpoint: string }> {
+    if (!this.isConnected) {
+      throw new NoAccountError();
+    }
+
+    return this.request<{ pkh: string; grpcEndpoint: string }>({
+      method: 'nock_getWalletInfo',
+    });
+  }
+
+  /**
    * Create a new transaction builder
    * @returns A new TransactionBuilder instance
    *

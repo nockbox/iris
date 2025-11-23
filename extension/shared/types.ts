@@ -169,6 +169,24 @@ export interface TransactionRequest {
 }
 
 /**
+ * Pending raw transaction signing request from a dApp
+ */
+export interface SignRawTxRequest {
+  /** Unique request ID */
+  id: string;
+  /** Origin of the requesting site */
+  origin: string;
+  /** Raw transaction jam (Uint8Array or hex) */
+  rawTx: any;
+  /** Input notes (protobuf bytes or hex) */
+  notes: any[];
+  /** Spend conditions (objects) */
+  spendConditions: any[];
+  /** Request timestamp */
+  timestamp: number;
+}
+
+/**
  * Nockchain note (UTXO) structure
  * Represents an unspent transaction output on the blockchain
  */

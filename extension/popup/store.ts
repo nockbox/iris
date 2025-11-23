@@ -54,6 +54,7 @@ export type Screen =
   | 'connect-approval'
   | 'sign-message'
   | 'approve-transaction'
+  | 'approve-sign-raw-tx'
 
   // System
   | 'locked';

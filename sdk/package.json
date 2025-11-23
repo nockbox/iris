@@ -9,15 +9,24 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./wasm": {
+      "types": "./dist/wasm.d.ts",
+      "import": "./dist/wasm.js"
     }
   },
   "files": [
     "dist",
+    "lib",
     "README.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "copy-wasm": "mkdir -p dist/lib/nbx-wasm && cp -r ../extension/lib/nbx-wasm/* dist/lib/nbx-wasm/",
+    "copy-wasm-examples": "mkdir -p lib/nbx-wasm && cp -r ../extension/lib/nbx-wasm/* lib/nbx-wasm/",
+    "build": "tsc && npm run copy-wasm",
+    "build-example": "npm run build && tsc --project examples/tsconfig.json && npm run copy-wasm-examples && vite build --config vite.config.examples.ts",
     "dev": "tsc --watch",
+    "dev-example": "npm run copy-wasm-examples && vite --config vite.config.examples.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -30,7 +39,9 @@
   "author": "Nockbox Inc",
   "license": "MIT",
   "devDependencies": {
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "vite": "^5.0.0",
+    "@types/node": "^20.0.0"
   },
   "repository": {
     "type": "git",

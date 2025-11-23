@@ -107,7 +107,7 @@ export async function discoverSpendConditionForNote(
 
   throw new Error(
     `No matching spend condition for note.name.first (${note.nameFirst.slice(0, 20)}...). ` +
-      `Cannot spend this UTXO. It may require a different lock configuration.`
+    `Cannot spend this UTXO. It may require a different lock configuration.`
   );
 }
 
@@ -381,7 +381,7 @@ export async function buildPayment(
   if (derivedFirstName !== note.nameFirst) {
     throw new Error(
       `First-name mismatch! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
-        `Expected: ${note.nameFirst.slice(0, 20)}...`
+      `Expected: ${note.nameFirst.slice(0, 20)}...`
     );
   }
 
@@ -462,7 +462,7 @@ export async function buildMultiNotePayment(
     if (derivedFirstName !== note.nameFirst) {
       throw new Error(
         `First-name mismatch for note ${i}! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
-          `Expected: ${note.nameFirst.slice(0, 20)}...`
+        `Expected: ${note.nameFirst.slice(0, 20)}...`
       );
     }
 
