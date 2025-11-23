@@ -24,6 +24,7 @@ import {
   WasmSpendCondition,
   WasmPkh,
   WasmTxBuilder,
+  WasmVersion,
 } from '../lib/nbx-wasm/nbx_wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
@@ -1470,14 +1471,17 @@ export class Vault {
         const name = new WasmName(n.name.first, n.name.last);
 
         // Reconstruct WasmNoteData
-        const noteDataEntries = n.noteData.entries.map((e: any) =>
-          new WasmNoteDataEntry(e.key, new Uint8Array(e.blob))
-        );
+        const noteDataEntries = n.noteData.entries.map((e: any) => {
+          // Convert hex string to Uint8Array
+          const hexStr = e.blob;
+          const bytes = new Uint8Array(hexStr.match(/.{1,2}/g)?.map((byte: string) => parseInt(byte, 16)) || []);
+          return new WasmNoteDataEntry(e.key, bytes);
+        });
         const noteData = new WasmNoteData(noteDataEntries);
 
         // Reconstruct WasmNote
         return new WasmNote(
-          n.version,
+          new WasmVersion(n.version),
           BigInt(n.originPage),
           name,
           noteData,

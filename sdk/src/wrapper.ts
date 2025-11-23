@@ -36,7 +36,7 @@ export async function signRawTx(params: RawTxParams): Promise<string> {
         throw new Error("Nockchain wallet not found");
     }
 
-    return provider.request({
+    return await provider.request({
         method: 'nock_signRawTx',
         params: [{
             rawTx: rawTxHex,

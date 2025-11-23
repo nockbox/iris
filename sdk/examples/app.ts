@@ -154,8 +154,8 @@ signRawTxBtn.onclick = async () => {
 
         // Convert WasmNote objects to plain JS objects with their attributes
         const noteObjects = txNotesArray.map((n: WasmNote) => ({
-            version: n.version,
-            originPage: n.originPage,
+            version: 1,
+            originPage: n.originPage.toString(),
             name: {
                 first: n.name.first,
                 last: n.name.last
@@ -163,10 +163,10 @@ signRawTxBtn.onclick = async () => {
             noteData: {
                 entries: n.noteData.entries.map(e => ({
                     key: e.key,
-                    blob: Array.from(e.blob) // Convert Uint8Array to array for JSON serialization
+                    blob: Array.from(e.blob).map(b => b.toString(16).padStart(2, '0')).join('')
                 }))
             },
-            assets: n.assets
+            assets: n.assets.toString()
         }));
 
         const txSpendConditions = txNotes.spendConditions;
