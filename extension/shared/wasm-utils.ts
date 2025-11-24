@@ -3,13 +3,13 @@
  * Centralized utilities for loading and initializing WASM modules
  */
 
-import initWasm from '../lib/nbx-wasm/nbx_wasm';
+import initWasm from '../lib/iris-wasm/iris_wasm';
 
 /**
- * WASM module paths relative to extension root
+ * Asset paths for WASM modules (relative to extension root)
  */
-export const WASM_PATHS = {
-  NBX_WASM: 'lib/nbx-wasm/nbx_wasm_bg.wasm',
+export const WASM_ASSET_PATHS = {
+  IRIS_WASM: 'lib/iris-wasm/iris_wasm_bg.wasm',
 } as const;
 
 /**
@@ -25,34 +25,54 @@ export function getWasmUrl(path: string): string {
  */
 export function getWasmUrls() {
   return {
-    nbxWasm: getWasmUrl(WASM_PATHS.NBX_WASM),
+    irisWasm: getWasmUrl(WASM_ASSET_PATHS.IRIS_WASM),
   };
-}
-
-/**
- * Initialize WASM modules
- * This is a common pattern used throughout the codebase
- */
-export async function initWasmModules(): Promise<void> {
-  const urls = getWasmUrls();
-  await initWasm({ module_or_path: urls.nbxWasm });
 }
 
 /**
  * Track if WASM modules have been initialized (per-context)
  */
 let wasmInitialized = false;
+let wasmInitializing = false;
+let wasmInitPromise: Promise<void> | null = null;
 
 /**
  * Initialize WASM modules only once per context
  * Subsequent calls will be no-ops
  */
-export async function ensureWasmInitialized(): Promise<void> {
+export async function initWasmModules(): Promise<void> {
   if (wasmInitialized) {
     return;
   }
-  await initWasmModules();
-  wasmInitialized = true;
+
+  if (wasmInitializing && wasmInitPromise) {
+    return wasmInitPromise;
+  }
+
+  wasmInitializing = true;
+
+  wasmInitPromise = (async () => {
+    try {
+      const wasmUrls = getWasmUrls();
+      await initWasm(wasmUrls.irisWasm);
+      wasmInitialized = true;
+      wasmInitializing = false;
+    } catch (error) {
+      wasmInitializing = false;
+      wasmInitPromise = null; // Reset promise on error
+      throw error;
+    }
+  })();
+
+  return wasmInitPromise;
+}
+
+/**
+ * Initialize WASM modules only once per context
+ * Alias for initWasmModules with idempotent behavior
+ */
+export async function ensureWasmInitialized(): Promise<void> {
+  return initWasmModules();
 }
 
 /**
@@ -60,4 +80,6 @@ export async function ensureWasmInitialized(): Promise<void> {
  */
 export function resetWasmInitialization(): void {
   wasmInitialized = false;
+  wasmInitializing = false;
+  wasmInitPromise = null;
 }

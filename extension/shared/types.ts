@@ -176,11 +176,11 @@ export interface SignRawTxRequest {
   id: string;
   /** Origin of the requesting site */
   origin: string;
-  /** Raw transaction jam (Uint8Array or hex) */
-  rawTx: any;
-  /** Input notes (protobuf bytes or hex) */
+  /** Raw transaction jam as hex string */
+  rawTx: string;
+  /** Input notes in serializable format */
   notes: any[];
-  /** Spend conditions (objects) */
+  /** Spend conditions in serializable format */
   spendConditions: any[];
   /** Request timestamp */
   timestamp: number;
@@ -219,6 +219,6 @@ export interface Note {
   sourceIsCoinbase: boolean;
   /** Amount in nicks (1 NOCK = 65,536 nicks) */
   assets: number;
-  /** Raw protobuf note object from RPC (for WasmNote.fromProtobuf) */
+  /** Raw protobuf note object from RPC (for Note.fromProtobuf) */
   protoNote?: any;
 }

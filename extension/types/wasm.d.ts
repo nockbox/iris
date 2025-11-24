@@ -4,8 +4,8 @@
  * with moduleResolution: "bundler", so we declare them here
  */
 
-/// <reference path="../lib/nbx-wasm/nbx_wasm.d.ts" />
+/// <reference path="../lib/iris-wasm/iris_wasm.d.ts" />
 
-declare module '../lib/nbx-wasm/nbx_wasm.js' {
-  export * from '../lib/nbx-wasm/nbx_wasm';
+declare module '../lib/iris-wasm/iris_wasm.js' {
+  export * from '../lib/iris-wasm/iris_wasm';
 }

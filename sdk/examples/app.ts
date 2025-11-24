@@ -1,7 +1,6 @@
 import { signRawTx } from '../dist/wrapper';
-import initWasm from '../lib/nbx-wasm/nbx_wasm';
-import * as wasm from '../lib/nbx-wasm/nbx_wasm';
-import { WasmNote } from '../lib/nbx-wasm/nbx_wasm';
+import initWasm from '../lib/iris-wasm/iris_wasm';
+import * as wasm from '../lib/iris-wasm/iris_wasm';
 
 declare global {
     interface Window {
@@ -85,8 +84,8 @@ signRawTxBtn.onclick = async () => {
 
         // 3. Create spend condition using wallet PKH (single, no timelock)
         log('Creating spend condition for PKH: ' + walletPkh);
-        const pkh = wasm.WasmPkh.single(walletPkh);
-        const spendCondition = wasm.WasmSpendCondition.newPkh(pkh);
+        const pkh = wasm.Pkh.single(walletPkh);
+        const spendCondition = wasm.SpendCondition.newPkh(pkh);
 
         // 4. Get firstName from spend condition
         const firstName = spendCondition.firstName();
@@ -104,7 +103,7 @@ signRawTxBtn.onclick = async () => {
         log('Found ' + balance.notes.length + ' notes');
 
         // Convert notes from protobuf
-        const notes = balance.notes.map((n: any) => wasm.WasmNote.fromProtobuf(n.note));
+        const notes = balance.notes.map((n: any) => wasm.Note.fromProtobuf(n.note));
         const note = notes[0];
         const noteAssets = note.assets;
         log('Using note with ' + noteAssets + ' nicks');
@@ -114,13 +113,13 @@ signRawTxBtn.onclick = async () => {
         const feePerWord = BigInt(32768); // 0.5 NOCK per word
 
         log('Building transaction to send 10 NOCK...');
-        const builder = new wasm.WasmTxBuilder(feePerWord);
+        const builder = new wasm.TxBuilder(feePerWord);
 
         // Create recipient digest
-        const recipientDigest = new wasm.WasmDigest(recipient);
+        const recipientDigest = new wasm.Digest(recipient);
 
         // Create refund digest (same as wallet PKH)
-        const refundDigest = new wasm.WasmDigest(walletPkh);
+        const refundDigest = new wasm.Digest(walletPkh);
 
         // Create spend conditions - one for each note (all use the same PKH)
         const spendConditionsForBuilder = notes.map(() => spendCondition);
@@ -152,27 +151,8 @@ signRawTxBtn.onclick = async () => {
         const txNotes = builder.allNotes();
         const txNotesArray = txNotes.get_notes;
 
-        // Convert WasmNote objects to plain JS objects with their attributes
-        const noteObjects = txNotesArray.map((n: WasmNote) => ({
-            version: 1,
-            originPage: n.originPage.toString(),
-            name: {
-                first: n.name.first,
-                last: n.name.last
-            },
-            noteData: {
-                entries: n.noteData.entries.map(e => ({
-                    key: e.key,
-                    blob: Array.from(e.blob).map(b => b.toString(16).padStart(2, '0')).join('')
-                }))
-            },
-            assets: n.assets.toString()
-        }));
-
-        const txSpendConditions = txNotes.spendConditions;
-
-        // Create one spend condition per note (all PKH-bound to wallet)
-        const spendConds = txSpendConditions.map(() => ({ type: 'pkh', value: walletPkh }));
+        const noteObjects = txNotes.get_notes.map((n: wasm.Note) => n.toProtobuf());
+        const spendConds = txNotes.spendConditions.map((s: wasm.SpendCondition) => s.toProtobuf());
 
         log('Notes count: ' + noteObjects.length);
         log('Spend conditions count: ' + spendConds.length);

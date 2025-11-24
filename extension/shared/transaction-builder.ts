@@ -3,17 +3,7 @@
  * High-level API for constructing Nockchain transactions
  */
 
-import {
-  WasmTxBuilder,
-  WasmNote,
-  WasmDigest,
-  WasmPkh,
-  WasmSpendCondition,
-  WasmRawTx,
-  WasmLockPrimitive,
-  WasmLockTim,
-  WasmTimelockRange,
-} from '../lib/nbx-wasm/nbx_wasm.js';
+import * as wasm from '../lib/iris-wasm/iris_wasm.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
 import { DEFAULT_FEE_PER_WORD } from './constants.js';
@@ -27,66 +17,66 @@ import { ensureWasmInitialized } from './wasm-utils.js';
  *
  * @param senderPKH - Base58 PKH digest of the sender's public key
  * @param note - Note with nameFirst (lock-root) and originPage
- * @returns The matching WasmSpendCondition
+ * @returns The matching SpendCondition
  */
 export async function discoverSpendConditionForNote(
   senderPKH: string,
   note: { nameFirst: string; originPage: number }
-): Promise<WasmSpendCondition> {
+): Promise<wasm.SpendCondition> {
   await ensureWasmInitialized();
 
-  const candidates: Array<{ name: string; condition: WasmSpendCondition }> = [];
+  const candidates: Array<{ name: string; condition: wasm.SpendCondition }> = [];
 
   console.log(
-    '[TxBuilder] Trying to match lock-root against name.first:',
+    '[wasm.TxBuilder] Trying to match lock-root against name.first:',
     note.nameFirst.slice(0, 20) + '...'
   );
 
   // 1) PKH only (standard simple note)
   try {
-    const pkhLeaf = WasmLockPrimitive.newPkh(WasmPkh.single(senderPKH));
-    const condition = new WasmSpendCondition([pkhLeaf]);
+    const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(senderPKH));
+    const condition = new wasm.SpendCondition([pkhLeaf]);
     candidates.push({ name: 'PKH-only', condition });
   } catch (e) {
-    console.warn('[TxBuilder] Failed to create PKH-only condition:', e);
+    console.warn('[wasm.TxBuilder] Failed to create PKH-only condition:', e);
   }
 
   // 2) PKH ∧ TIM (coinbase helper)
   try {
-    const pkhLeaf = WasmLockPrimitive.newPkh(WasmPkh.single(senderPKH));
-    const timLeaf = WasmLockPrimitive.newTim(WasmLockTim.coinbase());
-    const condition = new WasmSpendCondition([pkhLeaf, timLeaf]);
+    const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(senderPKH));
+    const timLeaf = wasm.LockPrimitive.newTim(wasm.LockTim.coinbase());
+    const condition = new wasm.SpendCondition([pkhLeaf, timLeaf]);
     candidates.push({ name: 'PKH+TIM(coinbase)', condition });
   } catch (e) {
-    console.warn('[TxBuilder] Failed to create PKH+TIM(coinbase) condition:', e);
+    console.warn('[wasm.TxBuilder] Failed to create PKH+TIM(coinbase) condition:', e);
   }
 
   // 3) PKH ∧ TIM (relative 100 blocks - common coinbase maturity)
   try {
-    const pkhLeaf = WasmLockPrimitive.newPkh(WasmPkh.single(senderPKH));
-    const timLeaf = WasmLockPrimitive.newTim(
-      new WasmLockTim(new WasmTimelockRange(100n, null), new WasmTimelockRange(null, null))
+    const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(senderPKH));
+    const timLeaf = wasm.LockPrimitive.newTim(
+      new wasm.LockTim(new wasm.TimelockRange(100n, null), new wasm.TimelockRange(null, null))
     );
-    const condition = new WasmSpendCondition([pkhLeaf, timLeaf]);
+    const condition = new wasm.SpendCondition([pkhLeaf, timLeaf]);
     candidates.push({ name: 'PKH+TIM(rel:100)', condition });
   } catch (e) {
-    console.warn('[TxBuilder] Failed to create PKH+TIM(rel:100) condition:', e);
+    console.warn('[wasm.TxBuilder] Failed to create PKH+TIM(rel:100) condition:', e);
   }
 
   // 4) PKH ∧ TIM (absolute = originPage + 100)
   try {
     const absMin = BigInt(note.originPage) + 100n;
-    const pkhLeaf = WasmLockPrimitive.newPkh(WasmPkh.single(senderPKH));
-    const timLeaf = WasmLockPrimitive.newTim(
-      new WasmLockTim(new WasmTimelockRange(null, null), new WasmTimelockRange(absMin, null))
+    const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(senderPKH));
+    const timLeaf = wasm.LockPrimitive.newTim(
+      new wasm.LockTim(new wasm.TimelockRange(null, null), new wasm.TimelockRange(absMin, null))
     );
-    const condition = new WasmSpendCondition([pkhLeaf, timLeaf]);
+    const condition = new wasm.SpendCondition([pkhLeaf, timLeaf]);
     candidates.push({ name: 'PKH+TIM(abs:origin+100)', condition });
   } catch (e) {
-    console.warn('[TxBuilder] Failed to create PKH+TIM(abs:origin+100) condition:', e);
+    console.warn('[wasm.TxBuilder] Failed to create PKH+TIM(abs:origin+100) condition:', e);
   }
 
-  console.log(`[TxBuilder] Successfully created ${candidates.length} candidate conditions`);
+  console.log(`[wasm.TxBuilder] Successfully created ${candidates.length} candidate conditions`);
 
   // Find the candidate whose first-name matches note.nameFirst
   // The note's name.first is derived from the spend condition
@@ -95,12 +85,12 @@ export async function discoverSpendConditionForNote(
     // Get the first-name directly from the spend condition
     const derivedFirstName = candidate.condition.firstName().value;
 
-    console.log(`[TxBuilder] Candidate ${candidate.name}:`);
+    console.log(`[wasm.TxBuilder] Candidate ${candidate.name}:`);
     console.log(`  Lock-root: ${lockRoot.slice(0, 20)}...`);
     console.log(`  First-name: ${derivedFirstName.slice(0, 20)}...`);
 
     if (derivedFirstName === note.nameFirst) {
-      console.log(`[TxBuilder]  MATCH! Using spend condition: ${candidate.name}`);
+      console.log(`[wasm.TxBuilder] ✅ MATCH! Using spend condition: ${candidate.name}`);
       return candidate.condition;
     }
   }
@@ -112,7 +102,7 @@ export async function discoverSpendConditionForNote(
 }
 
 /**
- * Note data in V1 WASM format
+ * Note data in V1 WASM format (local interface for transaction builder)
  */
 export interface Note {
   originPage: number;
@@ -120,7 +110,7 @@ export interface Note {
   nameLast: string; // base58 digest string
   noteDataHash: string; // base58 digest string
   assets: number;
-  protoNote?: any; // Raw protobuf note for WasmNote.fromProtobuf()
+  protoNote?: any; // Raw protobuf note for Note.fromProtobuf()
 }
 
 /**
@@ -130,7 +120,7 @@ export interface TransactionParams {
   /** Notes (UTXOs) to spend */
   notes: Note[];
   /** Spend condition(s) - single condition applied to all notes, or array with one per note */
-  spendCondition: WasmSpendCondition | WasmSpendCondition[];
+  spendCondition: wasm.SpendCondition | wasm.SpendCondition[];
   /** Recipient's PKH as digest string */
   recipientPKH: string;
   /** Amount to send in nicks */
@@ -154,7 +144,7 @@ export interface ConstructedTransaction {
   /** Transaction version */
   version: number;
   /** Raw transaction object (for additional operations) */
-  rawTx: WasmRawTx;
+  rawTx: wasm.RawTx;
 }
 
 /**
@@ -195,7 +185,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     );
   }
 
-  // Convert notes using WasmNote.fromProtobuf() to preserve correct NoteData
+  // Convert notes using Note.fromProtobuf() to preserve correct NoteData
   const wasmNotes = notes.map(note => {
     if (!note.protoNote) {
       throw new Error(
@@ -203,7 +193,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
       );
     }
 
-    console.log('[TxBuilder] Creating WasmNote from protobuf with:', {
+    console.log('[wasm.TxBuilder] Creating Note from protobuf with:', {
       version: 'V1',
       originPage: note.originPage,
       assets: note.assets,
@@ -211,20 +201,20 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     });
 
     // DEBUG: Log the actual protoNote data to verify note_data.entries
-    console.log('[TxBuilder] DEBUG: protoNote data:', note.protoNote);
+    console.log('[wasm.TxBuilder] DEBUG: protoNote data:', note.protoNote);
     if (note.protoNote?.note_version?.V1?.note_data) {
       console.log(
-        '[TxBuilder] DEBUG: note_data.entries:',
+        '[wasm.TxBuilder] DEBUG: note_data.entries:',
         note.protoNote.note_version.V1.note_data.entries
       );
     }
 
     // Use fromProtobuf to correctly deserialize NoteData entries
     // This ensures parent_hash is computed correctly
-    return WasmNote.fromProtobuf(note.protoNote);
+    return wasm.Note.fromProtobuf(note.protoNote);
   });
 
-  console.log('[TxBuilder] Creating transaction with:', {
+  console.log('[wasm.TxBuilder] Creating transaction with:', {
     inputCount: wasmNotes.length,
     recipientPKH: recipientPKH.slice(0, 20) + '...',
     amount,
@@ -247,56 +237,56 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   }
 
   // New WASM API: constructor takes fee_per_word
-  const builder = new WasmTxBuilder(BigInt(DEFAULT_FEE_PER_WORD));
+  const builder = new wasm.TxBuilder(BigInt(DEFAULT_FEE_PER_WORD));
 
   // simpleSpend now takes fee_override (user-specified fee) instead of fee_per_word
   builder.simpleSpend(
     wasmNotes,
     spendConditions,
-    new WasmDigest(recipientPKH),
+    new wasm.Digest(recipientPKH),
     BigInt(amount), // gift
     fee !== undefined ? BigInt(fee) : null, // fee_override (user-specified fee)
-    new WasmDigest(refundPKH),
+    new wasm.Digest(refundPKH),
     includeLockData
   );
 
   // Log calculated fees before signing (new method names: curFee, calcFee)
   const calculatedFee = builder.calcFee();
   const currentFee = builder.curFee();
-  console.log('[TxBuilder] Fee info:', {
+  console.log('[wasm.TxBuilder] Fee info:', {
     calculatedFee: Number(calculatedFee),
     currentFee: Number(currentFee),
     userProvidedFee: fee,
   });
 
-  console.log('[TxBuilder] Signing transaction...');
+  console.log('[wasm.TxBuilder] Signing transaction...');
 
   // Sign the transaction (new API - sign() now returns void)
   builder.sign(privateKey);
 
-  console.log('[TxBuilder] Validating transaction...');
+  console.log('[wasm.TxBuilder] Validating transaction...');
 
   // Validate the transaction
   builder.validate();
 
-  console.log('[TxBuilder] Building final transaction...');
+  console.log('[wasm.TxBuilder] Building final transaction...');
 
-  // Build the final transaction (new API - build() returns WasmRawTx)
+  // Build the final transaction (new API - build() returns wasm.RawTx)
   const rawTx = builder.build();
 
-  console.log('[TxBuilder]  Transaction signed and built, txId:', rawTx.id.value);
+  console.log('[wasm.TxBuilder]  Transaction signed and built, txId:', rawTx.id.value);
 
   // DEBUG: Log parent_hash from seeds to diagnose rejection
   try {
     const pbTx = rawTx.toProtobuf();
-    console.log('[TxBuilder]  DEBUG: Inspecting transaction seeds...');
+    console.log('[wasm.TxBuilder]  DEBUG: Inspecting transaction seeds...');
     console.log(pbTx);
     // Try to access seeds if available (rawTx is WASM object with potentially hidden properties)
     const rawTxAny = rawTx as any;
     if (rawTxAny.seeds && Array.isArray(rawTxAny.seeds)) {
-      console.log('[TxBuilder] Seeds count:', rawTxAny.seeds.length);
+      console.log('[wasm.TxBuilder] Seeds count:', rawTxAny.seeds.length);
       rawTxAny.seeds.forEach((seed: any, i: number) => {
-        console.log(`[TxBuilder] Seed ${i}:`, {
+        console.log(`[wasm.TxBuilder] Seed ${i}:`, {
           parent_hash: seed.parent_hash?.value
             ? seed.parent_hash.value.slice(0, 30) + '...'
             : 'N/A',
@@ -304,16 +294,16 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
         });
       });
     } else {
-      console.log('[TxBuilder]   Seeds not directly accessible on rawTx');
+      console.log('[wasm.TxBuilder]   Seeds not directly accessible on rawTx');
     }
   } catch (e) {
-    console.log('[TxBuilder]   Could not inspect seeds:', e);
+    console.log('[wasm.TxBuilder]   Could not inspect seeds:', e);
   }
 
   // DEBUG: Log the note data that was used to build this transaction
-  console.log('[TxBuilder]  DEBUG: Input notes used for transaction:');
+  console.log('[wasm.TxBuilder]  DEBUG: Input notes used for transaction:');
   notes.forEach((note, i) => {
-    console.log(`[TxBuilder] Input ${i}:`, {
+    console.log(`[wasm.TxBuilder] Input ${i}:`, {
       originPage: note.originPage,
       nameFirst: note.nameFirst.slice(0, 30) + '...',
       nameLast: note.nameLast.slice(0, 30) + '...',
@@ -321,10 +311,10 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
       assets: note.assets,
     });
     console.log(
-      `[TxBuilder] The parent_hash in seeds should equal hash(Note) where Note contains these fields`
+      `[wasm.TxBuilder] The parent_hash in seeds should equal hash(Note) where Note contains these fields`
     );
     console.log(
-      `[TxBuilder]   If parent_hash doesn't match the blockchain's stored note hash, TX will be REJECTED`
+      `[wasm.TxBuilder]   If parent_hash doesn't match the blockchain's stored note hash, TX will be REJECTED`
     );
   });
 
@@ -385,7 +375,7 @@ export async function buildPayment(
     );
   }
 
-  console.log('[TxBuilder]  Spend condition verified, building transaction...');
+  console.log('[wasm.TxBuilder]  Spend condition verified, building transaction...');
 
   return buildTransaction({
     notes: [note],
@@ -439,18 +429,18 @@ export async function buildMultiNotePayment(
     );
   }
 
-  console.log(`[TxBuilder] Building multi-note transaction with ${notes.length} inputs`);
+  console.log(`[wasm.TxBuilder] Building multi-note transaction with ${notes.length} inputs`);
 
   // Create sender's PKH digest string for change
   const senderPKH = publicKeyToPKHDigest(senderPublicKey);
 
   // Discover the correct spend condition for each note
   // Each note may have different spend conditions (e.g., some are coinbase with timelocks)
-  const spendConditions: WasmSpendCondition[] = [];
+  const spendConditions: wasm.SpendCondition[] = [];
 
   for (let i = 0; i < notes.length; i++) {
     const note = notes[i];
-    console.log(`[TxBuilder] Discovering spend condition for note ${i + 1}/${notes.length}...`);
+    console.log(`[wasm.TxBuilder] Discovering spend condition for note ${i + 1}/${notes.length}...`);
 
     const spendCondition = await discoverSpendConditionForNote(senderPKH, {
       nameFirst: note.nameFirst,
@@ -469,7 +459,7 @@ export async function buildMultiNotePayment(
     spendConditions.push(spendCondition);
   }
 
-  console.log('[TxBuilder] All spend conditions verified, building transaction...');
+  console.log('[wasm.TxBuilder] All spend conditions verified, building transaction...');
 
   // Build transaction with all notes and their individual spend conditions
   return buildTransaction({
@@ -490,16 +480,16 @@ export async function buildMultiNotePayment(
  * Helper function for the common case
  *
  * @param publicKey - The 97-byte public key
- * @returns WasmSpendCondition for this public key
+ * @returns SpendCondition for this public key
  */
 export async function createSinglePKHSpendCondition(
   publicKey: Uint8Array
-): Promise<WasmSpendCondition> {
+): Promise<wasm.SpendCondition> {
   await ensureWasmInitialized();
 
   const pkhDigest = publicKeyToPKHDigest(publicKey);
-  const pkh = WasmPkh.single(pkhDigest);
-  return WasmSpendCondition.newPkh(pkh);
+  const pkh = wasm.Pkh.single(pkhDigest);
+  return wasm.SpendCondition.newPkh(pkh);
 }
 
 /**
@@ -510,7 +500,7 @@ export async function createSinglePKHSpendCondition(
  * @returns The note data hash as 40-byte digest
  */
 export async function calculateNoteDataHash(
-  spendCondition: WasmSpendCondition
+  spendCondition: wasm.SpendCondition
 ): Promise<Uint8Array> {
   await ensureWasmInitialized();
 

@@ -3,7 +3,7 @@
  * Uses WASM-based tonic-web-wasm-client for proper bigint handling
  */
 
-import { GrpcClient } from '../lib/nbx-wasm/nbx_wasm.js';
+import { GrpcClient } from '../lib/iris-wasm/iris_wasm.js';
 import type { Note } from './types';
 import { base58 } from '@scure/base';
 import { ensureWasmInitialized } from './wasm-utils.js';
@@ -339,7 +339,7 @@ export class NockchainBrowserRPCClient {
         sourceHash: noteData.source?.hash?.bytes || new Uint8Array(40),
         sourceIsCoinbase: noteData.source?.isCoinbase || false,
         assets: safeToNumber(assetsValue),
-        protoNote: balanceEntry.note, // Store raw protobuf for WasmNote.fromProtobuf()
+        protoNote: balanceEntry.note, // Store raw protobuf for Note.fromProtobuf()
       };
     } else {
       return {
@@ -357,7 +357,7 @@ export class NockchainBrowserRPCClient {
         sourceHash: new Uint8Array(40),
         sourceIsCoinbase: false,
         assets: safeToNumber(assetsValue),
-        protoNote: balanceEntry.note, // Store raw protobuf for WasmNote.fromProtobuf()
+        protoNote: balanceEntry.note, // Store raw protobuf for Note.fromProtobuf()
       };
     }
   }

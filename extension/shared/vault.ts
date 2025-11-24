@@ -12,20 +12,8 @@ import {
 } from './wallet-crypto';
 import { ERROR_CODES, STORAGE_KEYS, ACCOUNT_COLORS, PRESET_WALLET_STYLES } from './constants';
 import { Account } from './types';
-import { buildMultiNotePayment, type Note as TxBuilderNote } from './transaction-builder';
-import {
-  deriveMasterKeyFromMnemonic,
-  signMessage as wasmSignMessage,
-  WasmRawTx,
-  WasmNote,
-  WasmName,
-  WasmNoteData,
-  WasmNoteDataEntry,
-  WasmSpendCondition,
-  WasmPkh,
-  WasmTxBuilder,
-  WasmVersion,
-} from '../lib/nbx-wasm/nbx_wasm.js';
+import { buildMultiNotePayment, type Note, buildTransaction, buildPayment } from './transaction-builder';
+import * as wasm from '../lib/iris-wasm/iris_wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
 import type { Note as BalanceNote } from './types';
@@ -43,7 +31,7 @@ import { initWasmModules } from './wasm-utils';
 async function convertNoteForTxBuilder(
   note: BalanceNote,
   ownerPKH: string
-): Promise<TxBuilderNote> {
+): Promise<Note> {
   // Use pre-computed base58 strings if available (from WASM gRPC client)
   let nameFirst: string;
   let nameLast: string;
@@ -64,9 +52,9 @@ async function convertNoteForTxBuilder(
     noteDataHash = note.noteDataHashBase58;
   } else {
     // Fallback to empty string if not provided
-    // The protoNote field will be used by WasmNote.fromProtobuf() instead
+    // The protoNote field will be used by wasm.Note.fromProtobuf() instead
     console.warn(
-      '[Vault] No noteDataHashBase58 - relying on protoNote for WasmNote.fromProtobuf()'
+      '[Vault] No noteDataHashBase58 - relying on protoNote for wasm.Note.fromProtobuf()'
     );
     noteDataHash = '';
   }
@@ -77,7 +65,7 @@ async function convertNoteForTxBuilder(
     nameLast,
     noteDataHash,
     assets: note.assets,
-    protoNote: note.protoNote, // Pass through for WasmNote.fromProtobuf()
+    protoNote: note.protoNote, // Pass through for wasm.Note.fromProtobuf()
   };
 }
 
@@ -725,7 +713,7 @@ export class Vault {
     const msgString = String(msg);
 
     // Derive the account's private key based on derivation method
-    const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
     const currentAccount = this.getCurrentAccount();
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
@@ -743,7 +731,7 @@ export class Vault {
     }
 
     // Sign the message
-    const signature = wasmSignMessage(accountKey.private_key, msgString);
+    const signature = wasm.signMessage(accountKey.private_key, msgString);
 
     // Convert signature to JSON format
     const signatureJson = JSON.stringify({
@@ -785,7 +773,7 @@ export class Vault {
     await initWasmModules();
 
     // Derive the account's private and public keys based on derivation method
-    const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
     const accountKey =
@@ -879,7 +867,7 @@ export class Vault {
       await initWasmModules();
 
       // Derive keys
-      const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
       const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
       const accountKey =
         currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
@@ -999,7 +987,7 @@ export class Vault {
       await initWasmModules();
 
       // Derive the account's private and public keys based on derivation method
-      const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
       const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
       const accountKey =
         currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
@@ -1144,7 +1132,7 @@ export class Vault {
       await initWasmModules();
 
       // Derive the account's private and public keys based on derivation method
-      const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
       // Use the account's own index, not currentAccountIndex (accounts may be reordered)
       const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
       const accountKey =
@@ -1210,7 +1198,7 @@ export class Vault {
 
         console.log('[Vault] Transaction signed:', constructedTx.txId);
         console.log('[Vault] Transaction version:', constructedTx.version);
-        console.log('[Vault] RawTx object keys:', Object.keys(constructedTx.rawTx));
+        console.log('[Vault] wasm.RawTx object keys:', Object.keys(constructedTx.rawTx));
 
         // Convert to protobuf format for gRPC
         const protobufTx = constructedTx.rawTx.toProtobuf();
@@ -1412,13 +1400,16 @@ export class Vault {
   }
 
   /**
-   * Sign a raw transaction using nbx-wasm
+   * Sign a raw transaction using iris-wasm
+   * 
+   * @param params - Transaction parameters with raw tx jam and notes/spend conditions
+   * @returns Hex-encoded signed transaction jam
    */
   async signRawTx(params: {
-    rawTx: any;
-    notes: any[];
-    spendConditions: any[];
-  }): Promise<string> {
+    rawTx: any;  // Protobuf wasm.RawTx object
+    notes: any[];  // Protobuf Note objects
+    spendConditions: any[];  // Protobuf SpendCondition objects
+  }): Promise<any> {  // Returns protobuf wasm.RawTx
     if (this.state.locked || !this.mnemonic) {
       throw new Error('Wallet is locked');
     }
@@ -1429,7 +1420,7 @@ export class Vault {
     const { rawTx, notes, spendConditions } = params;
 
     // Derive the account's private key
-    const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
     const currentAccount = this.getCurrentAccount();
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
     const accountKey =
@@ -1446,99 +1437,35 @@ export class Vault {
     }
 
     try {
-      // Deserialize inputs
-      // rawTx is expected to be a hex string (from RPC)
-      // WasmRawTx.fromJam expects Uint8Array.
-      let jamBytes: Uint8Array;
-      if (typeof rawTx === 'string') {
-        // Convert hex string to Uint8Array
-        if (!/^[0-9a-fA-F]*$/.test(rawTx)) {
-          throw new Error('Invalid rawTx format: expected hex string');
-        }
-        jamBytes = new Uint8Array(
-          rawTx.match(/.{1,2}/g)?.map(byte => parseInt(byte, 16)) || []
-        );
-      } else {
-        throw new Error('Invalid rawTx format: expected hex string');
-      }
+      // Deserialize wasm.RawTx from protobuf (notes and spend conditions come as protobuf)
+      const irisRawTx = wasm.RawTx.fromProtobuf(rawTx);
 
-      const wasmRawTx = WasmRawTx.fromJam(jamBytes);
+      // Notes are already in protobuf format from the SDK
+      const irisNotes = notes.map(n => wasm.Note.fromProtobuf(n));
 
-      // Deserialize notes from plain JS objects
-      // Notes are passed as objects with {version, originPage, name, noteData, assets}
-      const wasmNotes = notes.map((n: any) => {
-        // Reconstruct WasmName
-        const name = new WasmName(n.name.first, n.name.last);
-
-        // Reconstruct WasmNoteData
-        const noteDataEntries = n.noteData.entries.map((e: any) => {
-          // Convert hex string to Uint8Array
-          const hexStr = e.blob;
-          const bytes = new Uint8Array(hexStr.match(/.{1,2}/g)?.map((byte: string) => parseInt(byte, 16)) || []);
-          return new WasmNoteDataEntry(e.key, bytes);
-        });
-        const noteData = new WasmNoteData(noteDataEntries);
-
-        // Reconstruct WasmNote
-        return new WasmNote(
-          new WasmVersion(n.version),
-          BigInt(n.originPage),
-          name,
-          noteData,
-          BigInt(n.assets)
-        );
-      });
-
-      // Deserialize spend conditions
-      // Assume they are passed as objects describing the condition
-      // For now, we support PKH conditions: { type: 'pkh', value: 'pkh_string' }
-      const wasmSpendConditions = spendConditions.map((sc: any) => {
-        if (sc.type === 'pkh') {
-          // We need WasmPkh
-          // WasmSpendCondition.newPkh(WasmPkh.single(pkh))
-          // But WasmPkh is not imported here. I need to import it.
-          // Or use WasmLockPrimitive?
-          // WasmSpendCondition.newPkh takes WasmPkh.
-          // Let's assume we can use WasmSpendCondition.newPkh
-
-          // Wait, I need to import WasmPkh.
-          // I'll add imports later.
-
-          // For now, I'll use a placeholder and fix imports.
-          return WasmSpendCondition.newPkh(WasmPkh.single(sc.value));
-        }
-        throw new Error(`Unsupported spend condition type: ${sc.type}`);
-      });
+      // SpendConditions are in protobuf format
+      const irisSpendConditions = spendConditions.map(sc => wasm.SpendCondition.fromProtobuf(sc));
 
       // Reconstruct the transaction builder
-      const builder = WasmTxBuilder.fromTx(wasmRawTx, wasmNotes, wasmSpendConditions);
+      const builder = wasm.TxBuilder.fromTx(irisRawTx, irisNotes, irisSpendConditions);
 
       // Sign
       builder.sign(accountKey.private_key);
 
       // Build signed tx
       const signedTx = builder.build();
-      const signedJam = signedTx.toJam();
 
-      // Convert to hex string or return as is?
-      // RPC usually expects hex or base64 or array.
-      // The existing signMessage returns JSON string of signature.
-      // signTransaction returns txid (string).
-      // signRawTx should probably return the signed jam as hex string.
-
-      // Helper to convert Uint8Array to hex
-      const hex = Array.from(signedJam)
-        .map((b: number) => b.toString(16).padStart(2, '0'))
-        .join('');
+      // Convert to protobuf for return
+      const protobuf = signedTx.toProtobuf();
 
       // Clean up
       builder.free();
-      wasmRawTx.free();
-      wasmNotes.forEach(n => n.free());
-      wasmSpendConditions.forEach(sc => sc.free());
+      irisRawTx.free();
+      irisNotes.forEach(n => n.free());
+      irisSpendConditions.forEach(sc => sc.free());
       signedTx.free();
 
-      return hex;
+      return protobuf;
     } finally {
       if (currentAccount?.derivation !== 'master') {
         accountKey.free();
