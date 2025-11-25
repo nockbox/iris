@@ -176,12 +176,14 @@ export interface SignRawTxRequest {
   id: string;
   /** Origin of the requesting site */
   origin: string;
-  /** Raw transaction jam as hex string */
-  rawTx: string;
+  /** Raw transaction jam as hex string or parsed object */
+  rawTx: any;
   /** Input notes (protobuf) */
   notes: any[];
   /** Spend conditions (protobuf) */
   spendConditions: any[];
+  /** Output notes (protobuf). Ignored from dApp side */
+  outputs?: any[];
   /** Request timestamp */
   timestamp: number;
 }

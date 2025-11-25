@@ -3,129 +3,246 @@ import { useStore } from '../../store';
 import { INTERNAL_METHODS, APPROVAL_CONSTANTS } from '../../../shared/constants';
 import { send } from '../../utils/messaging';
 import { SignRawTxRequest } from '../../../shared/types';
+import { useAutoRejectOnClose } from '../../hooks/useAutoRejectOnClose';
+import { ChevronLeftIcon } from '../../components/icons/ChevronLeftIcon';
+import { AccountIcon } from '../../components/AccountIcon';
+import { truncateAddress } from '../../utils/format';
+import { nickToNock, formatNock } from '../../../shared/currency';
+
+interface NoteItemProps {
+  note: any;
+  type: 'to' | 'from';
+  textPrimary: string;
+  textMuted: string;
+  surface: string;
+}
+
+function NoteItem({ note, type, textPrimary, textMuted, surface }: NoteItemProps) {
+  const [copied, setCopied] = useState(false);
+
+  // Extract data from the complex JSON structure
+  // Structure: [{"note_version":{"V1":{...}}}] or similar
+  // We need to handle potential variations if the structure isn't exactly as expected, but assuming the provided JSON is representative.
+
+  // The note object passed here is likely one item from the array, e.g. {"note_version":{"V1":{...}}}
+
+  let versionData: any = null;
+
+  if (note.note_version?.V1) {
+    versionData = note.note_version.V1;
+  }
+
+  if (!versionData) {
+    return (
+      <div className="rounded-lg p-3 mb-2" style={{ backgroundColor: surface }}>
+        <p className="text-sm text-red-500">Unknown note format</p>
+        <pre className="text-xs break-all">{JSON.stringify(note)}</pre>
+      </div>
+    );
+  }
+
+  const assetsValue = versionData.assets?.value || "0";
+  const nicks = parseInt(assetsValue, 10);
+  const nocks = nickToNock(nicks);
+  const formattedNocks = formatNock(nocks);
+
+  const firstName = versionData.name?.first || "";
+  const lastName = versionData.name?.last || "";
+  const fullName = `[ ${firstName} ${lastName} ]`;
+
+  // Truncate name: first 4 chars of first name ... last 4 chars of last name
+  const truncatedName = `[ ${firstName.slice(0, 4)}...${lastName.slice(-4)} ]`;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(fullName);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  return (
+    <div className="rounded-lg p-3 mb-2" style={{ backgroundColor: surface }}>
+      <div className="flex flex-row items-center gap-1 text-sm font-medium">
+        <span style={{ color: textPrimary }}>{formattedNocks} NOCK</span>
+        <span style={{ color: textMuted }}>{type}</span>
+        <span
+          className="font-mono cursor-pointer hover:opacity-80 transition-opacity relative group"
+          style={{ color: textMuted }}
+          onClick={handleCopy}
+          title={fullName}
+        >
+          {truncatedName}
+          {copied && (
+            <span className="absolute right-0 top-0 z-50 whitespace-nowrap bg-green-500 text-white text-[10px] px-1 rounded transform -translate-y-full">
+              Copied!
+            </span>
+          )}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export function SignRawTxScreen() {
-    const { pendingSignRequest, setPendingSignRequest, navigate } = useStore();
-    const [request, setRequest] = useState<SignRawTxRequest | null>(null);
+  const { pendingSignRawTxRequest, setPendingSignRawTxRequest, navigate, wallet } = useStore();
 
-    useEffect(() => {
-        // Check if we have a pending request in store
-        if (pendingSignRequest && 'rawTx' in pendingSignRequest) {
-            setRequest(pendingSignRequest as unknown as SignRawTxRequest);
-            return;
-        }
+  if (!pendingSignRawTxRequest) {
+    navigate("home");
+    return null;
+  }
 
-        // Otherwise fetch from background
-        const fetchRequest = async () => {
-            try {
-                const hash = window.location.hash.slice(1);
-                const prefix = APPROVAL_CONSTANTS.SIGN_RAW_TX_HASH_PREFIX;
+  const { id, origin, rawTx, notes, spendConditions, outputs } = pendingSignRawTxRequest;
 
-                if (hash.startsWith(prefix)) {
-                    const requestId = hash.slice(prefix.length);
-                    const req = await send<SignRawTxRequest>(INTERNAL_METHODS.GET_PENDING_RAW_TX_REQUEST, [requestId]);
-                    setRequest(req);
-                    setPendingSignRequest(req as any);
-                }
-            } catch (error) {
-                console.error('Failed to fetch request:', error);
-            }
-        };
+  useAutoRejectOnClose(id, INTERNAL_METHODS.REJECT_SIGN_RAW_TX);
 
-        fetchRequest();
-    }, [pendingSignRequest, setPendingSignRequest]);
+  async function handleDecline() {
+    await send(INTERNAL_METHODS.REJECT_SIGN_RAW_TX, [id]);
+    setPendingSignRawTxRequest(null);
+    window.close();
+  }
 
-    const handleApprove = async () => {
-        if (!request) return;
+  async function handleSign() {
+    await send(INTERNAL_METHODS.APPROVE_SIGN_RAW_TX, [id]);
+    setPendingSignRawTxRequest(null);
+    window.close();
+  }
 
-        try {
-            await send(INTERNAL_METHODS.APPROVE_SIGN_RAW_TX, [request.id]);
-            window.close();
-        } catch (error) {
-            console.error('Failed to approve:', error);
-        }
-    };
-
-    const handleReject = async () => {
-        if (!request) return;
-
-        try {
-            await send(INTERNAL_METHODS.REJECT_SIGN_RAW_TX, [request.id]);
-            window.close();
-        } catch (error) {
-            console.error('Failed to reject:', error);
-            window.close();
-        }
-    };
-
-    if (!request) {
-        return (
-            <div className="flex flex-col items-center justify-center h-full p-6">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500"></div>
-            </div>
-        );
+  // Calculate network fee
+  let totalFeeNicks = 0;
+  try {
+    if (rawTx && rawTx.spends && Array.isArray(rawTx.spends)) {
+      totalFeeNicks = rawTx.spends.reduce((sum: number, spend: any) => {
+        const feeValue = spend?.spend?.spend_kind?.Witness?.fee?.value;
+        const fee = feeValue ? parseInt(feeValue, 10) : 0;
+        return sum + (isNaN(fee) ? 0 : fee);
+      }, 0);
     }
+  } catch (err) {
+    console.error("Error calculating fee:", err);
+    // Default to 0 if error
+  }
 
-    return (
-        <div className="flex flex-col h-full bg-surface-50">
-            <div className="flex-1 p-6 overflow-y-auto">
-                <div className="flex flex-col items-center mb-6">
-                    <div className="w-12 h-12 rounded-full bg-primary-100 flex items-center justify-center mb-4">
-                        <svg className="w-6 h-6 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
-                        </svg>
-                    </div>
-                    <h2 className="text-xl font-bold text-gray-900 text-center">Sign Transaction</h2>
-                    <p className="text-sm text-gray-500 mt-1 text-center break-all">{request.origin}</p>
-                </div>
+  const totalFeeNocks = nickToNock(totalFeeNicks);
+  const formattedFee = formatNock(totalFeeNocks);
 
-                <div className="bg-white rounded-xl p-4 shadow-sm border border-gray-100 mb-4">
-                    <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">Transaction Details</h3>
-                    <div className="space-y-2">
-                        <div className="flex justify-between">
-                            <span className="text-sm text-gray-600">Notes</span>
-                            <span className="text-sm font-medium text-gray-900">{request.notes.length}</span>
-                        </div>
-                        <div className="flex justify-between">
-                            <span className="text-sm text-gray-600">Spend Conditions</span>
-                            <span className="text-sm font-medium text-gray-900">{request.spendConditions.length}</span>
-                        </div>
-                    </div>
-                </div>
+  const bg = 'var(--color-bg)';
+  const surface = 'var(--color-surface-800)';
+  const textPrimary = 'var(--color-text-primary)';
+  const textMuted = 'var(--color-text-muted)';
+  const divider = 'var(--color-divider)';
 
-                <div className="bg-yellow-50 rounded-lg p-4 border border-yellow-100">
-                    <div className="flex">
-                        <div className="flex-shrink-0">
-                            <svg className="h-5 w-5 text-yellow-400" viewBox="0 0 20 20" fill="currentColor">
-                                <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-                            </svg>
-                        </div>
-                        <div className="ml-3">
-                            <h3 className="text-sm font-medium text-yellow-800">Warning</h3>
-                            <div className="mt-2 text-sm text-yellow-700">
-                                <p>Only sign transactions from sites you trust. Malicious sites can drain your wallet.</p>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+  return (
+    <div className="w-[357px] h-screen flex flex-col" style={{ backgroundColor: bg }}>
+      {/* Header */}
+      <div className="flex items-center gap-3 px-4 py-2.5 shrink-0">
+        <button onClick={handleDecline} style={{ color: textPrimary }}>
+          <ChevronLeftIcon />
+        </button>
+        <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>
+          Sign Raw Transaction
+        </h2>
+      </div>
 
-            <div className="p-6 bg-white border-t border-gray-100">
-                <div className="flex space-x-4">
-                    <button
-                        onClick={handleReject}
-                        className="flex-1 px-4 py-3 border border-gray-300 rounded-lg text-gray-700 font-medium hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500 transition-colors"
-                    >
-                        Reject
-                    </button>
-                    <button
-                        onClick={handleApprove}
-                        className="flex-1 px-4 py-3 bg-primary-600 rounded-lg text-white font-medium hover:bg-primary-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary-500 transition-colors shadow-sm"
-                    >
-                        Sign
-                    </button>
-                </div>
-            </div>
+      {/* Content */}
+      <div className="px-4 pb-2 flex-1 overflow-y-auto">
+        {/* Site Info */}
+        <div className="mb-3">
+          <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+            Requesting Site
+          </label>
+          <div className="rounded-lg p-3" style={{ backgroundColor: surface }}>
+            <p className="text-sm font-semibold mb-0.5" style={{ color: textPrimary }}>
+              {origin.includes('://') ? new URL(origin).hostname : origin}
+            </p>
+            <p className="text-xs break-all" style={{ color: textMuted }}>
+              {origin}
+            </p>
+          </div>
         </div>
-    );
+
+        {/* Raw Transaction Content */}
+        <div className="mb-3">
+          <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+            Inputs ({notes.length})
+          </label>
+          <div className="max-h-48 overflow-y-auto">
+            {notes.map((note: any, index: number) => (
+              <NoteItem
+                key={`input-${index}`}
+                note={note}
+                type="from"
+                textPrimary={textPrimary}
+                textMuted={textMuted}
+                surface={surface}
+              />
+            ))}
+          </div>
+        </div>
+
+        {/* Raw Transaction Outputs */}
+        {outputs && outputs.length > 0 && (
+          <div className="mb-3">
+            <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+              Outputs ({outputs.length})
+            </label>
+            <div className="max-h-48 overflow-y-auto">
+              {outputs.map((output: any, index: number) => (
+                <NoteItem
+                  key={`output-${index}`}
+                  note={output}
+                  type="to"
+                  textPrimary={textPrimary}
+                  textMuted={textMuted}
+                  surface={surface}
+                />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Network Fee */}
+        <div className="mb-3">
+          <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+            Network Fee
+          </label>
+          <div className="rounded-lg p-3" style={{ backgroundColor: surface }}>
+            <p className="text-sm font-semibold" style={{ color: textPrimary }}>
+              {formattedFee} NOCK
+            </p>
+          </div>
+        </div>
+
+        {/* Account */}
+        <div>
+          <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+            Signing Account
+          </label>
+          <div className="rounded-lg p-3 flex items-center gap-2.5" style={{ backgroundColor: surface }}>
+            <AccountIcon
+              styleId={wallet.currentAccount?.iconStyleId}
+              color={wallet.currentAccount?.iconColor}
+              className="w-8 h-8 shrink-0"
+            />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium" style={{ color: textPrimary }}>
+                {wallet.currentAccount?.name || "Unknown"}
+              </p>
+              <p className="text-xs font-mono mt-0.5" style={{ color: textMuted }}>
+                {truncateAddress(wallet.currentAccount?.address)}
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Footer Buttons */}
+      <div className="mt-auto px-4 py-2.5 shrink-0 flex gap-3" style={{ borderTop: `1px solid ${divider}` }}>
+        <button onClick={handleDecline} className="btn-secondary flex-1">
+          Decline
+        </button>
+        <button onClick={handleSign} className="btn-primary flex-1">
+          Sign
+        </button>
+      </div>
+    </div>
+  );
 }

@@ -20,6 +20,7 @@ export function Popup() {
     setPendingConnectRequest,
     setPendingTransactionRequest,
     setPendingSignRequest,
+    setPendingSignRawTxRequest,
   } = useStore();
 
   // Initialize app on mount
@@ -34,6 +35,7 @@ export function Popup() {
     setPendingConnectRequest,
     setPendingTransactionRequest,
     setPendingSignRequest,
+    setPendingSignRawTxRequest,
     navigate,
   });
 

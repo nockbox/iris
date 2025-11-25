@@ -9,6 +9,7 @@ import {
   Account,
   TransactionDetails,
   SignRequest,
+  SignRawTxRequest,
   TransactionRequest,
   ConnectRequest,
   CachedTransaction,
@@ -103,6 +104,10 @@ interface AppStore {
   pendingSignRequest: SignRequest | null;
   setPendingSignRequest: (request: SignRequest | null) => void;
 
+  // Pending sign raw transaction request (for showing approval screen)
+  pendingSignRawTxRequest: SignRawTxRequest | null;
+  setPendingSignRawTxRequest: (request: SignRawTxRequest | null) => void;
+
   // Pending transaction request (for showing approval screen)
   pendingTransactionRequest: TransactionRequest | null;
   setPendingTransactionRequest: (request: TransactionRequest | null) => void;
@@ -171,6 +176,7 @@ export const useStore = create<AppStore>((set, get) => ({
   lastTransaction: null,
   pendingConnectRequest: null,
   pendingSignRequest: null,
+  pendingSignRawTxRequest: null,
   pendingTransactionRequest: null,
   cachedTransactions: [],
   selectedTransaction: null,
@@ -223,6 +229,11 @@ export const useStore = create<AppStore>((set, get) => ({
   // Set pending sign request
   setPendingSignRequest: (request: SignRequest | null) => {
     set({ pendingSignRequest: request });
+  },
+
+  // Set pending sign raw transaction request
+  setPendingSignRawTxRequest: (request: SignRawTxRequest | null) => {
+    set({ pendingSignRawTxRequest: request });
   },
 
   // Set pending transaction request

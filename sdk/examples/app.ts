@@ -11,11 +11,9 @@ declare global {
 const statusDiv = document.getElementById('status')!;
 const outputPre = document.getElementById('output')!;
 const connectBtn = document.getElementById('connectBtn') as HTMLButtonElement;
-const getInfoBtn = document.getElementById('getInfoBtn') as HTMLButtonElement;
 const signRawTxBtn = document.getElementById('signRawTxBtn') as HTMLButtonElement;
 const recipientInput = document.getElementById('recipientInput') as HTMLInputElement;
 
-let account: string | null = null;
 let grpcEndpoint: string | null = null;
 let walletPkh: string | null = null;
 
@@ -39,25 +37,15 @@ connectBtn.onclick = async () => {
         return;
     }
     try {
-        const accounts = (await window.nockchain.request({ method: 'nock_requestAccounts' })) as string[];
-        account = accounts[0];
-        statusDiv.textContent = 'Connected: ' + account;
-        getInfoBtn.disabled = false;
-        signRawTxBtn.disabled = false;
-        log('Connected: ' + account);
-    } catch (e: any) {
-        log('Connect failed: ' + e.message);
-    }
-};
-
-getInfoBtn.onclick = async () => {
-    try {
-        const info = (await window.nockchain!.request({ method: 'nock_getWalletInfo' })) as { grpcEndpoint: string; pkh: string };
+        const info = (await window.nockchain.request({ method: 'nock_connect' })) as { grpcEndpoint: string; pkh: string };
+        console.log(info);
         grpcEndpoint = info.grpcEndpoint;
         walletPkh = info.pkh;
-        log('Wallet Info: ' + JSON.stringify(info, null, 2));
+        statusDiv.textContent = 'Connected: ' + walletPkh;
+        signRawTxBtn.disabled = false;
+        log('Connected: ' + walletPkh + ' @ ' + grpcEndpoint);
     } catch (e: any) {
-        log('Get Info failed: ' + e.message);
+        log('Connect failed: ' + e.message);
     }
 };
 
@@ -66,7 +54,7 @@ signRawTxBtn.onclick = async () => {
         log('Building transaction...');
 
         // 1. Validate inputs
-        if (!account || !grpcEndpoint || !walletPkh) {
+        if (!grpcEndpoint || !walletPkh) {
             log('Please connect and get wallet info first');
             return;
         }
@@ -143,8 +131,7 @@ signRawTxBtn.onclick = async () => {
         const txId = rawTx.id;
         log('Transaction ID: ' + txId.value);
 
-        const rawTxJam = rawTx.toJam();
-        log('Jammed tx size: ' + rawTxJam.length + ' bytes');
+        const rawTxProtobuf = rawTx.toProtobuf();
 
         // Get notes and spend conditions from builder
         const txNotes = builder.allNotes();
@@ -158,27 +145,28 @@ signRawTxBtn.onclick = async () => {
 
         // 8. Sign using signRawTx
         log('Signing transaction...');
-        const signedTxHex = await signRawTx({
-            rawTx: rawTxJam,
+        const signedTx = await signRawTx({
+            rawTx: rawTxProtobuf,
             notes: noteObjects,
             spendConditions: spendConds
         });
+        const signedTxJam = wasm.RawTx.fromProtobuf(signedTx).toJam();
 
         log('Transaction signed successfully!');
-        log('Signed tx (hex): ' + signedTxHex.substring(0, 100) + '...');
+        log('Signed tx', signedTx);
 
         // 9. Download to file using transaction ID
-        const blob = new Blob([signedTxHex], { type: 'text/plain' });
+        const blob = new Blob([signedTxJam], { type: 'text/plain' });
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = `tx_${txId.value.substring(0, 16)}.hex`;
+        a.download = `${txId.value}.tx`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
 
-        log('Downloaded transaction to file: tx_' + txId.value.substring(0, 16) + '.hex');
+        log('Downloaded transaction to file: ' + txId.value + '.tx');
 
     } catch (e: any) {
         log('Error: ' + e.message);

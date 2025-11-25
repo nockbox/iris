@@ -9,8 +9,8 @@
  * Follow EIP-1193 naming convention with 'nock_' prefix
  */
 export const PROVIDER_METHODS = {
-  /** Request user's wallet accounts */
-  REQUEST_ACCOUNTS: "nock_requestAccounts",
+  /**  */
+  CONNECT: "nock_connect",
 
   /** Sign an arbitrary message */
   SIGN_MESSAGE: "nock_signMessage",
@@ -101,6 +101,9 @@ export const INTERNAL_METHODS = {
 
   /** Get pending sign message request for approval */
   GET_PENDING_SIGN_REQUEST: "wallet:getPendingSignRequest",
+
+  /** Get pending sign raw transaction request for approval */
+  GET_PENDING_SIGN_RAW_TX_REQUEST: "wallet:getPendingSignRawTxRequest",
 
   /** Approve pending sign message request */
   APPROVE_SIGN_MESSAGE: "wallet:approveSignMessage",
@@ -274,9 +277,10 @@ export const DEFAULT_FEE_PER_WORD = 1 << 15; // 32,768 nicks = 0.5 NOCK per word
  */
 export const USER_ACTIVITY_METHODS = new Set([
   // Provider methods (user-initiated actions from dApps)
-  PROVIDER_METHODS.REQUEST_ACCOUNTS,
+  PROVIDER_METHODS.CONNECT,
   PROVIDER_METHODS.SIGN_MESSAGE,
   PROVIDER_METHODS.SEND_TRANSACTION,
+  PROVIDER_METHODS.SIGN_RAW_TX,
 
   // Internal methods (user actions in the UI)
   INTERNAL_METHODS.UNLOCK,

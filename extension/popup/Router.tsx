@@ -39,6 +39,8 @@ import { RecoveryPhraseScreen } from './screens/RecoveryPhraseScreen';
 export function Router() {
   const { currentScreen } = useStore();
 
+  console.log('currentScreen', currentScreen);
+
   // Route to appropriate screen based on current state
   switch (currentScreen) {
     // Onboarding

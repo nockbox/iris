@@ -1455,19 +1455,30 @@ export class Vault {
       // Convert to protobuf for return
       const protobuf = signedTx.toProtobuf();
 
-      // Clean up
-      builder.free();
-      irisRawTx.free();
-      irisNotes.forEach(n => n.free());
-      irisSpendConditions.forEach(sc => sc.free());
-      signedTx.free();
-
       return protobuf;
     } finally {
       if (currentAccount?.derivation !== 'master') {
         accountKey.free();
       }
       masterKey.free();
+    }
+  }
+
+  async computeOutputs(rawTx: any): Promise<any[]> {
+    if (this.state.locked || !this.mnemonic) {
+      throw new Error('Wallet is locked');
+    }
+
+    // Initialize WASM modules
+    await initWasmModules();
+
+    try {
+      const irisRawTx = wasm.RawTx.fromProtobuf(rawTx);
+      const outputs = irisRawTx.outputs();
+      return outputs.map((output: wasm.Note) => output.toProtobuf());
+    } catch (err) {
+      console.error('Failed to compute outputs:', err);
+      throw err;
     }
   }
 }
