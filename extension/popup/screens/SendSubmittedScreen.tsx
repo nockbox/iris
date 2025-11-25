@@ -45,9 +45,10 @@ export function SendSubmittedScreen() {
   // Calculate USD value based on amount and current price
   const amountInNock = lastTransaction?.amount || 0;
   const usdValue = amountInNock * priceUsd;
-  const sentUsdValue = usdValue > 0
-    ? `$${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-    : '$0.00';
+  const sentUsdValue =
+    usdValue > 0
+      ? `$${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      : '$0.00';
 
   return (
     <div
@@ -155,7 +156,7 @@ export function SendSubmittedScreen() {
         </div> */}
 
         {/* DEV: Download transaction button */}
-        {lastTransaction?.protobufTx && (
+        {/* {lastTransaction?.protobufTx && (
           <div className="px-4 pb-2">
             <button
               type="button"
@@ -171,7 +172,7 @@ export function SendSubmittedScreen() {
               </span>
             </button>
           </div>
-        )}
+        )} */}
 
         {/* Action Buttons */}
         <div className="flex gap-3 px-4 py-3 w-full">

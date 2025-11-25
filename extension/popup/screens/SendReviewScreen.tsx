@@ -267,10 +267,7 @@ export function SendReviewScreen() {
             </div>
 
             {/* Network fee & Total */}
-            <div
-              className="rounded-lg p-3"
-              style={{ backgroundColor: 'var(--color-surface-800)' }}
-            >
+            <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--color-surface-800)' }}>
               <div className="flex flex-col gap-2.5 w-full">
                 {/* Fee row */}
                 <div className="flex items-center justify-between w-full">
@@ -289,10 +286,13 @@ export function SendReviewScreen() {
                     </div>
                   </div>
                 </div>
-                
+
                 {/* Divider */}
-                <div className="w-full h-px" style={{ backgroundColor: 'var(--color-surface-700)' }} />
-                
+                <div
+                  className="w-full h-px"
+                  style={{ backgroundColor: 'var(--color-surface-700)' }}
+                />
+
                 {/* Total row */}
                 <div className="flex items-center justify-between w-full">
                   <div className="text-sm font-semibold leading-[18px] tracking-[0.14px]">
@@ -336,7 +336,7 @@ export function SendReviewScreen() {
         </div>
 
         {/* DEV: Download signed transaction button */}
-        {builtTx?.protobufTx && (
+        {/* {builtTx?.protobufTx && (
           <div className="px-4 pb-2">
             <button
               type="button"
@@ -352,7 +352,7 @@ export function SendReviewScreen() {
               </span>
             </button>
           </div>
-        )}
+        )} */}
 
         {/* Actions */}
         <div
