@@ -23,46 +23,27 @@
     "service_worker": "background/index.ts",
     "type": "module"
   },
-  "permissions": [
-    "storage",
-    "alarms",
-    "scripting"
-  ],
+  "permissions": ["storage", "alarms", "scripting"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
   },
   "content_scripts": [
     {
-      "matches": [
-        "http://*/*",
-        "https://*/*"
-      ],
-      "js": [
-        "content/index.ts"
-      ],
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content/index.ts"],
       "run_at": "document_start"
     },
     {
-      "matches": [
-        "http://*/*",
-        "https://*/*"
-      ],
-      "js": [
-        "inpage/index.ts"
-      ],
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["inpage/index.ts"],
       "run_at": "document_start",
       "world": "MAIN"
     }
   ],
   "web_accessible_resources": [
     {
-      "resources": [
-        "lib/iris-wasm/*.wasm",
-        "lib/iris-wasm/*.js"
-      ],
-      "matches": [
-        "<all_urls>"
-      ]
+      "resources": ["lib/iris-wasm/*.wasm", "lib/iris-wasm/*.js"],
+      "matches": ["<all_urls>"]
     }
   ]
 }
