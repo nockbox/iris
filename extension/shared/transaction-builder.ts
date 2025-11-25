@@ -3,7 +3,7 @@
  * High-level API for constructing Nockchain transactions
  */
 
-import * as wasm from '../lib/iris-wasm/iris_wasm.js';
+import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
 import { DEFAULT_FEE_PER_WORD } from './constants.js';

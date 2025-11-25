@@ -13,7 +13,7 @@ import {
 import { ERROR_CODES, STORAGE_KEYS, ACCOUNT_COLORS, PRESET_WALLET_STYLES } from './constants';
 import { Account } from './types';
 import { buildMultiNotePayment, type Note, buildTransaction, buildPayment } from './transaction-builder';
-import * as wasm from '../lib/iris-wasm/iris_wasm.js';
+import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
 import type { Note as BalanceNote } from './types';
@@ -719,7 +719,7 @@ export class Vault {
         ? masterKey // Use master key directly for master-derived accounts
         : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
-    if (!accountKey.private_key) {
+    if (!accountKey.privateKey) {
       if (currentAccount?.derivation !== 'master') {
         accountKey.free();
       }
@@ -728,7 +728,7 @@ export class Vault {
     }
 
     // Sign the message
-    const signature = wasm.signMessage(accountKey.private_key, msgString);
+    const signature = wasm.signMessage(accountKey.privateKey, msgString);
 
     // Convert signature to JSON format
     const signatureJson = JSON.stringify({
@@ -778,7 +778,7 @@ export class Vault {
         ? masterKey // Use master key directly for master-derived accounts
         : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
-    if (!accountKey.private_key || !accountKey.public_key) {
+    if (!accountKey.privateKey || !accountKey.publicKey) {
       if (currentAccount.derivation !== 'master') {
         accountKey.free();
       }
@@ -822,8 +822,8 @@ export class Vault {
         txBuilderNotes,
         to,
         amount,
-        accountKey.public_key,
-        accountKey.private_key,
+        accountKey.publicKey,
+        accountKey.privateKey,
         fee
       );
 
@@ -869,7 +869,7 @@ export class Vault {
       const accountKey =
         currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
 
-      if (!accountKey.private_key || !accountKey.public_key) {
+      if (!accountKey.privateKey || !accountKey.publicKey) {
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
         }
@@ -902,8 +902,8 @@ export class Vault {
             txBuilderNotes,
             to,
             amount,
-            accountKey.public_key,
-            accountKey.private_key,
+            accountKey.publicKey,
+            accountKey.privateKey,
             undefined // let WASM auto-calc
           );
 
@@ -989,7 +989,7 @@ export class Vault {
       const accountKey =
         currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
 
-      if (!accountKey.private_key || !accountKey.public_key) {
+      if (!accountKey.privateKey || !accountKey.publicKey) {
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
         }
@@ -1031,7 +1031,7 @@ export class Vault {
           availableInputs: txBuilderNotes.length,
           amount,
           fee: fee !== undefined ? fee : 'auto-calculated by WASM',
-          senderPublicKey: base58.encode(accountKey.public_key).slice(0, 20) + '...',
+          senderPublicKey: base58.encode(accountKey.publicKey).slice(0, 20) + '...',
         });
 
         // Always use buildMultiNotePayment - it handles both single and multiple notes
@@ -1040,8 +1040,8 @@ export class Vault {
           txBuilderNotes,
           to,
           amount,
-          accountKey.public_key,
-          accountKey.private_key,
+          accountKey.publicKey,
+          accountKey.privateKey,
           fee
         );
 
@@ -1137,7 +1137,7 @@ export class Vault {
           ? masterKey // Use master key directly for master-derived accounts
           : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
-      if (!accountKey.private_key || !accountKey.public_key) {
+      if (!accountKey.privateKey || !accountKey.publicKey) {
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
         }
@@ -1179,7 +1179,7 @@ export class Vault {
           availableInputs: txBuilderNotes.length,
           amount,
           fee: fee !== undefined ? fee : 'auto-calculated by WASM',
-          senderPublicKey: base58.encode(accountKey.public_key).slice(0, 20) + '...',
+          senderPublicKey: base58.encode(accountKey.publicKey).slice(0, 20) + '...',
         });
 
         // Always use buildMultiNotePayment - it handles both single and multiple notes
@@ -1188,8 +1188,8 @@ export class Vault {
           txBuilderNotes,
           to,
           amount,
-          accountKey.public_key,
-          accountKey.private_key,
+          accountKey.publicKey,
+          accountKey.privateKey,
           fee
         );
 
@@ -1425,7 +1425,7 @@ export class Vault {
         ? masterKey
         : masterKey.deriveChild(childIndex);
 
-    if (!accountKey.private_key) {
+    if (!accountKey.privateKey) {
       if (currentAccount?.derivation !== 'master') {
         accountKey.free();
       }
@@ -1447,7 +1447,7 @@ export class Vault {
       const builder = wasm.TxBuilder.fromTx(irisRawTx, irisNotes, irisSpendConditions);
 
       // Sign
-      builder.sign(accountKey.private_key);
+      builder.sign(accountKey.privateKey);
 
       // Build signed tx
       const signedTx = builder.build();

@@ -1,6 +1,6 @@
 import { signRawTx } from '../dist/wrapper';
-import initWasm from '../lib/iris-wasm/iris_wasm';
-import * as wasm from '../lib/iris-wasm/iris_wasm';
+import initWasm from '@nockbox/iris-wasm/iris_wasm.js';
+import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
 
 declare global {
     interface Window {
@@ -92,7 +92,7 @@ signRawTxBtn.onclick = async () => {
 
         // 5. Query notes matching this firstName
         log('Querying notes from gRPC...');
-        const balance = await grpcClient.get_balance_by_first_name(firstName.value);
+        const balance = await grpcClient.getBalanceByFirstName(firstName.value);
 
         if (!balance || !balance.notes || balance.notes.length === 0) {
             log('No notes found - wallet might be empty');
@@ -148,9 +148,9 @@ signRawTxBtn.onclick = async () => {
 
         // Get notes and spend conditions from builder
         const txNotes = builder.allNotes();
-        const txNotesArray = txNotes.get_notes;
+        const txNotesArray = txNotes.notes;
 
-        const noteObjects = txNotes.get_notes.map((n: wasm.Note) => n.toProtobuf());
+        const noteObjects = txNotes.notes.map((n: wasm.Note) => n.toProtobuf());
         const spendConds = txNotes.spendConditions.map((s: wasm.SpendCondition) => s.toProtobuf());
 
         log('Notes count: ' + noteObjects.length);
