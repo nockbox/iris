@@ -6,12 +6,7 @@
  * the expected first-name for standard lock types (simple PKH and coinbase).
  */
 
-import {
-  WasmSpendCondition,
-  WasmPkh,
-  WasmLockPrimitive,
-  WasmLockTim,
-} from '../lib/nbx-wasm/nbx_wasm.js';
+import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
 
 /**
@@ -44,8 +39,8 @@ export async function deriveSimpleFirstName(pkhBase58: string): Promise<string> 
   });
 
   // Create a simple PKH-only spend condition
-  const pkh = WasmPkh.single(pkhBase58);
-  const condition = WasmSpendCondition.newPkh(pkh);
+  const pkh = wasm.Pkh.single(pkhBase58);
+  const condition = wasm.SpendCondition.newPkh(pkh);
 
   // Get the first-name from the spend condition
   const firstNameDigest = condition.firstName();
@@ -91,9 +86,9 @@ export async function deriveCoinbaseFirstName(pkhBase58: string): Promise<string
   }
 
   // Create PKH + TIM (coinbase) spend condition
-  const pkhLeaf = WasmLockPrimitive.newPkh(WasmPkh.single(pkhBase58));
-  const timLeaf = WasmLockPrimitive.newTim(WasmLockTim.coinbase());
-  const condition = new WasmSpendCondition([pkhLeaf, timLeaf]);
+  const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(pkhBase58));
+  const timLeaf = wasm.LockPrimitive.newTim(wasm.LockTim.coinbase());
+  const condition = new wasm.SpendCondition([pkhLeaf, timLeaf]);
 
   // Get the first-name from the spend condition
   const firstNameDigest = condition.firstName();

@@ -24,6 +24,7 @@ import { ReceiveScreen } from './screens/ReceiveScreen';
 import { ConnectApprovalScreen } from './screens/approvals/ConnectApprovalScreen';
 import { SignMessageScreen } from './screens/approvals/SignMessageScreen';
 import { TransactionApprovalScreen } from './screens/approvals/TransactionApprovalScreen';
+import { SignRawTxScreen } from './screens/approvals/SignRawTxScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { ThemeSettingsScreen } from './screens/ThemeSettingsScreen';
 import { LockTimeScreen } from './screens/LockTimeScreen';
@@ -103,6 +104,8 @@ export function Router() {
       return <SignMessageScreen />;
     case 'approve-transaction':
       return <TransactionApprovalScreen />;
+    case 'approve-sign-raw-tx':
+      return <SignRawTxScreen />;
 
     // System
     case 'locked':

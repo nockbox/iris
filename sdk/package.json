@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./wasm": {
+      "types": "./dist/wasm.d.ts",
+      "import": "./dist/wasm.js"
     }
   },
   "files": [
@@ -17,7 +21,9 @@
   ],
   "scripts": {
     "build": "tsc",
+    "build-example": "npm run build && tsc --project examples/tsconfig.json && vite build --config vite.config.examples.ts",
     "dev": "tsc --watch",
+    "dev-example": "vite --config vite.config.examples.ts",
     "prepublishOnly": "npm run build"
   },
   "keywords": [
@@ -30,7 +36,9 @@
   "author": "Nockbox Inc",
   "license": "MIT",
   "devDependencies": {
-    "typescript": "^5.5.3"
+    "typescript": "^5.5.3",
+    "vite": "^5.0.0",
+    "@types/node": "^20.0.0"
   },
   "repository": {
     "type": "git",
@@ -38,6 +46,7 @@
     "directory": "sdk"
   },
   "dependencies": {
-    "@scure/base": "^2.0.0"
+    "@scure/base": "^2.0.0",
+    "@nockbox/iris-wasm": "^0.1.0"
   }
 }

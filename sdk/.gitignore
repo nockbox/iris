@@ -1,8 +1,10 @@
 # Dependencies
 node_modules/
+lib/nbx-wasm
 
 # Build output
 dist/
+examples-dist/
 
 # TypeScript
 *.tsbuildinfo

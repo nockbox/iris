@@ -3,13 +3,13 @@
  * Centralized utilities for loading and initializing WASM modules
  */
 
-import initWasm from '../lib/nbx-wasm/nbx_wasm';
+import initWasm from '@nockbox/iris-wasm/iris_wasm.js';
 
 /**
  * WASM module paths relative to extension root
  */
 export const WASM_PATHS = {
-  NBX_WASM: 'lib/nbx-wasm/nbx_wasm_bg.wasm',
+  NBX_WASM: 'lib/iris-wasm/iris_wasm_bg.wasm',
 } as const;
 
 /**

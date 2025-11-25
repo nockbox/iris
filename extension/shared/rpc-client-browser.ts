@@ -3,7 +3,7 @@
  * Uses WASM-based tonic-web-wasm-client for proper bigint handling
  */
 
-import { GrpcClient } from '../lib/nbx-wasm/nbx_wasm.js';
+import { GrpcClient } from '@nockbox/iris-wasm/iris_wasm.js';
 import type { Note } from './types';
 import { base58 } from '@scure/base';
 import { ensureWasmInitialized } from './wasm-utils.js';
@@ -46,7 +46,7 @@ export class NockchainBrowserRPCClient {
 
     try {
       const client = await this.ensureClient();
-      const response = await client.get_balance_by_address(address);
+      const response = await client.getBalanceByAddress(address);
 
       console.log('[RPC Browser] Balance response:', {
         noteCount: response.notes?.length || 0,
@@ -79,7 +79,7 @@ export class NockchainBrowserRPCClient {
         '[RPC Browser] Sending gRPC request for first-name:',
         firstNameBase58.slice(0, 20) + '...'
       );
-      const response = await client.get_balance_by_first_name(firstNameBase58);
+      const response = await client.getBalanceByFirstName(firstNameBase58);
 
       const noteCount = response.notes?.length || 0;
       console.log('[RPC Browser] Balance response:', {
@@ -119,7 +119,7 @@ export class NockchainBrowserRPCClient {
       const client = await this.ensureClient();
       // Use a dummy address to get chain info
       const dummyAddress = '1'.repeat(132);
-      const response = await client.get_balance_by_address(dummyAddress);
+      const response = await client.getBalanceByAddress(dummyAddress);
 
       if (response.height?.value) {
         return BigInt(response.height.value);
@@ -142,7 +142,7 @@ export class NockchainBrowserRPCClient {
 
     try {
       const client = await this.ensureClient();
-      const response = await client.send_transaction(rawTx);
+      const response = await client.sendTransaction(rawTx);
 
       console.log('[RPC Browser] Transaction sent successfully');
       return response;
@@ -162,7 +162,7 @@ export class NockchainBrowserRPCClient {
   async isTransactionAccepted(txId: string): Promise<boolean> {
     try {
       const client = await this.ensureClient();
-      const accepted = await client.transaction_accepted(txId);
+      const accepted = await client.transactionAccepted(txId);
       return accepted;
     } catch (error) {
       console.error('[RPC Browser] Error checking transaction status:', error);
@@ -339,7 +339,7 @@ export class NockchainBrowserRPCClient {
         sourceHash: noteData.source?.hash?.bytes || new Uint8Array(40),
         sourceIsCoinbase: noteData.source?.isCoinbase || false,
         assets: safeToNumber(assetsValue),
-        protoNote: balanceEntry.note, // Store raw protobuf for WasmNote.fromProtobuf()
+        protoNote: balanceEntry.note, // Store raw protobuf for Note.fromProtobuf()
       };
     } else {
       return {
@@ -357,7 +357,7 @@ export class NockchainBrowserRPCClient {
         sourceHash: new Uint8Array(40),
         sourceIsCoinbase: false,
         assets: safeToNumber(assetsValue),
-        protoNote: balanceEntry.note, // Store raw protobuf for WasmNote.fromProtobuf()
+        protoNote: balanceEntry.note, // Store raw protobuf for Note.fromProtobuf()
       };
     }
   }

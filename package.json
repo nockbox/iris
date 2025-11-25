@@ -32,6 +32,8 @@
     "nice-grpc-web": "^3.3.8",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
-    "zustand": "^5.0.8"
+    "zustand": "^5.0.8",
+    "@scure/base": "^2.0.0",
+    "@nockbox/iris-wasm": "^0.1.0"
   }
 }

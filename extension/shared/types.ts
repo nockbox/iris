@@ -169,6 +169,24 @@ export interface TransactionRequest {
 }
 
 /**
+ * Pending raw transaction signing request from a dApp
+ */
+export interface SignRawTxRequest {
+  /** Unique request ID */
+  id: string;
+  /** Origin of the requesting site */
+  origin: string;
+  /** Raw transaction jam as hex string */
+  rawTx: string;
+  /** Input notes (protobuf) */
+  notes: any[];
+  /** Spend conditions (protobuf) */
+  spendConditions: any[];
+  /** Request timestamp */
+  timestamp: number;
+}
+
+/**
  * Nockchain note (UTXO) structure
  * Represents an unspent transaction output on the blockchain
  */
@@ -201,6 +219,6 @@ export interface Note {
   sourceIsCoinbase: boolean;
   /** Amount in nicks (1 NOCK = 65,536 nicks) */
   assets: number;
-  /** Raw protobuf note object from RPC (for WasmNote.fromProtobuf) */
+  /** Raw protobuf note object from RPC (for Note.fromProtobuf) */
   protoNote?: any;
 }

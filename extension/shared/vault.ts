@@ -1,3 +1,4 @@
+/// <reference types="chrome" />
 /**
  * Vault: manages encrypted mnemonic storage and wallet state
  */
@@ -11,11 +12,8 @@ import {
 } from './wallet-crypto';
 import { ERROR_CODES, STORAGE_KEYS, ACCOUNT_COLORS, PRESET_WALLET_STYLES } from './constants';
 import { Account } from './types';
-import { buildMultiNotePayment, type Note as TxBuilderNote } from './transaction-builder';
-import {
-  deriveMasterKeyFromMnemonic,
-  signMessage as wasmSignMessage,
-} from '../lib/nbx-wasm/nbx_wasm.js';
+import { buildMultiNotePayment, type Note, buildTransaction, buildPayment } from './transaction-builder';
+import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
 import type { Note as BalanceNote } from './types';
@@ -33,7 +31,7 @@ import { initWasmModules } from './wasm-utils';
 async function convertNoteForTxBuilder(
   note: BalanceNote,
   ownerPKH: string
-): Promise<TxBuilderNote> {
+): Promise<Note> {
   // Use pre-computed base58 strings if available (from WASM gRPC client)
   let nameFirst: string;
   let nameLast: string;
@@ -53,11 +51,8 @@ async function convertNoteForTxBuilder(
     console.log('[Vault] Using pre-computed noteDataHash from RPC response');
     noteDataHash = note.noteDataHashBase58;
   } else {
-    // Fallback to empty string if not provided
-    // The protoNote field will be used by WasmNote.fromProtobuf() instead
-    console.warn(
-      '[Vault] No noteDataHashBase58 - relying on protoNote for WasmNote.fromProtobuf()'
-    );
+    // Fallback - use protoNote for Note.fromProtobuf()
+    console.warn('[Vault] No noteDataHashBase58 - relying on protoNote');
     noteDataHash = '';
   }
 
@@ -67,7 +62,7 @@ async function convertNoteForTxBuilder(
     nameLast,
     noteDataHash,
     assets: note.assets,
-    protoNote: note.protoNote, // Pass through for WasmNote.fromProtobuf()
+    protoNote: note.protoNote,
   };
 }
 
@@ -613,10 +608,10 @@ export class Vault {
    */
   async getBalance(): Promise<
     | {
-        totalNock: number;
-        totalNicks: bigint;
-        utxoCount: number;
-      }
+      totalNock: number;
+      totalNicks: bigint;
+      utxoCount: number;
+    }
     | { error: string }
   > {
     if (this.state.locked) {
@@ -715,7 +710,7 @@ export class Vault {
     const msgString = String(msg);
 
     // Derive the account's private key based on derivation method
-    const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
     const currentAccount = this.getCurrentAccount();
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
@@ -724,7 +719,7 @@ export class Vault {
         ? masterKey // Use master key directly for master-derived accounts
         : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
-    if (!accountKey.private_key) {
+    if (!accountKey.privateKey) {
       if (currentAccount?.derivation !== 'master') {
         accountKey.free();
       }
@@ -733,7 +728,7 @@ export class Vault {
     }
 
     // Sign the message
-    const signature = wasmSignMessage(accountKey.private_key, msgString);
+    const signature = wasm.signMessage(accountKey.privateKey, msgString);
 
     // Convert signature to JSON format
     const signatureJson = JSON.stringify({
@@ -775,7 +770,7 @@ export class Vault {
     await initWasmModules();
 
     // Derive the account's private and public keys based on derivation method
-    const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
     const accountKey =
@@ -783,7 +778,7 @@ export class Vault {
         ? masterKey // Use master key directly for master-derived accounts
         : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
-    if (!accountKey.private_key || !accountKey.public_key) {
+    if (!accountKey.privateKey || !accountKey.publicKey) {
       if (currentAccount.derivation !== 'master') {
         accountKey.free();
       }
@@ -827,8 +822,8 @@ export class Vault {
         txBuilderNotes,
         to,
         amount,
-        accountKey.public_key,
-        accountKey.private_key,
+        accountKey.publicKey,
+        accountKey.privateKey,
         fee
       );
 
@@ -869,12 +864,12 @@ export class Vault {
       await initWasmModules();
 
       // Derive keys
-      const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
       const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
       const accountKey =
         currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
 
-      if (!accountKey.private_key || !accountKey.public_key) {
+      if (!accountKey.privateKey || !accountKey.publicKey) {
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
         }
@@ -907,8 +902,8 @@ export class Vault {
             txBuilderNotes,
             to,
             amount,
-            accountKey.public_key,
-            accountKey.private_key,
+            accountKey.publicKey,
+            accountKey.privateKey,
             undefined // let WASM auto-calc
           );
 
@@ -989,12 +984,12 @@ export class Vault {
       await initWasmModules();
 
       // Derive the account's private and public keys based on derivation method
-      const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
       const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
       const accountKey =
         currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
 
-      if (!accountKey.private_key || !accountKey.public_key) {
+      if (!accountKey.privateKey || !accountKey.publicKey) {
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
         }
@@ -1036,7 +1031,7 @@ export class Vault {
           availableInputs: txBuilderNotes.length,
           amount,
           fee: fee !== undefined ? fee : 'auto-calculated by WASM',
-          senderPublicKey: base58.encode(accountKey.public_key).slice(0, 20) + '...',
+          senderPublicKey: base58.encode(accountKey.publicKey).slice(0, 20) + '...',
         });
 
         // Always use buildMultiNotePayment - it handles both single and multiple notes
@@ -1045,8 +1040,8 @@ export class Vault {
           txBuilderNotes,
           to,
           amount,
-          accountKey.public_key,
-          accountKey.private_key,
+          accountKey.publicKey,
+          accountKey.privateKey,
           fee
         );
 
@@ -1134,7 +1129,7 @@ export class Vault {
       await initWasmModules();
 
       // Derive the account's private and public keys based on derivation method
-      const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
       // Use the account's own index, not currentAccountIndex (accounts may be reordered)
       const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
       const accountKey =
@@ -1142,7 +1137,7 @@ export class Vault {
           ? masterKey // Use master key directly for master-derived accounts
           : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
-      if (!accountKey.private_key || !accountKey.public_key) {
+      if (!accountKey.privateKey || !accountKey.publicKey) {
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
         }
@@ -1184,7 +1179,7 @@ export class Vault {
           availableInputs: txBuilderNotes.length,
           amount,
           fee: fee !== undefined ? fee : 'auto-calculated by WASM',
-          senderPublicKey: base58.encode(accountKey.public_key).slice(0, 20) + '...',
+          senderPublicKey: base58.encode(accountKey.publicKey).slice(0, 20) + '...',
         });
 
         // Always use buildMultiNotePayment - it handles both single and multiple notes
@@ -1193,14 +1188,14 @@ export class Vault {
           txBuilderNotes,
           to,
           amount,
-          accountKey.public_key,
-          accountKey.private_key,
+          accountKey.publicKey,
+          accountKey.privateKey,
           fee
         );
 
         console.log('[Vault] Transaction signed:', constructedTx.txId);
         console.log('[Vault] Transaction version:', constructedTx.version);
-        console.log('[Vault] RawTx object keys:', Object.keys(constructedTx.rawTx));
+        console.log('[Vault] wasm.RawTx object keys:', Object.keys(constructedTx.rawTx));
 
         // Convert to protobuf format for gRPC
         const protobufTx = constructedTx.rawTx.toProtobuf();
@@ -1219,9 +1214,9 @@ export class Vault {
             hasSpend: !!spendEntry.spend,
             name: spendEntry.name
               ? {
-                  first: spendEntry.name.first?.slice(0, 20) + '...',
-                  last: spendEntry.name.last?.slice(0, 20) + '...',
-                }
+                first: spendEntry.name.first?.slice(0, 20) + '...',
+                last: spendEntry.name.last?.slice(0, 20) + '...',
+              }
               : 'missing',
           });
 
@@ -1399,5 +1394,80 @@ export class Vault {
     const lastSync = await this.getLastSync(accountAddress);
     const fiveMinutes = 5 * 60 * 1000;
     return Date.now() - lastSync > fiveMinutes;
+  }
+
+  /**
+   * Sign a raw transaction using iris-wasm
+   * 
+   * @param params - Transaction parameters with raw tx jam and notes/spend conditions
+   * @returns Hex-encoded signed transaction jam
+   */
+  async signRawTx(params: {
+    rawTx: any;  // Protobuf wasm.RawTx object
+    notes: any[];  // Protobuf Note objects
+    spendConditions: any[];  // Protobuf SpendCondition objects
+  }): Promise<any> {  // Returns protobuf wasm.RawTx
+    if (this.state.locked || !this.mnemonic) {
+      throw new Error('Wallet is locked');
+    }
+
+    // Initialize WASM modules
+    await initWasmModules();
+
+    const { rawTx, notes, spendConditions } = params;
+
+    // Derive the account's private key
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const currentAccount = this.getCurrentAccount();
+    const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
+    const accountKey =
+      currentAccount?.derivation === 'master'
+        ? masterKey
+        : masterKey.deriveChild(childIndex);
+
+    if (!accountKey.privateKey) {
+      if (currentAccount?.derivation !== 'master') {
+        accountKey.free();
+      }
+      masterKey.free();
+      throw new Error('Cannot sign: no private key available');
+    }
+
+    try {
+      // Deserialize wasm.RawTx from protobuf (notes and spend conditions come as protobuf)
+      const irisRawTx = wasm.RawTx.fromProtobuf(rawTx);
+
+      // Notes are already in protobuf format from the SDK
+      const irisNotes = notes.map(n => wasm.Note.fromProtobuf(n));
+
+      // SpendConditions are in protobuf format
+      const irisSpendConditions = spendConditions.map(sc => wasm.SpendCondition.fromProtobuf(sc));
+
+      // Reconstruct the transaction builder
+      const builder = wasm.TxBuilder.fromTx(irisRawTx, irisNotes, irisSpendConditions);
+
+      // Sign
+      builder.sign(accountKey.privateKey);
+
+      // Build signed tx
+      const signedTx = builder.build();
+
+      // Convert to protobuf for return
+      const protobuf = signedTx.toProtobuf();
+
+      // Clean up
+      builder.free();
+      irisRawTx.free();
+      irisNotes.forEach(n => n.free());
+      irisSpendConditions.forEach(sc => sc.free());
+      signedTx.free();
+
+      return protobuf;
+    } finally {
+      if (currentAccount?.derivation !== 'master') {
+        accountKey.free();
+      }
+      masterKey.free();
+    }
   }
 }

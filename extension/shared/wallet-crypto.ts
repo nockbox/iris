@@ -8,7 +8,7 @@ import {
   validateMnemonic as validateMnemonicScure,
 } from "@scure/bip39";
 import { wordlist } from "@scure/bip39/wordlists/english.js";
-import { deriveMasterKeyFromMnemonic } from "../lib/nbx-wasm/nbx_wasm.js";
+import { deriveMasterKeyFromMnemonic } from "@nockbox/iris-wasm/iris_wasm.js";
 import { publicKeyToPKH } from "./address-encoding";
 import { ensureWasmInitialized as ensureWasmInit } from "./wasm-utils";
 
@@ -45,8 +45,8 @@ export async function deriveAddressFromMaster(
 
   // DEBUG: Also derive child 0 to compare
   const child0 = masterKey.deriveChild(0);
-  const masterAddr = publicKeyToPKH(masterKey.public_key);
-  const child0Addr = publicKeyToPKH(child0.public_key);
+  const masterAddr = publicKeyToPKH(masterKey.publicKey);
+  const child0Addr = publicKeyToPKH(child0.publicKey);
 
   console.log('[deriveAddressFromMaster] Master address:', masterAddr);
   console.log('[deriveAddressFromMaster] Child-0 address:', child0Addr);
@@ -82,7 +82,7 @@ export async function deriveAddress(
 
   // Get the public key hash (PKH) for v1 addresses
   // v1 uses TIP5 hash of the public key, base58 encoded
-  const address = publicKeyToPKH(childKey.public_key);
+  const address = publicKeyToPKH(childKey.publicKey);
 
   // Clean up WASM memory
   childKey.free();
