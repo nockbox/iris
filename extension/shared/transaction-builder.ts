@@ -145,6 +145,8 @@ export interface ConstructedTransaction {
   version: number;
   /** Raw transaction object (for additional operations) */
   rawTx: wasm.RawTx;
+  /** Fee used in the transaction (in nicks) */
+  feeUsed: number;
 }
 
 /**
@@ -265,7 +267,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
 
   // DEBUG: Check which notes are actually in the transaction
   const actualNotesUsed = builder.allNotes();
-  const actualNotesList = actualNotesUsed.get_notes;
+  const actualNotesList = actualNotesUsed.notes;
   console.log('[TxBuilder] DEBUG: Notes actually used in transaction:', {
     totalNotesPassedIn: notes.length,
     notesActuallyUsed: Array.isArray(actualNotesList) ? actualNotesList.length : 0,

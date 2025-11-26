@@ -212,6 +212,9 @@ export const STORAGE_KEYS = {
 
   /** Storage schema version for migrations */
   SCHEMA_VERSION: 'schemaVersion',
+
+  /** Last transaction sync timestamp per account */
+  LAST_TX_SYNC: 'lastTxSync',
 } as const;
 
 /** Current storage schema version - increment when making breaking changes */

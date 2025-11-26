@@ -973,8 +973,8 @@ export class Vault {
           txBuilderNotes,
           to,
           amount,
-          accountKey.public_key,
-          accountKey.private_key,
+          accountKey.publicKey,
+          accountKey.privateKey,
           undefined // let WASM auto-calc
         );
 
@@ -1231,12 +1231,12 @@ export class Vault {
         await initWasmModules();
 
         // Derive keys
-        const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic!, '');
+        const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic!, '');
         const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
         const accountKey =
           currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
 
-        if (!accountKey.private_key || !accountKey.public_key) {
+        if (!accountKey.privateKey || !accountKey.publicKey) {
           if (currentAccount.derivation !== 'master') {
             accountKey.free();
           }
@@ -1339,8 +1339,8 @@ export class Vault {
             txBuilderNotes,
             to,
             amount,
-            accountKey.public_key,
-            accountKey.private_key,
+            accountKey.publicKey,
+            accountKey.privateKey,
             fee
           );
 

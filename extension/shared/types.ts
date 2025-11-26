@@ -412,3 +412,10 @@ export interface UTXODiff {
   /** Map of noteId -> walletTxId for notes that are change from our own txs */
   isChangeMap: Map<string, string>;
 }
+
+/**
+ * Last sync timestamps per account address
+ */
+export interface LastSyncTimestamps {
+  [accountAddress: string]: number;
+}
