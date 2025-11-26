@@ -3,7 +3,7 @@ import { useStore } from '../store';
 import { useTheme } from '../contexts/ThemeContext';
 import { truncateAddress } from '../utils/format';
 import { send } from '../utils/messaging';
-import { INTERNAL_METHODS, REQUIRED_CONFIRMATIONS } from '../../shared/constants';
+import { INTERNAL_METHODS, REQUIRED_CONFIRMATIONS, NOCK_TO_NICKS } from '../../shared/constants';
 import type { Account } from '../../shared/types';
 import { AccountIcon } from '../components/AccountIcon';
 import { EyeIcon } from '../components/icons/EyeIcon';
@@ -39,11 +39,11 @@ export function HomeScreen() {
     syncWallet,
     fetchBalance,
     fetchPrice,
-    cachedTransactions,
-    fetchCachedTransactions,
+    walletTransactions,
+    fetchWalletTransactions,
     setSelectedTransaction,
-    updateTransactionStatus,
     isBalanceFetching,
+    isInitialized,
     priceUsd,
     priceChange24h,
     isPriceFetching,
@@ -91,19 +91,19 @@ export function HomeScreen() {
     return () => container.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Fetch cached transactions on mount and when account changes
+  // Fetch wallet transactions on mount and when account changes
   useEffect(() => {
     console.log(
-      '[HomeScreen] Fetching cached transactions for account:',
+      '[HomeScreen] Fetching wallet transactions for account:',
       wallet.currentAccount?.address
     );
-    fetchCachedTransactions();
-  }, [fetchCachedTransactions, wallet.currentAccount?.address]);
+    fetchWalletTransactions();
+  }, [fetchWalletTransactions, wallet.currentAccount?.address]);
 
-  // Debug: Log cached transactions when they change
+  // Debug: Log wallet transactions when they change
   useEffect(() => {
-    console.log('[HomeScreen] Cached transactions updated:', cachedTransactions);
-  }, [cachedTransactions]);
+    console.log('[HomeScreen] Wallet transactions updated:', walletTransactions);
+  }, [walletTransactions]);
 
   // Check RPC connection status on mount only (polling handled by background service)
   useEffect(() => {
@@ -142,16 +142,21 @@ export function HomeScreen() {
     );
 
     if (result?.ok && result.account) {
+      // Get cached balance for the new account (or 0 if not cached)
+      const cachedBalance = wallet.accountBalances[result.account.address] ?? 0;
+
       const updatedWallet = {
         ...wallet,
         currentAccount: result.account,
         address: result.account.address,
+        balance: cachedBalance,
+        availableBalance: cachedBalance,
       };
       syncWallet(updatedWallet);
 
-      // Fetch balance for the switched account
+      // Fetch balance and transactions for the switched account
       fetchBalance();
-      fetchCachedTransactions();
+      fetchWalletTransactions();
     }
 
     setWalletDropdownOpen(false);
@@ -192,36 +197,21 @@ export function HomeScreen() {
   async function handleRefreshBalance() {
     setIsRefreshing(true);
     try {
-      // Fetch latest cached transactions first (in case background service updated them)
-      await fetchCachedTransactions();
-
-      // Then fetch balance (which will recalculate available balance using cached transactions)
+      // Fetch balance (which syncs UTXOs from chain)
       await fetchBalance();
 
-      // Note: We intentionally do NOT check transaction status here using isTransactionAccepted.
-      // That RPC returns true for transactions in the mempool (not just confirmed in blocks).
-      // The background polling service handles actual confirmation detection by checking
-      // if the input UTXOs have been spent. The 24h expiry handles stuck transactions.
-      console.log('[HomeScreen] Balance refreshed. Pending TX status handled by background service.');
+      // Fetch latest wallet transactions
+      await fetchWalletTransactions();
+
+      console.log('[HomeScreen] Balance and transactions refreshed.');
     } finally {
       setIsRefreshing(false);
     }
   }
 
-  // Get pending transactions (used in refresh handler)
-  const pendingTransactions = cachedTransactions.filter(tx => tx.status === 'pending');
-
   // Use available balance (confirmed - pending outflow) as the primary display
   const displayBalance = wallet.availableBalance;
   const balance = displayBalance.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-
-  // Format pending outflow for display
-  const hasPendingOutbound = wallet.hasPendingOutbound;
-  const pendingOutflow = wallet.pendingOutflow;
-  const formattedPendingOutflow = pendingOutflow.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -243,10 +233,27 @@ export function HomeScreen() {
   const walletAddress = truncateAddress(currentAccount?.address);
   const fullAddress = currentAccount?.address || '';
 
-  // Group cached transactions by date
-  const transactionsByDate = cachedTransactions.reduce(
+  // Helper to convert WalletTransaction status to display status
+  const getDisplayStatus = (status: string): 'pending' | 'confirmed' | 'failed' => {
+    switch (status) {
+      case 'confirmed':
+        return 'confirmed';
+      case 'failed':
+      case 'expired':
+        return 'failed';
+      default:
+        return 'pending';
+    }
+  };
+
+  // Filter to only show outgoing transactions (hide incoming/change for now)
+  // TODO: Add proper incoming transaction support
+  const outgoingTransactions = walletTransactions.filter(tx => tx.direction === 'outgoing');
+
+  // Group wallet transactions by date
+  const transactionsByDate = outgoingTransactions.reduce(
     (acc, tx) => {
-      const date = new Date(tx.timestamp).toLocaleDateString('en-US', {
+      const date = new Date(tx.createdAt).toLocaleDateString('en-US', {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
@@ -256,17 +263,22 @@ export function HomeScreen() {
         acc[date] = [];
       }
 
+      // Convert amount from nicks to NOCK
+      const amountNock = (tx.amount || 0) / NOCK_TO_NICKS;
+      const type = tx.direction === 'outgoing' ? 'sent' : 'received';
+      const address = tx.direction === 'outgoing' ? tx.recipient : tx.sender;
+
       acc[date].push({
-        type: tx.type,
-        from: truncateAddress(tx.address),
+        type,
+        from: truncateAddress(address || ''),
         amount:
-          tx.type === 'sent'
-            ? `-${tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
-            : `${tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`,
-        usdValue: `$${(tx.amount * priceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
-        status: tx.status,
+          type === 'sent'
+            ? `-${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
+            : `${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`,
+        usdValue: `$${(amountNock * priceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        status: getDisplayStatus(tx.status),
         confirmations: tx.confirmations,
-        txid: tx.txid,
+        txid: tx.txHash || tx.id,
         originalTx: tx, // Keep reference to original transaction
       });
 
@@ -526,11 +538,11 @@ export function HomeScreen() {
         >
           <div className="mb-3">
             <div className="flex items-baseline gap-[6px]">
-              {isBalanceFetching ? (
-                <div className="flex items-baseline gap-[6px]">
+              {!isInitialized ? (
+                <>
                   <div className="h-[40px] w-32 rounded skeleton-shimmer" />
                   <div className="h-[28px] w-16 rounded skeleton-shimmer" />
-                </div>
+                </>
               ) : (
                 <>
                   <div
@@ -563,17 +575,15 @@ export function HomeScreen() {
                 className="ml-1"
                 style={{ color: 'var(--color-text-muted)' }}
                 onClick={handleRefreshBalance}
-                disabled={isRefreshing}
+                disabled={isRefreshing || isBalanceFetching}
                 aria-label="Refresh balance"
               >
                 <img
                   src={RefreshIcon}
                   alt="Refresh"
-                  className="h-4 w-4"
+                  className={`h-4 w-4 ${isRefreshing || isBalanceFetching ? 'animate-spin' : ''}`}
                   style={{
-                    opacity: isRefreshing ? 0.5 : 1,
-                    transform: isRefreshing ? 'rotate(360deg)' : 'rotate(0deg)',
-                    transition: 'transform 0.6s ease-in-out',
+                    opacity: isRefreshing || isBalanceFetching ? 0.5 : 1,
                   }}
                 />
               </button>
@@ -600,38 +610,19 @@ export function HomeScreen() {
                 </>
               )}
             </div>
-            {/* Pending outflow indicator */}
-            {hasPendingOutbound && !balanceHidden && (
-              <div
-                className="mt-1 text-[13px] font-medium leading-[18px]"
-                style={{ color: '#C88414' }}
-              >
-                −{formattedPendingOutflow} NOCK pending
-              </div>
-            )}
           </div>
 
           {/* Actions */}
           <div className="grid grid-cols-2 gap-2 mb-3">
             <div className="relative">
               <button
-                className="w-full rounded-card shadow-card flex flex-col items-start justify-center gap-4 p-3 font-sans text-[14px] font-medium transition-all hover:opacity-90 active:scale-[0.98] disabled:opacity-50 disabled:cursor-not-allowed disabled:active:scale-100"
+                className="w-full rounded-card shadow-card flex flex-col items-start justify-center gap-4 p-3 font-sans text-[14px] font-medium transition-all hover:opacity-90 active:scale-[0.98]"
                 style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
                 onClick={() => navigate('send')}
-                disabled={hasPendingOutbound}
-                title={hasPendingOutbound ? 'Waiting for pending transaction to confirm' : undefined}
               >
                 <SendPaperPlaneIcon className="h-5 w-5" />
                 Send
               </button>
-              {hasPendingOutbound && (
-                <div
-                  className="absolute -bottom-5 left-0 right-0 text-[10px] font-medium text-center"
-                  style={{ color: '#C88414' }}
-                >
-                  Waiting for confirmation
-                </div>
-              )}
             </div>
             <button
               className="rounded-card shadow-card flex flex-col items-start justify-center gap-4 p-3 font-sans text-[14px] font-medium transition-all hover:opacity-90 active:scale-[0.98]"
@@ -648,8 +639,9 @@ export function HomeScreen() {
         </div>
 
         <section
-          className={`relative z-20 shadow-card rounded-t-xl transition-all duration-300 flex-1 flex flex-col ${isTransactionsStuck ? '' : 'mx-2 mt-4'
-            }`}
+          className={`relative z-20 shadow-card rounded-t-xl transition-all duration-300 flex-1 flex flex-col ${
+            isTransactionsStuck ? '' : 'mx-2 mt-4'
+          }`}
           style={{
             backgroundColor: 'var(--color-home-accent)',
             border: '1px solid var(--color-divider)',
@@ -690,7 +682,7 @@ export function HomeScreen() {
 
           {/* Groups */}
           <div className="px-4 pb-6 flex-1 flex flex-col">
-            {cachedTransactions.length === 0 ? (
+            {outgoingTransactions.length === 0 ? (
               /* Empty state */
               <div className="flex flex-col items-center justify-center gap-2 flex-1">
                 <div

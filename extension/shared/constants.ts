@@ -69,26 +69,14 @@ export const INTERNAL_METHODS = {
   /** Get wallet balance from blockchain */
   GET_BALANCE: 'wallet:getBalance',
 
+  /** Get balance from UTXO store (excludes in-flight notes) */
+  GET_BALANCE_FROM_STORE: 'wallet:getBalanceFromStore',
+
   /** Get RPC connection status */
   GET_CONNECTION_STATUS: 'wallet:getConnectionStatus',
 
   /** Get pending transaction request for approval */
   GET_PENDING_TRANSACTION: 'wallet:getPendingTransaction',
-
-  /** Add a transaction to the cache */
-  ADD_TRANSACTION_TO_CACHE: 'wallet:addTransactionToCache',
-
-  /** Update transaction status in cache */
-  UPDATE_TRANSACTION_STATUS: 'wallet:updateTransactionStatus',
-
-  /** Update transaction confirmations in cache */
-  UPDATE_TRANSACTION_CONFIRMATIONS: 'wallet:updateTransactionConfirmations',
-
-  /** Get cached transactions for current account */
-  GET_CACHED_TRANSACTIONS: 'wallet:getCachedTransactions',
-
-  /** Check if cache should be refreshed */
-  SHOULD_REFRESH_CACHE: 'wallet:shouldRefreshCache',
 
   /** Approve pending transaction request */
   APPROVE_TRANSACTION: 'wallet:approveTransaction',
@@ -120,17 +108,17 @@ export const INTERNAL_METHODS = {
   /** Sign a transaction (internal popup-initiated transactions) */
   SIGN_TRANSACTION: 'wallet:signTransaction',
 
-  /** Build and sign a transaction without broadcasting */
-  BUILD_AND_SIGN_TRANSACTION: 'wallet:buildAndSignTransaction',
-
   /** Estimate transaction fee for a given recipient and amount */
   ESTIMATE_TRANSACTION_FEE: 'wallet:estimateTransactionFee',
 
   /** Send a transaction (internal popup-initiated transactions - builds, signs, and broadcasts) */
   SEND_TRANSACTION: 'wallet:sendTransaction',
 
-  /** Broadcast a raw signed transaction (internal popup-initiated transactions) */
-  BROADCAST_TRANSACTION: 'wallet:broadcastTransaction',
+  /** Send transaction using UTXO store (build, lock, broadcast atomically) */
+  SEND_TRANSACTION_V2: 'wallet:sendTransactionV2',
+
+  /** Get wallet transactions from UTXO store */
+  GET_WALLET_TRANSACTIONS: 'wallet:getWalletTransactions',
 } as const;
 
 /**
@@ -204,15 +192,24 @@ export const STORAGE_KEYS = {
   /** Array of approved origins (websites that can access wallet) */
   APPROVED_ORIGINS: 'approvedOrigins',
 
-  /** Cached transaction history per account address */
-  TRANSACTION_CACHE: 'transactionCache',
-
-  /** Last transaction sync timestamp per account address */
-  LAST_TX_SYNC: 'lastTxSync',
-
   /** Cached balances per account address (persisted for offline access) */
   CACHED_BALANCES: 'cachedBalances',
+
+  /** UTXO store per account - tracks note state (available, in_flight, spent) */
+  UTXO_STORE: 'utxoStore',
+
+  /** Wallet transactions per account - separate from UTXO lifecycle */
+  WALLET_TX_STORE: 'walletTxStore',
+
+  /** Per-account sync state (last synced block height) */
+  ACCOUNT_SYNC_STATE: 'accountSyncState',
+
+  /** Storage schema version for migrations */
+  SCHEMA_VERSION: 'schemaVersion',
 } as const;
+
+/** Current storage schema version - increment when making breaking changes */
+export const CURRENT_SCHEMA_VERSION = 2;
 
 /**
  * Chrome Alarm Names - Named alarms for scheduled tasks
@@ -220,8 +217,6 @@ export const STORAGE_KEYS = {
 export const ALARM_NAMES = {
   /** Auto-lock timeout alarm */
   AUTO_LOCK: 'autoLock',
-  /** Transaction polling alarm */
-  TX_POLLING: 'txPolling',
 } as const;
 
 /**
@@ -358,9 +353,6 @@ export const APPROVAL_CONSTANTS = {
  */
 /** Average block time in milliseconds (~10 minutes) */
 export const BLOCK_TIME_MS = 600_000;
-
-/** Polling interval for checking transaction status (30 seconds) */
-export const TX_POLLING_INTERVAL_MS = 30_000;
 
 /** Number of confirmations required for a transaction to be considered fully confirmed */
 export const REQUIRED_CONFIRMATIONS = 6;

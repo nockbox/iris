@@ -310,7 +310,6 @@ async function emitWalletEvent(eventType: string, data: unknown) {
   await loadApprovedOrigins();
   await vault.init(); // Load encrypted vault header to detect vault existence
   scheduleAlarm();
-  scheduleTxPolling(); // Start transaction polling service
 
   // Initialize RPC connection monitoring
   checkRpcConnection(); // Initial check
@@ -682,48 +681,29 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
+      case INTERNAL_METHODS.GET_BALANCE_FROM_STORE:
+        // Get balance from UTXO store - excludes in-flight notes
+        // Optional param: account address. If not provided, uses current account.
+        const balanceAccountAddress = payload.params?.[0] || vault.getCurrentAccount()?.address;
+        if (!balanceAccountAddress) {
+          sendResponse({ error: 'No account selected' });
+          return;
+        }
+        try {
+          const storeBalance = await vault.getBalanceFromStore(balanceAccountAddress);
+          sendResponse(storeBalance);
+        } catch (err) {
+          console.error('[Background] Error getting balance from store:', err);
+          sendResponse({ error: 'Failed to get balance from store' });
+        }
+        return;
+
       case INTERNAL_METHODS.GET_CONNECTION_STATUS:
         sendResponse({ connected: isRpcConnected });
         return;
 
-      // Transaction cache handlers
-      case INTERNAL_METHODS.ADD_TRANSACTION_TO_CACHE:
-        // params: [accountAddress, transaction]
-        await vault.addTransactionToCache(payload.params?.[0], payload.params?.[1]);
-        sendResponse({ ok: true });
-        return;
-
-      case INTERNAL_METHODS.GET_CACHED_TRANSACTIONS:
-        // params: [accountAddress]
-        const cachedTxs = await vault.getCachedTransactions(payload.params?.[0]);
-        sendResponse({ transactions: cachedTxs });
-        return;
-
-      case INTERNAL_METHODS.UPDATE_TRANSACTION_STATUS:
-        // params: [accountAddress, txid, status, confirmedAtBlock (optional)]
-        await vault.updateTransactionStatus(
-          payload.params?.[0],
-          payload.params?.[1],
-          payload.params?.[2],
-          payload.params?.[3] // confirmedAtBlock
-        );
-        sendResponse({ ok: true });
-        return;
-
-      case INTERNAL_METHODS.UPDATE_TRANSACTION_CONFIRMATIONS:
-        // params: [accountAddress, currentBlockHeight]
-        await vault.updateTransactionConfirmations(
-          payload.params?.[0],
-          payload.params?.[1]
-        );
-        sendResponse({ ok: true });
-        return;
-
-      case INTERNAL_METHODS.SHOULD_REFRESH_CACHE:
-        // params: [accountAddress]
-        const shouldRefresh = await vault.shouldRefreshCache(payload.params?.[0]);
-        sendResponse({ shouldRefresh });
-        return;
+      // Note: GET_WALLET_TRANSACTIONS is called directly from popup context
+      // to avoid service worker limitations with dynamic imports
 
       // Approval request handlers
       case INTERNAL_METHODS.GET_PENDING_TRANSACTION:
@@ -999,89 +979,50 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
-      case INTERNAL_METHODS.BUILD_AND_SIGN_TRANSACTION:
-        // params: [to, amount, fee] - amount and fee in nicks
-        // Called from popup SendReview screen - builds and signs transaction without broadcasting
+      case INTERNAL_METHODS.SEND_TRANSACTION_V2:
+        // params: [to, amount, fee?] - amount and fee in nicks
+        // Uses UTXO store for proper note locking and successive transaction support
         if (vault.isLocked()) {
           sendResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
-        const [buildTo, buildAmount, buildFee] = payload.params || [];
-        if (!isNockAddress(buildTo)) {
+        const [sendToV2, sendAmountV2, sendFeeV2] = payload.params || [];
+        if (!isNockAddress(sendToV2)) {
           sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
         }
 
-        if (typeof buildAmount !== 'number' || buildAmount <= 0) {
+        if (typeof sendAmountV2 !== 'number' || sendAmountV2 <= 0) {
           sendResponse({ error: 'Invalid amount' });
           return;
         }
 
-        if (typeof buildFee !== 'number' || buildFee < 0) {
-          sendResponse({ error: 'Invalid fee' });
-          return;
-        }
-
         try {
-          console.log('[Background] Building and signing transaction:', {
-            to: buildTo.slice(0, 20) + '...',
-            amount: buildAmount,
-            fee: buildFee,
-          });
+          console.log('[Background] Sending transaction via V2 (UTXO store)...');
 
-          const result = await vault.buildAndSignTransaction(buildTo, buildAmount, buildFee);
+          const v2Result = await vault.sendTransactionV2(
+            sendToV2,
+            sendAmountV2,
+            sendFeeV2 // optional, can be undefined
+          );
 
-          if ('error' in result) {
-            console.error('[Background] Build failed:', result.error);
-            sendResponse({ error: result.error });
+          if ('error' in v2Result) {
+            console.error('[Background] SendTransactionV2 failed:', v2Result.error);
+            sendResponse({ error: v2Result.error });
             return;
           }
 
-          console.log('[Background] Transaction built and signed:', result.txId);
+          console.log('[Background] Transaction sent via V2:', v2Result.txId);
           sendResponse({
-            txid: result.txId,
-            protobufTx: result.protobufTx,
-            jammedTx: btoa(String.fromCharCode(...result.jammedTx)),
+            txid: v2Result.txId,
+            broadcasted: v2Result.broadcasted,
+            walletTx: v2Result.walletTx,
           });
         } catch (error) {
-          console.error('[Background] Build and sign failed:', error);
+          console.error('[Background] SendTransactionV2 failed:', error);
           sendResponse({
-            error: error instanceof Error ? error.message : 'Build and sign failed',
-          });
-        }
-        return;
-
-      case INTERNAL_METHODS.BROADCAST_TRANSACTION:
-        // params: [protobufTx] - protobuf transaction object (not WASM)
-        // Called from popup after building and signing the transaction
-        const [protobufTx] = payload.params || [];
-
-        if (!protobufTx) {
-          sendResponse({ error: 'Missing transaction' });
-          return;
-        }
-
-        try {
-          console.log('[Background] Broadcasting transaction...');
-
-          const result = await vault.broadcastTransaction(protobufTx);
-
-          if ('error' in result) {
-            console.error('[Background] Broadcast failed:', result.error);
-            sendResponse({ error: result.error });
-            return;
-          }
-
-          console.log('[Background] Transaction broadcasted successfully:', result.txId);
-          sendResponse({
-            txid: result.txId,
-            broadcasted: result.broadcasted,
-          });
-        } catch (error) {
-          console.error('[Background] Broadcast failed:', error);
-          sendResponse({
-            error: error instanceof Error ? error.message : 'Broadcast failed',
+            error: error instanceof Error ? error.message : 'Transaction failed',
           });
         }
         return;
@@ -1183,118 +1124,3 @@ function scheduleAlarm() {
     periodInMinutes: 1,
   });
 }
-
-/**
- * Transaction polling service
- * Polls pending and recently confirmed transactions to update their status and confirmation count
- * Also detects incoming transactions by comparing current UTXOs against cached ones
- */
-async function pollTransactionStatus() {
-  try {
-    // Only poll if wallet is unlocked
-    if (vault.isLocked()) {
-      return;
-    }
-
-    console.log('[TX Polling] Starting transaction status poll...');
-
-    // Service workers don't have document - if we hit errors, we'll catch them
-    // This is a background service, so DOM access isn't available
-
-    // Get all accounts
-    const accounts = vault.getAccounts();
-    if (!accounts || accounts.length === 0) {
-      return;
-    }
-
-    const { createBrowserClient } = await import('../shared/rpc-client-browser');
-    const rpcClient = createBrowserClient();
-
-    // Get current block height for confirmation calculations
-    let currentBlockHeight: bigint;
-    try {
-      currentBlockHeight = await rpcClient.getCurrentBlockHeight();
-      console.log(`[TX Polling] Current block height: ${currentBlockHeight}`);
-    } catch (error) {
-      console.error('[TX Polling] Failed to get current block height:', error);
-      return;
-    }
-
-    // Check each account's transactions
-    for (const account of accounts) {
-      const transactions = await vault.getCachedTransactions(account.address);
-
-      // Get pending transactions
-      const pendingTxs = transactions.filter(tx => tx.status === 'pending');
-
-      console.log(
-        `[TX Polling] Account ${account.address.slice(0, 20)}... has ${pendingTxs.length} pending transactions`
-      );
-
-      // Check pending transactions
-      // Expiry threshold: 24 hours (in milliseconds)
-      const PENDING_TX_EXPIRY_MS = 24 * 60 * 60 * 1000;
-
-      for (const tx of pendingTxs) {
-        try {
-          // Check if transaction has been pending too long (expired)
-          const txAge = Date.now() - tx.timestamp;
-          if (txAge > PENDING_TX_EXPIRY_MS) {
-            console.log(
-              `[TX Polling] Transaction ${tx.txid.slice(0, 20)}... expired after ${Math.round(txAge / 1000 / 60 / 60)} hours - marking as failed`
-            );
-            await vault.updateTransactionStatus(account.address, tx.txid, 'failed');
-            continue;
-          }
-
-          // Note: We do NOT use isTransactionAccepted here because it returns true
-          // for transactions in the mempool, not just confirmed in blocks.
-          // Instead, we detect confirmation by checking if our UTXOs have changed.
-          // For now, pending transactions stay pending until:
-          // 1. They expire (24h timeout above)
-          // 2. We detect the spent UTXOs disappear and change UTXO appears (TODO)
-          //
-          // The user will see the balance update automatically when the transaction
-          // confirms because fetchBalance() queries the actual on-chain UTXOs.
-          console.log(
-            `[TX Polling] Transaction ${tx.txid.slice(0, 20)}... still pending (age: ${Math.round(txAge / 1000 / 60)} min)`
-          );
-        } catch (error) {
-          console.error(
-            `[TX Polling] Error checking transaction ${tx.txid.slice(0, 20)}:`,
-            error
-          );
-        }
-      }
-
-    }
-
-    console.log('[TX Polling] Transaction status poll completed');
-  } catch (error) {
-    // Service workers don't have document/DOM access - some imports may fail
-    const errorMsg = error instanceof Error ? error.message : String(error);
-    if (errorMsg.includes('document is not defined')) {
-      console.warn('[TX Polling] Skipping poll - DOM not available in service worker context');
-    } else {
-      console.error('[TX Polling] Error in transaction polling service:', error);
-    }
-  }
-}
-
-/**
- * Schedule the transaction polling alarm
- */
-function scheduleTxPolling() {
-  // Poll every 30 seconds (0.5 minutes)
-  chrome.alarms.create(ALARM_NAMES.TX_POLLING, {
-    delayInMinutes: 0.5,
-    periodInMinutes: 0.5,
-  });
-}
-
-// Handle transaction polling alarm
-chrome.alarms.onAlarm.addListener(async alarm => {
-  if (alarm.name === ALARM_NAMES.TX_POLLING) {
-    await pollTransactionStatus();
-  }
-});

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useStore } from '../store';
 import { truncateAddress } from '../utils/format';
 import { AccountIcon } from '../components/AccountIcon';
@@ -33,72 +33,7 @@ export function SendReviewScreen() {
   const toAddress = truncateAddress(lastTransaction.to);
 
   const [isSending, setIsSending] = useState(false);
-  const [isBuilding, setIsBuilding] = useState(false);
   const [error, setError] = useState('');
-  const [builtTx, setBuiltTx] = useState<{
-    txid: string;
-    protobufTx: any;
-    jammedTx: Uint8Array;
-  } | null>(null);
-
-  // Build and sign transaction on screen load
-  useEffect(() => {
-    async function buildTransaction() {
-      if (!lastTransaction || builtTx) return;
-
-      setIsBuilding(true);
-      setError('');
-
-      try {
-        console.log('[SendReview] Building and signing transaction...');
-
-        const amountInNicks = nockToNick(lastTransaction.amount);
-        const feeInNicks = nockToNick(lastTransaction.fee);
-
-        // Build and sign (but don't broadcast) the transaction
-        const result = await send<{
-          txid?: string;
-          protobufTx?: any;
-          jammedTx?: string;
-          error?: string;
-        }>(INTERNAL_METHODS.BUILD_AND_SIGN_TRANSACTION, [
-          lastTransaction.to,
-          amountInNicks,
-          feeInNicks,
-        ]);
-
-        if (result?.error) {
-          setError(result.error);
-          setIsBuilding(false);
-          return;
-        }
-
-        function decodeBytes(b64: string): Uint8Array {
-          const bin = atob(b64);
-          const out = new Uint8Array(bin.length);
-          for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-          return out;
-        }
-
-        if (result?.txid && result?.protobufTx && result?.jammedTx) {
-          console.log('[SendReview] Transaction built and signed:', result.txid);
-          setBuiltTx({
-            txid: result.txid,
-            protobufTx: result.protobufTx,
-            jammedTx: decodeBytes(result.jammedTx),
-          });
-        }
-
-        setIsBuilding(false);
-      } catch (err) {
-        console.error('[SendReview] Error building transaction:', err);
-        setError(err instanceof Error ? err.message : 'Failed to build transaction');
-        setIsBuilding(false);
-      }
-    }
-
-    buildTransaction();
-  }, [lastTransaction, builtTx]);
 
   function handleBack() {
     navigate('send');
@@ -107,42 +42,29 @@ export function SendReviewScreen() {
     navigate('send');
   }
 
-  // Dev function: Download signed transaction for debugging
-  function handleDownloadTx() {
-    if (!builtTx?.jammedTx) {
-      console.warn('[SendReview] No transaction built yet');
-      return;
-    }
-
-    try {
-      const blob = new Blob([new Uint8Array(builtTx.jammedTx)], { type: 'application/jam' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `tx-${builtTx.txid || 'unsigned'}.jam`;
-      a.click();
-      URL.revokeObjectURL(url);
-      console.log('[SendReview] Transaction downloaded');
-    } catch (err) {
-      console.error('[SendReview] Failed to download transaction:', err);
-    }
-  }
-
   async function handleSend() {
-    if (!lastTransaction || !builtTx) return;
+    if (!lastTransaction) return;
 
     setIsSending(true);
     setError('');
 
     try {
-      console.log('[SendReview] Broadcasting transaction...');
+      console.log('[SendReview] Sending transaction via V2 (UTXO store)...');
 
-      // Broadcast the pre-built transaction
+      const amountInNicks = nockToNick(lastTransaction.amount);
+      const feeInNicks = nockToNick(lastTransaction.fee);
+
+      // Send transaction using V2 (builds, locks notes, broadcasts atomically)
       const result = await send<{
         txid?: string;
         broadcasted?: boolean;
+        walletTx?: any;
         error?: string;
-      }>(INTERNAL_METHODS.BROADCAST_TRANSACTION, [builtTx.protobufTx]);
+      }>(INTERNAL_METHODS.SEND_TRANSACTION_V2, [
+        lastTransaction.to,
+        amountInNicks,
+        feeInNicks,
+      ]);
 
       if (result?.error) {
         setError(result.error);
@@ -151,31 +73,25 @@ export function SendReviewScreen() {
       }
 
       if (result?.txid) {
-        console.log('[SendReview] Transaction broadcasted! txid:', result.txid);
+        console.log('[SendReview] Transaction sent! txid:', result.txid);
 
-        // Update lastTransaction with txid and protobuf
+        // Update lastTransaction with txid
         useStore.getState().setLastTransaction({
           ...lastTransaction,
-          txid: builtTx.txid,
-          protobufTx: builtTx.protobufTx,
+          txid: result.txid,
         });
 
-        // Add to transaction cache with pending status
-        await useStore
-          .getState()
-          .addSentTransactionToCache(
-            builtTx.txid,
-            lastTransaction.amount,
-            lastTransaction.fee,
-            lastTransaction.to || ''
-          );
+        // Transaction is tracked in WalletTransaction store by sendTransactionV2
+        // Refresh balance and transactions from UTXO store
+        useStore.getState().fetchBalance();
+        useStore.getState().fetchWalletTransactions();
 
         // Navigate to success screen
         navigate('send-submitted');
       }
     } catch (err) {
-      console.error('[SendReview] Error broadcasting transaction:', err);
-      setError(err instanceof Error ? err.message : 'Failed to broadcast transaction');
+      console.error('[SendReview] Error sending transaction:', err);
+      setError(err instanceof Error ? err.message : 'Failed to send transaction');
       setIsSending(false);
     }
   }
@@ -376,13 +292,13 @@ export function SendReviewScreen() {
             <button
               type="button"
               onClick={handleSend}
-              disabled={isSending || isBuilding || !builtTx}
+              disabled={isSending}
               className="flex-1 h-12 inline-flex items-center justify-center rounded-lg text-sm font-medium leading-[18px] tracking-[0.14px] transition-opacity focus:outline-none focus-visible:ring-2"
               style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
               onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
               onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
             >
-              {isBuilding ? 'Building...' : isSending ? 'Sending...' : 'Send'}
+              {isSending ? 'Sending...' : 'Send'}
             </button>
           </div>
         </div>

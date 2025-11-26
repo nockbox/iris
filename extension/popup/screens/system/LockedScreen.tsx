@@ -47,12 +47,22 @@ export function LockedScreen() {
       setPassword("");
       const accounts = result.accounts || [];
       const currentAccount = result.currentAccount || accounts[0] || null;
+
+      // Load cached balances from storage
+      const { STORAGE_KEYS } = await import('../../../shared/constants');
+      const stored = await chrome.storage.local.get([STORAGE_KEYS.CACHED_BALANCES]);
+      const cachedBalances = (stored[STORAGE_KEYS.CACHED_BALANCES] || {}) as Record<string, number>;
+      const cachedBalance = currentAccount ? cachedBalances[currentAccount.address] ?? 0 : 0;
+
       syncWallet({
-        ...wallet, // Preserve existing state
+        ...wallet,
         locked: false,
         address: result.address || null,
         accounts,
         currentAccount,
+        balance: cachedBalance,
+        availableBalance: cachedBalance,
+        accountBalances: cachedBalances,
       });
 
       // Trigger balance fetch after successful unlock

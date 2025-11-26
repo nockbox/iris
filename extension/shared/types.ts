@@ -86,51 +86,6 @@ export interface TransactionDetails {
 }
 
 /**
- * Cached transaction for a specific account
- * Stored in chrome.storage for offline viewing
- */
-export interface CachedTransaction {
-  /** Transaction ID (hash) */
-  txid: string;
-  /** Transaction type relative to this account */
-  type: 'sent' | 'received';
-  /** Amount in NOCK */
-  amount: number;
-  /** Transaction fee in NOCK */
-  fee: number;
-  /** Counterparty address (recipient if sent, sender if received) */
-  address: string;
-  /** Transaction timestamp (milliseconds since epoch) */
-  timestamp: number;
-  /** Transaction status */
-  status: 'confirmed' | 'pending' | 'failed';
-  /** USD price at the time of transaction */
-  priceUsd?: number;
-  /** Block height when transaction was first confirmed (for calculating confirmations) */
-  confirmedAtBlock?: number;
-  /** Current number of confirmations (calculated dynamically) */
-  confirmations?: number;
-  /** Confirmed balance at the time this transaction was sent (for detecting confirmation) */
-  confirmedBalanceAtSend?: number;
-}
-
-/**
- * Transaction cache structure per account
- * Key is the account address
- */
-export interface TransactionCache {
-  [accountAddress: string]: CachedTransaction[];
-}
-
-/**
- * Last sync timestamp per account
- * Key is the account address, value is timestamp in milliseconds
- */
-export interface LastSyncTimestamps {
-  [accountAddress: string]: number;
-}
-
-/**
  * Structured balance information for an account
  * Separates confirmed (on-chain) balance from pending transaction effects
  */
@@ -224,4 +179,216 @@ export interface Note {
   assets: number;
   /** Raw protobuf note object from RPC (for WasmNote.fromProtobuf) */
   protoNote?: any;
+}
+
+// ============================================================================
+// UTXO Store Types - For tracking note lifecycle and enabling successive sends
+// ============================================================================
+
+/**
+ * Note state in the UTXO store
+ * - available: Can be used in new transactions
+ * - in_flight: Reserved by a pending transaction (locked until confirmed or expired)
+ * - spent: Transaction confirmed, note is consumed
+ */
+export type NoteState = 'available' | 'in_flight' | 'spent';
+
+/**
+ * Stored note (UTXO) with state tracking
+ * This is the core type for the local UTXO store
+ */
+export interface StoredNote {
+  /** Unique identifier: nameFirst:nameLast in base58 */
+  noteId: string;
+
+  /** Account that owns this note */
+  accountAddress: string;
+
+  // Chain identity
+  /** Source transaction hash (base58) that created this note */
+  sourceHash: string;
+  /** Block height where this note was created */
+  originPage: number;
+
+  // Value
+  /** Amount in nicks (1 NOCK = 65,536 nicks) */
+  assets: number;
+
+  // For WASM transaction building
+  /** First 40 bytes of note name as base58 */
+  nameFirst: string;
+  /** Last 40 bytes of note name as base58 */
+  nameLast: string;
+  /** Note data hash as base58 (for WASM) */
+  noteDataHashBase58: string;
+  /** Raw protobuf note for WasmNote.fromProtobuf() */
+  protoNote: any;
+
+  // State tracking
+  /** Current state of this note */
+  state: NoteState;
+  /** If in_flight, which wallet transaction is using this note */
+  pendingTxId?: string;
+  /** Was this note change from one of our own transactions? */
+  isChange?: boolean;
+
+  // Metadata
+  /** Timestamp when this note was first discovered (ms since epoch) */
+  discoveredAt: number;
+}
+
+/**
+ * UTXO store structure - per account
+ */
+export interface UTXOStore {
+  [accountAddress: string]: {
+    notes: StoredNote[];
+    /** Version for optimistic locking / conflict detection */
+    version: number;
+  };
+}
+
+// ============================================================================
+// Wallet Transaction Types - Separate from UTXO lifecycle
+// ============================================================================
+
+/**
+ * Wallet transaction status
+ * - created: Transaction object created but not yet broadcasted
+ * - broadcast_pending: Attempting to broadcast
+ * - broadcasted_unconfirmed: In mempool, waiting for confirmation
+ * - confirmed: Included in a block
+ * - failed: Broadcast or confirmation failed
+ * - expired: Timed out waiting for confirmation
+ */
+export type WalletTxStatus =
+  | 'created'
+  | 'broadcast_pending'
+  | 'broadcasted_unconfirmed'
+  | 'confirmed'
+  | 'failed'
+  | 'expired';
+
+/**
+ * Wallet transaction record
+ * Links to StoredNotes via noteIds
+ */
+export interface WalletTransaction {
+  /** Internal unique ID (UUID) */
+  id: string;
+
+  /** On-chain transaction hash (known after broadcast) */
+  txHash?: string;
+
+  /** Account that initiated/received this transaction */
+  accountAddress: string;
+
+  /** Transaction direction relative to this account */
+  direction: 'outgoing' | 'incoming' | 'self';
+
+  // Timestamps
+  /** When the transaction was created (ms since epoch) */
+  createdAt: number;
+  /** When the transaction was last updated (ms since epoch) */
+  updatedAt: number;
+
+  /** Current status */
+  status: WalletTxStatus;
+
+  // For outgoing transactions
+  /** Note IDs used as inputs (spent) */
+  inputNoteIds?: string[];
+  /** Expected change note IDs (predicted before confirmation) */
+  expectedChangeNoteIds?: string[];
+  /** Expected change amount in nicks (sum of inputs - amount - fee) */
+  expectedChange?: number;
+  /** Recipient address */
+  recipient?: string;
+  /** Amount sent in nicks */
+  amount?: number;
+  /** Fee paid in nicks */
+  fee?: number;
+
+  // For incoming transactions
+  /** Note IDs received */
+  receivedNoteIds?: string[];
+  /** Sender address (if known) */
+  sender?: string;
+
+  // Confirmation tracking
+  /** Block height when confirmed */
+  confirmedAtBlock?: number;
+  /** Number of confirmations */
+  confirmations?: number;
+}
+
+/**
+ * Wallet transaction store - per account
+ */
+export interface WalletTxStore {
+  [accountAddress: string]: WalletTransaction[];
+}
+
+/**
+ * Per-account sync state for incremental UTXO syncing
+ */
+export interface AccountSyncState {
+  accountAddress: string;
+  /** Last block height that was fully synced (inclusive) */
+  lastSyncedHeight: number;
+  /** Timestamp of last successful sync */
+  lastSyncedAt: number;
+}
+
+/**
+ * Sync state store - per account
+ */
+export interface SyncStateStore {
+  [accountAddress: string]: AccountSyncState;
+}
+
+/**
+ * Expected change output - tracked before broadcast to identify change vs incoming
+ */
+export interface ExpectedChange {
+  /** Wallet transaction ID that will produce this change */
+  walletTxId: string;
+  /** Predicted note ID (if deterministic) */
+  expectedNoteId?: string;
+  /** Expected transaction hash (if known before broadcast) */
+  expectedTxHash?: string;
+  /** Account address */
+  accountAddress: string;
+}
+
+// ============================================================================
+// UTXO Diff Types - For pure diff computation in utxo-sync
+// ============================================================================
+
+/**
+ * Fetched UTXO from chain (before being stored)
+ */
+export interface FetchedUTXO {
+  noteId: string;
+  sourceHash: string;
+  originPage: number;
+  assets: number;
+  nameFirst: string;
+  nameLast: string;
+  noteDataHashBase58: string;
+  protoNote: any;
+}
+
+/**
+ * Result of diffing local store against chain state
+ */
+export interface UTXODiff {
+  /** UTXOs on chain that are not in our local store (new) */
+  newUTXOs: FetchedUTXO[];
+  /** UTXOs that exist both locally and on chain (unchanged) */
+  stillUnspent: StoredNote[];
+  /** UTXOs in our local store that are no longer on chain (spent) */
+  nowSpent: StoredNote[];
+  /** Map of noteId -> walletTxId for notes that are change from our own txs */
+  isChangeMap: Map<string, string>;
 }

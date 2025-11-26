@@ -223,7 +223,9 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
 
     // Use fromProtobuf to correctly deserialize NoteData entries
     // This ensures parent_hash is computed correctly
-    return WasmNote.fromProtobuf(note.protoNote);
+    const wasmNote = WasmNote.fromProtobuf(note.protoNote);
+
+    return wasmNote;
   });
 
   console.log('[TxBuilder] Creating transaction with:', {
@@ -251,6 +253,22 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   // New WASM API: constructor takes fee_per_word
   const builder = new WasmTxBuilder(BigInt(DEFAULT_FEE_PER_WORD));
 
+  // DEBUG: Log exactly what we're passing to simpleSpend
+  const totalWasmAssets = wasmNotes.reduce((sum, n) => sum + Number(n.assets), 0);
+  console.log('[TxBuilder] 🔍 PRE-SIMPLESPEND DEBUG:', {
+    wasmNotesCount: wasmNotes.length,
+    totalWasmAssets,
+    totalWasmAssetsNOCK: (totalWasmAssets / 65536).toFixed(2),
+    amountNicks: amount,
+    amountNOCK: (amount / 65536).toFixed(2),
+    feeOverride: fee,
+    feeOverrideNOCK: fee ? (fee / 65536).toFixed(2) : 'auto (null)',
+    recipientPKH: recipientPKH.slice(0, 20) + '...',
+    refundPKH: refundPKH.slice(0, 20) + '...',
+    eachNoteAssets: wasmNotes.map(n => Number(n.assets)),
+    eachNoteAssetsNOCK: wasmNotes.map(n => (Number(n.assets) / 65536).toFixed(2)),
+  });
+
   // simpleSpend now takes fee_override (user-specified fee) instead of fee_per_word
   builder.simpleSpend(
     wasmNotes,
@@ -267,16 +285,12 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   const currentFee = builder.curFee();
   const txSizeWords = Number(calculatedFee) / Number(DEFAULT_FEE_PER_WORD);
 
-  console.log('[TxBuilder] Transaction size and fee:', {
+  console.log('[TxBuilder] ⚠️ FEE CALCULATION:', {
     inputCount: notes.length,
     txSizeWords: txSizeWords.toFixed(1),
-    feePerWord: DEFAULT_FEE_PER_WORD,
-    feePerWordNOCK: DEFAULT_FEE_PER_WORD / 65536,
-    calculatedFee: Number(calculatedFee),
     calculatedFeeNOCK: (Number(calculatedFee) / 65536).toFixed(2),
-    currentFee: Number(currentFee),
-    currentFeeNOCK: (Number(currentFee) / 65536).toFixed(2),
-    userProvidedFee: fee,
+    userProvidedFeeNOCK: fee ? (fee / 65536).toFixed(2) : 'auto',
+    feeShortfallNOCK: fee ? ((Number(calculatedFee) - fee) / 65536).toFixed(2) : 'N/A',
   });
 
   // DEBUG: Check which notes are actually in the transaction

@@ -20,8 +20,20 @@ import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
 import type { Note as BalanceNote } from './types';
 import { base58 } from '@scure/base';
-import { USE_MOCK_TRANSACTIONS, MOCK_TRANSACTIONS } from './mocks/transactions';
 import { initWasmModules } from './wasm-utils';
+import { getAccountBalanceSummary } from './utxo-sync';
+import {
+  getAvailableNotes,
+  markNotesInFlight,
+  releaseInFlightNotes,
+  withAccountLock,
+  addWalletTransaction,
+  updateWalletTransaction,
+} from './utxo-store';
+import type { StoredNote, WalletTransaction } from './types';
+
+// Constants
+const NOCK_TO_NICKS = 65_536;
 
 /**
  * Convert a balance query note to transaction builder note format
@@ -69,6 +81,34 @@ async function convertNoteForTxBuilder(
     assets: note.assets,
     protoNote: note.protoNote, // Pass through for WasmNote.fromProtobuf()
   };
+}
+
+/**
+ * Greedy coin selection algorithm
+ * Selects notes (largest first) until we have enough to cover amount + fee
+ *
+ * @param notes - Available notes
+ * @param targetAmount - Amount needed (amount + estimated fee)
+ * @returns Selected notes, or null if insufficient funds
+ */
+function selectNotesForAmount(notes: StoredNote[], targetAmount: number): StoredNote[] | null {
+  // Sort by assets descending (largest first)
+  const sorted = [...notes].sort((a, b) => b.assets - a.assets);
+
+  const selected: StoredNote[] = [];
+  let total = 0;
+
+  for (const note of sorted) {
+    selected.push(note);
+    total += note.assets;
+
+    if (total >= targetAmount) {
+      return selected;
+    }
+  }
+
+  // Not enough funds
+  return null;
 }
 
 /**
@@ -439,6 +479,21 @@ export class Vault {
 
     // Accounts are encrypted, cannot read while locked
     return '';
+  }
+
+  /**
+   * Gets balance from the UTXO store for an account
+   * Returns available balance (excludes in-flight notes)
+   */
+  async getBalanceFromStore(accountAddress: string): Promise<{
+    available: number;
+    pendingOut: number;
+    pendingChange: number;
+    total: number;
+    utxoCount: number;
+    availableUtxoCount: number;
+  }> {
+    return getAccountBalanceSummary(accountAddress);
   }
 
   /**
@@ -952,158 +1007,6 @@ export class Vault {
   }
 
   /**
-   * Build and sign a transaction without broadcasting it
-   * This allows the UI to pre-build transactions for review before broadcasting
-   *
-   * @param to - Recipient PKH address (base58-encoded digest string)
-   * @param amount - Amount in nicks
-   * @param fee - Transaction fee in nicks (optional, WASM will auto-calculate if not provided)
-   * @returns Transaction ID and protobuf transaction object (not broadcasted)
-   */
-  async buildAndSignTransaction(
-    to: string,
-    amount: number,
-    fee: number
-  ): Promise<{ txId: string; protobufTx: any; jammedTx: Uint8Array } | { error: string }> {
-    if (this.state.locked || !this.mnemonic) {
-      return { error: ERROR_CODES.LOCKED };
-    }
-
-    const currentAccount = this.getCurrentAccount();
-    if (!currentAccount) {
-      return { error: ERROR_CODES.NO_ACCOUNT };
-    }
-
-    try {
-      // Initialize WASM modules
-      await initWasmModules();
-
-      // Derive the account's private and public keys based on derivation method
-      const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic, '');
-      const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-      const accountKey =
-        currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
-
-      if (!accountKey.private_key || !accountKey.public_key) {
-        if (currentAccount.derivation !== 'master') {
-          accountKey.free();
-        }
-        masterKey.free();
-        return { error: 'Keys unavailable' };
-      }
-
-      try {
-        // Create RPC client
-        const rpcClient = createBrowserClient();
-
-        console.log('[Vault] Fetching UTXOs for transaction...');
-        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
-
-        if (balanceResult.utxoCount === 0) {
-          return { error: 'No UTXOs available. Your wallet may have zero balance.' };
-        }
-
-        console.log(`[Vault] Found ${balanceResult.utxoCount} UTXOs`);
-
-        // Combine simple and coinbase notes
-        const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
-
-        // Sort UTXOs largest to smallest (WASM will select which ones to use)
-        // This gives WASM the best options first for optimal selection
-        const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
-
-        console.log('[Vault] Passing all UTXOs to WASM (sorted largest first):', {
-          totalUTXOs: sortedNotes.length,
-          utxoSizes: sortedNotes.map(n => (n.assets / 65536).toFixed(2) + ' NOCK'),
-          totalAvailableNOCK: (sortedNotes.reduce((sum, n) => sum + n.assets, 0) / 65536).toFixed(
-            2
-          ),
-          amountNeeded: (amount / 65536).toFixed(2) + ' NOCK',
-          feeProvided: fee ? (fee / 65536).toFixed(2) + ' NOCK' : 'auto',
-        });
-
-        // Convert ALL notes to transaction builder format
-        // WASM will automatically select the optimal inputs
-        const txBuilderNotes = await Promise.all(
-          sortedNotes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
-        );
-
-        // Build and sign the transaction
-        console.log('[Vault] Building transaction with params:', {
-          recipientPKH: to.slice(0, 20) + '...',
-          availableInputs: txBuilderNotes.length,
-          amount,
-          fee: fee !== undefined ? fee : 'auto-calculated by WASM',
-          senderPublicKey: base58.encode(accountKey.public_key).slice(0, 20) + '...',
-        });
-
-        // Always use buildMultiNotePayment - it handles both single and multiple notes
-        // WASM will automatically select the minimum number of notes needed
-        const constructedTx = await buildMultiNotePayment(
-          txBuilderNotes,
-          to,
-          amount,
-          accountKey.public_key,
-          accountKey.private_key,
-          fee
-        );
-
-        console.log('[Vault] Transaction signed:', constructedTx.txId);
-
-        // Convert to protobuf format for gRPC
-        const protobufTx = constructedTx.rawTx.toProtobuf();
-
-        return {
-          txId: constructedTx.txId,
-          protobufTx,
-          jammedTx: constructedTx.rawTx.toJam(),
-        };
-      } finally {
-        // Clean up WASM memory
-        if (currentAccount.derivation !== 'master') {
-          accountKey.free();
-        }
-        masterKey.free();
-      }
-    } catch (error) {
-      console.error('[Vault] Error building and signing transaction:', error);
-      return {
-        error: `Failed to build and sign transaction: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-  }
-
-  /**
-   * Broadcast a raw signed transaction to the network
-   * This is a simpler method that doesn't require note conversion or WASM
-   *
-   * @param protobufTx - The protobuf transaction object (not WASM, already converted)
-   * @returns Transaction ID and broadcast status
-   */
-  async broadcastTransaction(
-    protobufTx: any
-  ): Promise<{ txId: string; broadcasted: boolean } | { error: string }> {
-    try {
-      const rpcClient = createBrowserClient();
-      console.log('[Vault] Broadcasting pre-signed transaction...');
-
-      const txId = await rpcClient.sendTransaction(protobufTx);
-
-      console.log('[Vault] Transaction broadcasted successfully:', txId);
-
-      return {
-        txId,
-        broadcasted: true,
-      };
-    } catch (error) {
-      console.error('[Vault] Error broadcasting transaction:', error);
-      return {
-        error: `Failed to broadcast transaction: ${error instanceof Error ? error.message : String(error)}`,
-      };
-    }
-  }
-
-  /**
    * Send a transaction to the network
    * This is the high-level API for sending NOCK to a recipient
    * TODO: Clean up logs
@@ -1290,168 +1193,208 @@ export class Vault {
   }
 
   /**
-   * Adds a transaction to the cache for a specific account
+   * Build, sign, and broadcast a transaction using UTXO store
+   * This is the new preferred method for sending transactions
+   *
+   * Uses the account mutex to prevent race conditions on rapid sends.
+   * Locks notes before building and releases them on failure.
+   *
+   * TODO: Test using stored protoNote from UTXO store instead of fetching fresh.
+   * The fresh RPC fetch may be unnecessary
+   *
+   * @param to - Recipient PKH address
+   * @param amount - Amount in nicks
+   * @param fee - Fee in nicks (optional, WASM will calculate if not provided)
+   * @returns Transaction result with txId and wallet transaction record
    */
-  async addTransactionToCache(
-    accountAddress: string,
-    transaction: import('./types').CachedTransaction
-  ): Promise<void> {
-    // Get existing cache
-    const result = await chrome.storage.local.get([STORAGE_KEYS.TRANSACTION_CACHE]);
-    const cache: import('./types').TransactionCache = result[STORAGE_KEYS.TRANSACTION_CACHE] || {};
-
-    // Initialize array for this account if it doesn't exist
-    if (!cache[accountAddress]) {
-      cache[accountAddress] = [];
+  async sendTransactionV2(
+    to: string,
+    amount: number,
+    fee?: number
+  ): Promise<
+    { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
+  > {
+    if (this.state.locked || !this.mnemonic) {
+      return { error: ERROR_CODES.LOCKED };
     }
 
-    // Check if transaction already exists
-    const exists = cache[accountAddress].some(tx => tx.txid === transaction.txid);
-    if (exists) {
-      return; // Don't add duplicates
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
     }
 
-    // Add transaction to the beginning (most recent first)
-    cache[accountAddress].unshift(transaction);
+    // Use account lock to prevent race conditions
+    return withAccountLock(currentAccount.address, async () => {
+      // Generate wallet transaction ID upfront
+      const walletTxId = crypto.randomUUID();
+      let selectedNoteIds: string[] = [];
 
-    // Limit to 100 transactions per account
-    if (cache[accountAddress].length > 100) {
-      cache[accountAddress] = cache[accountAddress].slice(0, 100);
-    }
+      try {
+        // Initialize WASM modules
+        await initWasmModules();
 
-    // Save to storage
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.TRANSACTION_CACHE]: cache,
-    });
-  }
+        // Derive keys
+        const masterKey = deriveMasterKeyFromMnemonic(this.mnemonic!, '');
+        const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
+        const accountKey =
+          currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
 
-  /**
-   * Gets cached transactions for a specific account
-   */
-  async getCachedTransactions(
-    accountAddress: string
-  ): Promise<import('./types').CachedTransaction[]> {
-    // Return mock transactions if enabled
-    if (USE_MOCK_TRANSACTIONS) {
-      console.log('[Vault] Returning mock transactions (USE_MOCK_TRANSACTIONS = true)');
-      return MOCK_TRANSACTIONS;
-    }
-
-    const result = await chrome.storage.local.get([STORAGE_KEYS.TRANSACTION_CACHE]);
-    const cache: import('./types').TransactionCache = result[STORAGE_KEYS.TRANSACTION_CACHE] || {};
-    return cache[accountAddress] || [];
-  }
-
-  /**
-   * Updates the status of a cached transaction
-   */
-  async updateTransactionStatus(
-    accountAddress: string,
-    txid: string,
-    status: 'confirmed' | 'pending' | 'failed',
-    confirmedAtBlock?: number
-  ): Promise<void> {
-    // Get existing cache
-    const result = await chrome.storage.local.get([STORAGE_KEYS.TRANSACTION_CACHE]);
-    const cache: import('./types').TransactionCache = result[STORAGE_KEYS.TRANSACTION_CACHE] || {};
-
-    // Find and update the transaction
-    if (cache[accountAddress]) {
-      const txIndex = cache[accountAddress].findIndex(tx => tx.txid === txid);
-      if (txIndex !== -1) {
-        const tx = cache[accountAddress][txIndex];
-        const wasConfirmed = tx.status === 'confirmed';
-
-        // Update status
-        tx.status = status;
-
-        // If transitioning to confirmed and block height is provided, store it
-        if (status === 'confirmed' && !wasConfirmed && confirmedAtBlock !== undefined) {
-          tx.confirmedAtBlock = confirmedAtBlock;
-          tx.confirmations = 1; // Initialize confirmations to 1 when first confirmed
-          console.log(
-            `[Vault] Transaction ${txid.slice(0, 20)}... confirmed at block ${confirmedAtBlock}`
-          );
+        if (!accountKey.private_key || !accountKey.public_key) {
+          if (currentAccount.derivation !== 'master') {
+            accountKey.free();
+          }
+          masterKey.free();
+          return { error: 'Keys unavailable' };
         }
 
-        // Save to storage
-        await chrome.storage.local.set({
-          [STORAGE_KEYS.TRANSACTION_CACHE]: cache,
-        });
+        try {
+          // 1. Get available notes from UTXO store (for state tracking)
+          const availableStoredNotes = await getAvailableNotes(currentAccount.address);
 
-        console.log(`[Vault] Updated transaction ${txid.slice(0, 20)}... status to: ${status}`);
-      }
-    }
-  }
+          if (availableStoredNotes.length === 0) {
+            return { error: 'No available UTXOs.' };
+          }
 
-  /**
-   * Updates confirmation count for transactions
-   * Calculates confirmations based on current block height
-   */
-  async updateTransactionConfirmations(
-    accountAddress: string,
-    currentBlockHeight: number
-  ): Promise<void> {
-    // Get existing cache
-    const result = await chrome.storage.local.get([STORAGE_KEYS.TRANSACTION_CACHE]);
-    const cache: import('./types').TransactionCache = result[STORAGE_KEYS.TRANSACTION_CACHE] || {};
+          const totalAvailable = availableStoredNotes.reduce((sum, n) => sum + n.assets, 0);
+          console.log(
+            `[Vault V2] Available: ${availableStoredNotes.length} UTXOs, ${(totalAvailable / NOCK_TO_NICKS).toFixed(2)} NOCK`
+          );
 
-    // Find and update confirmations for confirmed transactions
-    if (cache[accountAddress]) {
-      let updated = false;
+          // 2. Estimate fee if not provided (rough estimate: 2 NOCK should cover most cases)
+          const estimatedFee = fee ?? 2 * NOCK_TO_NICKS;
+          const targetAmount = amount + estimatedFee;
 
-      for (const tx of cache[accountAddress]) {
-        if (tx.status === 'confirmed' && tx.confirmedAtBlock !== undefined) {
-          const newConfirmations = Math.max(0, currentBlockHeight - tx.confirmedAtBlock + 1);
+          // 3. Select notes using greedy algorithm (from stored notes for state tracking)
+          const selectedStoredNotes = selectNotesForAmount(availableStoredNotes, targetAmount);
 
-          // Only update if confirmations changed (or was undefined)
-          if (tx.confirmations !== newConfirmations) {
-            tx.confirmations = newConfirmations;
-            updated = true;
+          if (!selectedStoredNotes) {
+            return {
+              error: `Insufficient available funds`,
+            };
+          }
+
+          selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
+          const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
+
+          console.log(
+            `[Vault V2] Selected ${selectedStoredNotes.length} notes (${(selectedTotal / NOCK_TO_NICKS).toFixed(2)} NOCK) for tx ${walletTxId.slice(0, 8)}...`
+          );
+
+          // 4. Mark notes as in_flight BEFORE building transaction
+          await markNotesInFlight(currentAccount.address, selectedNoteIds, walletTxId);
+
+          // 5. Create wallet transaction record (status: created)
+          // Calculate expected change (will come back to us after confirmation)
+          const expectedChange = selectedTotal - amount - estimatedFee;
+
+          const walletTx: WalletTransaction = {
+            id: walletTxId,
+            accountAddress: currentAccount.address,
+            direction: 'outgoing',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            status: 'created',
+            inputNoteIds: selectedNoteIds,
+            recipient: to,
+            amount,
+            fee: estimatedFee,
+            expectedChange: expectedChange > 0 ? expectedChange : 0,
+          };
+          await addWalletTransaction(walletTx);
+
+          // 6. Fetch FRESH notes from RPC to get protoNote data
+          // TODO: Test using stored protoNote from UTXO store instead - may not need this fetch
+          const rpcClient = createBrowserClient();
+          const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
+          const allRpcNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+
+          // Create a map for quick lookup of fresh notes by noteId
+          const selectedNoteIdSet = new Set(selectedNoteIds);
+          const freshSelectedNotes = allRpcNotes.filter(note => {
+            const noteId = `${note.nameFirstBase58 || base58.encode(note.nameFirst)}:${note.nameLastBase58 || base58.encode(note.nameLast)}`;
+            return selectedNoteIdSet.has(noteId);
+          });
+
+          if (freshSelectedNotes.length !== selectedNoteIds.length) {
+            console.warn(
+              `[Vault V2] Note count mismatch: selected ${selectedNoteIds.length}, found fresh ${freshSelectedNotes.length}`
+            );
+            // This can happen if a note was spent between selection and RPC fetch
+            // The transaction will likely fail, but we'll let WASM handle it
+          }
+
+          // Sort fresh notes by assets descending (same order as selection)
+          const sortedFreshNotes = [...freshSelectedNotes].sort((a, b) => b.assets - a.assets);
+
+          // Convert fresh RPC notes to transaction builder format
+          const txBuilderNotes = await Promise.all(
+            sortedFreshNotes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
+          );
+
+          console.log('[Vault V2] Building transaction with fresh notes:', {
+            inputs: txBuilderNotes.length,
+            recipient: to.slice(0, 20) + '...',
+            amount: (amount / NOCK_TO_NICKS).toFixed(2) + ' NOCK',
+            fee: fee ? (fee / NOCK_TO_NICKS).toFixed(2) + ' NOCK' : 'auto',
+          });
+
+          const constructedTx = await buildMultiNotePayment(
+            txBuilderNotes,
+            to,
+            amount,
+            accountKey.public_key,
+            accountKey.private_key,
+            fee
+          );
+
+          // 7. Broadcast transaction
+          console.log('[Vault V2] Broadcasting transaction...');
+          const protobufTx = constructedTx.rawTx.toProtobuf();
+          const broadcastTxId = await rpcClient.sendTransaction(protobufTx);
+
+          // 8. Update tx status to broadcasted
+          walletTx.fee = constructedTx.feeUsed;
+          walletTx.txHash = constructedTx.txId;
+          walletTx.status = 'broadcasted_unconfirmed';
+          await updateWalletTransaction(currentAccount.address, walletTxId, {
+            fee: constructedTx.feeUsed,
+            txHash: constructedTx.txId,
+            status: 'broadcasted_unconfirmed',
+          });
+
+          console.log('[Vault V2] Transaction broadcasted:', broadcastTxId);
+
+          return {
+            txId: constructedTx.txId,
+            walletTx,
+            broadcasted: true,
+          };
+        } finally {
+          // Clean up WASM memory
+          if (currentAccount.derivation !== 'master') {
+            accountKey.free();
+          }
+          masterKey.free();
+        }
+      } catch (error) {
+        console.error('[Vault V2] Transaction failed:', error);
+
+        // Release in_flight notes on failure
+        if (selectedNoteIds.length > 0) {
+          try {
+            await releaseInFlightNotes(currentAccount.address, selectedNoteIds);
+            await updateWalletTransaction(currentAccount.address, walletTxId, {
+              status: 'failed',
+            });
+          } catch (releaseError) {
+            console.error('[Vault V2] Error releasing notes:', releaseError);
           }
         }
+
+        return {
+          error: `Transaction failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
       }
-
-      // Save to storage if any confirmations were updated
-      if (updated) {
-        await chrome.storage.local.set({
-          [STORAGE_KEYS.TRANSACTION_CACHE]: cache,
-        });
-      }
-    }
-  }
-
-  /**
-   * Updates the last sync timestamp for an account
-   */
-  async updateLastSync(accountAddress: string): Promise<void> {
-    const result = await chrome.storage.local.get([STORAGE_KEYS.LAST_TX_SYNC]);
-    const timestamps: import('./types').LastSyncTimestamps =
-      result[STORAGE_KEYS.LAST_TX_SYNC] || {};
-
-    timestamps[accountAddress] = Date.now();
-
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.LAST_TX_SYNC]: timestamps,
     });
-  }
-
-  /**
-   * Gets the last sync timestamp for an account
-   */
-  async getLastSync(accountAddress: string): Promise<number> {
-    const result = await chrome.storage.local.get([STORAGE_KEYS.LAST_TX_SYNC]);
-    const timestamps: import('./types').LastSyncTimestamps =
-      result[STORAGE_KEYS.LAST_TX_SYNC] || {};
-    return timestamps[accountAddress] || 0;
-  }
-
-  /**
-   * Checks if cache should be refreshed (older than 5 minutes)
-   */
-  async shouldRefreshCache(accountAddress: string): Promise<boolean> {
-    const lastSync = await this.getLastSync(accountAddress);
-    const fiveMinutes = 5 * 60 * 1000;
-    return Date.now() - lastSync > fiveMinutes;
   }
 }

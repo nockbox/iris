@@ -141,8 +141,6 @@ export function ImportScreen() {
         currentAccount: firstAccount,
         balance: 0,
         availableBalance: 0,
-        pendingOutflow: 0,
-        hasPendingOutbound: false,
         accountBalances: {},
         accountBalanceDetails: {},
       });

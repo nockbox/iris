@@ -4,6 +4,7 @@ import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import IrisLogo40 from '../assets/iris-logo-40.svg';
 import { truncateAddress, formatUTCTimestamp } from '../utils/format';
+import { NOCK_TO_NICKS } from '../../shared/constants';
 
 export function TransactionDetailsScreen() {
   const {
@@ -11,35 +12,32 @@ export function TransactionDetailsScreen() {
     selectedTransaction,
     wallet,
     priceUsd,
-    fetchCachedTransactions,
-    cachedTransactions,
+    fetchWalletTransactions,
+    walletTransactions,
     setSelectedTransaction,
   } = useStore();
 
   // Fetch fresh transaction data on mount
   React.useEffect(() => {
     console.log('[TxDetails] Screen mounted, fetching latest transaction data');
-    fetchCachedTransactions();
+    fetchWalletTransactions();
   }, []);
 
-  // Sync selectedTransaction with updates from cachedTransactions
+  // Sync selectedTransaction with updates from walletTransactions
   React.useEffect(() => {
     if (!selectedTransaction) return;
 
-    // Find the updated transaction in cachedTransactions by txid
-    const updatedTx = cachedTransactions.find(tx => tx.txid === selectedTransaction.txid);
+    // Find the updated transaction by id
+    const updatedTx = walletTransactions.find(tx => tx.id === selectedTransaction.id);
     if (updatedTx) {
-      console.log('[TxDetails] Syncing selectedTransaction with cached data', {
+      console.log('[TxDetails] Syncing selectedTransaction with wallet data', {
         oldConfirmations: selectedTransaction.confirmations,
         newConfirmations: updatedTx.confirmations,
       });
       // Update selectedTransaction with the latest data
       setSelectedTransaction(updatedTx);
     }
-  }, [cachedTransactions, selectedTransaction?.txid]);
-
-  // Note: Transaction confirmation polling is handled globally by Popup.tsx
-  // The sync effect above ensures this screen always shows the latest data
+  }, [walletTransactions, selectedTransaction?.id]);
 
   // If no transaction selected, show error state
   if (!selectedTransaction) {
@@ -63,57 +61,79 @@ export function TransactionDetailsScreen() {
   }
 
   // Extract data from selected transaction
-  const transactionType = selectedTransaction.type === 'sent' ? 'sent' : 'received';
-  const amount = selectedTransaction.amount.toLocaleString('en-US', {
+  const transactionType = selectedTransaction.direction === 'outgoing' ? 'sent' : 'received';
+
+  // Convert amount from nicks to NOCK
+  const amountNock = (selectedTransaction.amount || 0) / NOCK_TO_NICKS;
+  const feeNock = (selectedTransaction.fee || 0) / NOCK_TO_NICKS;
+
+  const amount = amountNock.toLocaleString('en-US', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
-  const usdValue = `$${(selectedTransaction.amount * priceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const usdValue = `$${(amountNock * priceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // Determine status display
   let statusText: string;
   let statusColor: string;
 
-  if (selectedTransaction.status === 'failed') {
-    statusText = 'Failed';
-    statusColor = 'var(--color-red)';
-  } else if (selectedTransaction.status === 'pending') {
-    statusText = 'Pending';
-    statusColor = '#C88414';
-  } else if (selectedTransaction.status === 'confirmed') {
-    statusText = 'Confirmed';
-    statusColor = 'var(--color-green)';
-  } else {
-    statusText = 'Unknown';
-    statusColor = 'var(--color-text-muted)';
+  switch (selectedTransaction.status) {
+    case 'confirmed':
+      statusText = 'Confirmed';
+      statusColor = 'var(--color-green)';
+      break;
+    case 'failed':
+      statusText = 'Failed';
+      statusColor = 'var(--color-red)';
+      break;
+    case 'expired':
+      statusText = 'Expired';
+      statusColor = 'var(--color-red)';
+      break;
+    case 'broadcasted_unconfirmed':
+    case 'broadcast_pending':
+    case 'created':
+      statusText = 'Pending';
+      statusColor = '#C88414';
+      break;
+    default:
+      statusText = 'Unknown';
+      statusColor = 'var(--color-text-muted)';
   }
 
   const currentAddress = wallet.currentAccount?.address || '';
+  const counterpartyAddress = selectedTransaction.direction === 'outgoing'
+    ? selectedTransaction.recipient
+    : selectedTransaction.sender;
+
   const fromAddress =
-    selectedTransaction.type === 'sent'
+    selectedTransaction.direction === 'outgoing'
       ? truncateAddress(currentAddress)
-      : truncateAddress(selectedTransaction.address);
+      : truncateAddress(counterpartyAddress || '');
   const toAddress =
-    selectedTransaction.type === 'sent'
-      ? truncateAddress(selectedTransaction.address)
+    selectedTransaction.direction === 'outgoing'
+      ? truncateAddress(counterpartyAddress || '')
       : truncateAddress(currentAddress);
 
-  const networkFee = `${selectedTransaction.fee.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`;
+  const networkFee = `${feeNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`;
   const totalNock =
-    selectedTransaction.type === 'sent'
-      ? selectedTransaction.amount + selectedTransaction.fee
-      : selectedTransaction.amount;
+    selectedTransaction.direction === 'outgoing'
+      ? amountNock + feeNock
+      : amountNock;
   const total = `${totalNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`;
   const totalUsd = `$${(totalNock * priceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  const transactionId = selectedTransaction.txid;
-  const transactionTimeUTC = formatUTCTimestamp(selectedTransaction.timestamp);
+  const transactionId = selectedTransaction.txHash || selectedTransaction.id;
+  const transactionTimeUTC = formatUTCTimestamp(selectedTransaction.createdAt);
 
   function handleBack() {
     navigate('home');
   }
   function handleViewExplorer() {
-    // Open transaction on nockscan.net
-    window.open(`https://nockscan.net/tx/${transactionId}`, '_blank');
+    // Open transaction on nockscan.net (only if we have a txHash)
+    const txHash = selectedTransaction?.txHash;
+    if (txHash) {
+      window.open(`https://nockscan.net/tx/${txHash}`, '_blank');
+    }
   }
   function handleCopyTransactionId() {
     navigator.clipboard.writeText(transactionId);
@@ -264,14 +284,17 @@ export function TransactionDetailsScreen() {
               <button
                 type="button"
                 onClick={handleViewExplorer}
-                className="flex-1 py-[7px] px-3 bg-transparent rounded-full text-sm font-medium leading-[18px] tracking-[0.14px] transition-colors focus:outline-none focus-visible:ring-2 whitespace-nowrap"
+                disabled={!selectedTransaction.txHash}
+                className="flex-1 py-[7px] px-3 bg-transparent rounded-full text-sm font-medium leading-[18px] tracking-[0.14px] transition-colors focus:outline-none focus-visible:ring-2 whitespace-nowrap disabled:opacity-50"
                 style={{
                   border: '1px solid var(--color-surface-700)',
                   color: 'var(--color-text-primary)',
                 }}
-                onMouseEnter={e =>
-                  (e.currentTarget.style.backgroundColor = 'var(--color-surface-800)')
-                }
+                onMouseEnter={e => {
+                  if (!e.currentTarget.disabled) {
+                    e.currentTarget.style.backgroundColor = 'var(--color-surface-800)';
+                  }
+                }}
                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
               >
                 View on explorer

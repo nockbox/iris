@@ -114,12 +114,16 @@ export class NockchainBrowserRPCClient {
   /**
    * Get current block height from balance query
    */
-  async getCurrentBlockHeight(): Promise<bigint> {
+  async getCurrentBlockHeight(address?: string): Promise<bigint> {
     try {
       const client = await this.ensureClient();
-      // Use a dummy address to get chain info
-      const dummyAddress = '1'.repeat(132);
-      const response = await client.get_balance_by_address(dummyAddress);
+
+      if (!address) {
+        console.warn('[RPC Browser] No address provided for block height query, returning 0');
+        return BigInt(0);
+      }
+
+      const response = await client.get_balance_by_address(address);
 
       if (response.height?.value) {
         return BigInt(response.height.value);
