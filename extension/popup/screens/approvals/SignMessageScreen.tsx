@@ -37,8 +37,8 @@ export function SignMessageScreen() {
   const divider = 'var(--color-divider)';
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
-      <div className="w-[357px] max-h-screen flex flex-col" style={{ backgroundColor: bg }}>
+    <div className="h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
+      <div className="w-full h-full flex flex-col" style={{ backgroundColor: bg, maxWidth: '357px', maxHeight: '600px' }}>
         {/* Header */}
         <div className="flex items-center justify-center px-4 py-4 shrink-0">
           <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>
@@ -47,7 +47,8 @@ export function SignMessageScreen() {
         </div>
 
         {/* Content */}
-        <div className="px-4 pb-2">
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="px-4 pb-2">
           {/* Site Info */}
           <div className="mb-3">
             <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
@@ -116,11 +117,12 @@ export function SignMessageScreen() {
               </div>
             </div>
           </div>
+          </div>
         </div>
 
         {/* Footer Buttons */}
         <div
-          className="mt-auto px-4 py-2.5 shrink-0 flex gap-3"
+          className="px-4 py-2.5 shrink-0 flex gap-3"
           style={{ borderTop: `1px solid ${divider}` }}
         >
           <button onClick={handleDecline} className="btn-secondary flex-1">

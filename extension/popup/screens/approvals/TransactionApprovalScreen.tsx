@@ -46,8 +46,8 @@ export function TransactionApprovalScreen() {
   const divider = 'var(--color-divider)';
 
   return (
-    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
-      <div className="w-[357px] max-h-screen flex flex-col" style={{ backgroundColor: bg }}>
+    <div className="h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
+      <div className="w-full h-full flex flex-col" style={{ backgroundColor: bg, maxWidth: '357px', maxHeight: '600px' }}>
         {/* Header */}
         <div className="flex items-center justify-center px-4 py-4 shrink-0">
           <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>
@@ -56,7 +56,8 @@ export function TransactionApprovalScreen() {
         </div>
 
         {/* Content */}
-        <div className="px-4 pb-2">
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          <div className="px-4 pb-2">
           {/* Site Badge */}
           <div
             className="flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg mb-3"
@@ -140,11 +141,12 @@ export function TransactionApprovalScreen() {
               Balance after: {formatNock(wallet.balance - total / NOCK_TO_NICKS)} NOCK
             </div>
           </div>
+          </div>
         </div>
 
         {/* Footer Buttons */}
         <div
-          className="mt-auto px-4 py-2.5 shrink-0 flex gap-3"
+          className="px-4 py-2.5 shrink-0 flex gap-3"
           style={{ borderTop: `1px solid ${divider}` }}
         >
           <button onClick={handleReject} className="btn-secondary flex-1">
