@@ -225,8 +225,6 @@ export async function markNotesInFlight(
 
   store[accountAddress].version += 1;
   await saveUTXOStore(store);
-
-  console.log(`[UTXO Store] Marked ${lockedCount} notes as in_flight for tx ${walletTxId.slice(0, 8)}...`);
 }
 
 /**
@@ -254,8 +252,6 @@ export async function markNotesSpent(
 
   store[accountAddress].version += 1;
   await saveUTXOStore(store);
-
-  console.log(`[UTXO Store] Marked ${noteIds.length} notes as spent`);
 }
 
 /**
@@ -285,8 +281,6 @@ export async function releaseInFlightNotes(
 
   store[accountAddress].version += 1;
   await saveUTXOStore(store);
-
-  console.log(`[UTXO Store] Released ${noteIds.length} notes back to available`);
 }
 
 /**
@@ -307,7 +301,6 @@ export async function removeSpentNotes(accountAddress: string): Promise<number> 
   if (removed > 0) {
     store[accountAddress].version += 1;
     await saveUTXOStore(store);
-    console.log(`[UTXO Store] Removed ${removed} spent notes from storage`);
   }
 
   return removed;
@@ -483,7 +476,6 @@ export async function addWalletTransaction(tx: WalletTransaction): Promise<void>
   }
 
   await saveWalletTxStore(store);
-  console.log(`[UTXO Store] Added wallet transaction ${tx.id.slice(0, 8)}... (${tx.direction})`);
 }
 
 /**
@@ -513,7 +505,6 @@ export async function updateWalletTransaction(
   };
 
   await saveWalletTxStore(store);
-  console.log(`[UTXO Store] Updated wallet transaction ${txId.slice(0, 8)}...`);
 }
 
 /**

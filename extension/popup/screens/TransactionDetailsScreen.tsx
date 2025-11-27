@@ -19,7 +19,6 @@ export function TransactionDetailsScreen() {
 
   // Fetch fresh transaction data on mount
   React.useEffect(() => {
-    console.log('[TxDetails] Screen mounted, fetching latest transaction data');
     fetchWalletTransactions();
   }, []);
 
@@ -30,10 +29,6 @@ export function TransactionDetailsScreen() {
     // Find the updated transaction by id
     const updatedTx = walletTransactions.find(tx => tx.id === selectedTransaction.id);
     if (updatedTx) {
-      console.log('[TxDetails] Syncing selectedTransaction with wallet data', {
-        oldConfirmations: selectedTransaction.confirmations,
-        newConfirmations: updatedTx.confirmations,
-      });
       // Update selectedTransaction with the latest data
       setSelectedTransaction(updatedTx);
     }

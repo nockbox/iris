@@ -134,13 +134,6 @@ export function SendScreen() {
         setIsFeeManuallyEdited(true); // Lock fee for max send
         setError('');
         setErrorType(null);
-
-        console.log('[SendScreen] Max send calculated:', {
-          maxAmount: maxAmountNock,
-          fee: feeNock,
-          totalAvailable: result.totalAvailable ? result.totalAvailable / NOCK_TO_NICKS : 0,
-          utxoCount: result.utxoCount,
-        });
       }
     } catch (err) {
       console.error('[SendScreen] Max estimation failed:', err);
@@ -389,7 +382,6 @@ export function SendScreen() {
           setMinimumFee(feeNock); // Store as minimum required fee
           setError('');
           setErrorType(null);
-          console.log('[SendScreen] Fee calculated:', feeNock, 'NOCK');
         } else if (result?.error) {
           console.error('[SendScreen] Fee estimation error from vault:', result.error);
           setError(result.error);

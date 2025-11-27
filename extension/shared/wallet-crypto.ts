@@ -41,18 +41,8 @@ export async function deriveAddressFromMaster(mnemonic: string): Promise<string>
   // Derive master key from mnemonic
   const masterKey = deriveMasterKeyFromMnemonic(mnemonic, '');
 
-  // DEBUG: Also derive child 0 to compare
-  const child0 = masterKey.deriveChild(0);
-  const masterAddr = publicKeyToPKH(masterKey.publicKey);
-  const child0Addr = publicKeyToPKH(child0.publicKey);
-
-  console.log('[deriveAddressFromMaster] Master address:', masterAddr);
-  console.log('[deriveAddressFromMaster] Child-0 address:', child0Addr);
-
-  child0.free();
-
   // Use master key public key directly (no child derivation)
-  const address = masterAddr;
+  const address = publicKeyToPKH(masterKey.publicKey);
 
   // Clean up WASM memory
   masterKey.free();

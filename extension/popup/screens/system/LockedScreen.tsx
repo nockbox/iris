@@ -64,7 +64,6 @@ export function LockedScreen() {
       });
 
       // Trigger balance fetch after successful unlock
-      console.log('[LockedScreen] Unlock successful, triggering balance fetch...');
       fetchBalance();
 
       navigate('home');

@@ -93,17 +93,8 @@ export function HomeScreen() {
 
   // Fetch wallet transactions on mount and when account changes
   useEffect(() => {
-    console.log(
-      '[HomeScreen] Fetching wallet transactions for account:',
-      wallet.currentAccount?.address
-    );
     fetchWalletTransactions();
   }, [fetchWalletTransactions, wallet.currentAccount?.address]);
-
-  // Debug: Log wallet transactions when they change
-  useEffect(() => {
-    console.log('[HomeScreen] Wallet transactions updated:', walletTransactions);
-  }, [walletTransactions]);
 
   // Check RPC connection status on mount and after balance fetching completes
   // (RPC calls update the status in background, so re-check after they finish)
@@ -188,10 +179,7 @@ export function HomeScreen() {
       syncWallet(updatedWallet);
 
       // Fetch balance for the newly created account
-      console.log('[HomeScreen] Fetching balance for newly created account...');
       fetchBalance();
-    } else if (result?.error) {
-      console.log(`[HomeScreen] Failed to create account: ${result.error}`);
     }
 
     setWalletDropdownOpen(false);
@@ -206,8 +194,6 @@ export function HomeScreen() {
 
       // Fetch latest wallet transactions
       await fetchWalletTransactions();
-
-      console.log('[HomeScreen] Balance and transactions refreshed.');
     } finally {
       setIsRefreshing(false);
       // Connection status is automatically re-checked by useEffect when isBalanceFetching changes

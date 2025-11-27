@@ -30,7 +30,6 @@ export function SuccessScreen() {
 
   async function handleStartUsing() {
     // Fetch balance before navigating to home screen
-    console.log('[SuccessScreen] Fetching balance before navigating to home...');
     await fetchBalance();
     navigate('home');
   }

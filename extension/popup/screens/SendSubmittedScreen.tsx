@@ -30,7 +30,6 @@ export function SendSubmittedScreen() {
       a.download = `tx-${lastTransaction.txid || 'unsigned'}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      console.log('[SendSubmitted] Transaction downloaded');
     } catch (err) {
       console.error('[SendSubmitted] Failed to download transaction:', err);
     }

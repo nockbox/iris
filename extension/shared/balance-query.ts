@@ -58,25 +58,14 @@ export async function queryV1Balance(
   pkhBase58: string,
   rpcClient: NockchainBrowserRPCClient
 ): Promise<BalanceResult> {
-  console.log(`[Balance Query] Querying v1 balance for PKH ${pkhBase58.slice(0, 20)}...`);
-
   // Derive both first-names
   const { simple, coinbase } = await getBothFirstNames(pkhBase58);
-  console.log(`[Balance Query] Derived first-names:`, {
-    simple: simple.slice(0, 20) + '...',
-    coinbase: coinbase.slice(0, 20) + '...',
-  });
 
   // Query both types of notes in parallel
   const [simpleNotes, coinbaseNotes] = await Promise.all([
     rpcClient.getNotesByFirstName(simple),
     rpcClient.getNotesByFirstName(coinbase),
   ]);
-
-  console.log(`[Balance Query] Found notes:`, {
-    simpleNotes: simpleNotes.length,
-    coinbaseNotes: coinbaseNotes.length,
-  });
 
   // Sum the total value in nicks
   const totalNicks = [...simpleNotes, ...coinbaseNotes].reduce(
@@ -87,23 +76,13 @@ export async function queryV1Balance(
   // Convert to NOCK for display (1 NOCK = 65,536 nicks)
   const totalNock = Number(totalNicks) / NOCK_TO_NICKS;
 
-  const result = {
+  return {
     totalNicks,
     totalNock,
     simpleNotes,
     coinbaseNotes,
     utxoCount: simpleNotes.length + coinbaseNotes.length,
   };
-
-  console.log(`[Balance Query] ✅ Balance result:`, {
-    totalNicks: totalNicks.toString(),
-    totalNock,
-    utxoCount: result.utxoCount,
-    simpleNotesCount: simpleNotes.length,
-    coinbaseNotesCount: coinbaseNotes.length,
-  });
-
-  return result;
 }
 
 /**

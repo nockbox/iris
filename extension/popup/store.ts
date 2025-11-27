@@ -322,18 +322,9 @@ export const useStore = create<AppStore>((set, get) => ({
       });
 
       // Fetch balance if wallet is unlocked
-      console.log('[Store] Initialize complete. Wallet state:', {
-        locked: walletState.locked,
-        hasAddress: !!walletState.address,
-        address: walletState.address?.slice(0, 20) + '...',
-      });
-
       if (!walletState.locked && walletState.address) {
-        console.log('[Store] Triggering automatic balance fetch...');
         get().fetchBalance();
         get().fetchWalletTransactions();
-      } else {
-        console.log('[Store] Skipping balance fetch - wallet is locked or no address');
       }
     } catch (error) {
       console.error('Failed to initialize app:', error);
@@ -347,13 +338,11 @@ export const useStore = create<AppStore>((set, get) => ({
   fetchBalance: async () => {
     try {
       set({ isBalanceFetching: true });
-      console.log('[Store] Syncing UTXOs and fetching balances...');
 
       const accounts = get().wallet.accounts;
       const currentAccount = get().wallet.currentAccount;
 
       if (!currentAccount || accounts.length === 0) {
-        console.error('[Store] No accounts available');
         set({ isBalanceFetching: false });
         return;
       }
@@ -366,9 +355,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
         for (const account of accounts) {
           try {
-            console.log(`[Store] Syncing UTXOs for ${account.name}...`);
-            const syncResult = await syncAccountUTXOs(account.address, rpcClient);
-            console.log(`[Store] Sync complete for ${account.name}:`, syncResult);
+            await syncAccountUTXOs(account.address, rpcClient);
           } catch (syncErr) {
             console.warn(`[Store] UTXO sync failed for ${account.name}:`, syncErr);
           }
@@ -398,8 +385,6 @@ export const useStore = create<AppStore>((set, get) => ({
           const spendableNock = storeBalance.spendableNow / NOCK_TO_NICKS;
           accountBalances[account.address] = availableNock;
           accountSpendableBalances[account.address] = spendableNock;
-
-          console.log(`[Store] 📊 ${account.name}: ${availableNock.toFixed(2)} NOCK available, ${spendableNock.toFixed(2)} NOCK spendable now`);
         } catch (err) {
           console.warn(`[Store] Could not get balance for ${account.name}:`, err);
           // Keep previous balance if fetch fails
@@ -412,16 +397,12 @@ export const useStore = create<AppStore>((set, get) => ({
       const currentBalance = accountBalances[currentAccount.address] ?? 0;
       const currentSpendable = accountSpendableBalances[currentAccount.address] ?? 0;
 
-      console.log('[Store] ✅ All balances fetched:', accountBalances);
-      console.log('[Store] ✅ Spendable balances:', accountSpendableBalances);
-
       // Persist balances to chrome.storage.local for offline access
       try {
         const { STORAGE_KEYS } = await import('../shared/constants');
         await chrome.storage.local.set({
           [STORAGE_KEYS.CACHED_BALANCES]: accountBalances,
         });
-        console.log('[Store] 💾 Balances cached to storage');
       } catch (cacheErr) {
         console.warn('[Store] Failed to cache balances:', cacheErr);
       }
@@ -447,12 +428,9 @@ export const useStore = create<AppStore>((set, get) => ({
   fetchPrice: async () => {
     try {
       set({ isPriceFetching: true });
-      console.log('[Store] Fetching NOCK price from CoinGecko...');
 
       const { fetchNockPrice } = await import('../shared/price-api');
       const priceData = await fetchNockPrice();
-
-      console.log('[Store] Price fetched:', priceData);
 
       set({
         priceUsd: priceData.usd,
@@ -482,7 +460,6 @@ export const useStore = create<AppStore>((set, get) => ({
       // Check if user switched accounts while we were fetching
       const accountAfterFetch = get().wallet.currentAccount;
       if (accountAfterFetch?.address !== fetchingForAddress) {
-        console.log('[Store] Account changed during transaction fetch, discarding stale result');
         return;
       }
 

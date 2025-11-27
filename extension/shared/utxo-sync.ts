@@ -76,36 +76,17 @@ export async function syncAccountUTXOs(
   expired: number;
 }> {
   return withAccountLock(accountAddress, async () => {
-    console.log(`[UTXO Sync] Starting sync for ${accountAddress.slice(0, 20)}...`);
-
     // 1. Fetch current UTXOs from chain
     const balanceResult = await queryV1Balance(accountAddress, rpcClient);
     const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
     const fetchedUTXOs = chainNotes.map(noteToFetchedUTXO);
 
-    console.log(`[UTXO Sync] Fetched ${fetchedUTXOs.length} UTXOs from chain`);
-
     // 2. Get local state
     const localNotes = await getAccountNotes(accountAddress);
     const pendingTxs = await getPendingOutgoingTransactions(accountAddress);
 
-    console.log(
-      `[UTXO Sync] Local state: ${localNotes.length} notes, ${pendingTxs.length} pending txs`
-    );
-
     // 3. Compute diff
     const diff = computeUTXODiff(localNotes, fetchedUTXOs, pendingTxs);
-
-    console.log(`[UTXO Sync] Diff: ${diff.newUTXOs.length} new, ${diff.nowSpent.length} spent`);
-
-    // DEBUG: Log pending tx hashes and new UTXO source hashes for change detection verification
-    if (pendingTxs.length > 0 && diff.newUTXOs.length > 0) {
-      console.log(`[UTXO Sync] Change detection debug:`, {
-        pendingTxHashes: pendingTxs.map(tx => tx.txHash?.slice(0, 20) + '...'),
-        newUTXOSourceHashes: diff.newUTXOs.map(u => u.sourceHash?.slice(0, 20) + '...'),
-        matchesFound: diff.isChangeMap.size,
-      });
-    }
 
     // 4. Process spent notes
     if (diff.nowSpent.length > 0) {
@@ -115,10 +96,6 @@ export async function syncAccountUTXOs(
       // Check if any pending transactions are now confirmed
       for (const tx of pendingTxs) {
         if (areTransactionInputsSpent(tx, diff.nowSpent)) {
-          console.log(
-            `[UTXO Sync] Transaction ${tx.id.slice(0, 8)}... inputs spent - marking confirmed`
-          );
-
           // Find change outputs for this transaction
           const changeNoteIds = matchChangeOutputs(tx, diff.newUTXOs, diff.isChangeMap);
 
@@ -143,19 +120,11 @@ export async function syncAccountUTXOs(
       if (isChange && walletTxId) {
         storedNote.pendingTxId = walletTxId; // Link to originating tx
         newChange++;
-        console.log(
-          `[UTXO Sync] New change UTXO: ${(newUTXO.assets / NOCK_TO_NICKS).toFixed(2)} NOCK from tx ${walletTxId.slice(0, 8)}...`
-        );
       } else {
         // For now, we DON'T create WalletTransaction records for incoming UTXOs.
         // This avoids confusing the user with "received" transactions that are actually change.
         // The balance will still update correctly, and users can see incoming on a block explorer.
-        //
-        // TODO: Improve change detection or add incoming tx UI later
         newIncoming++;
-        console.log(
-          `[UTXO Sync] New incoming UTXO: ${(newUTXO.assets / NOCK_TO_NICKS).toFixed(2)} NOCK (not adding to tx history)`
-        );
       }
 
       newStoredNotes.push(storedNote);
@@ -188,9 +157,6 @@ export async function syncAccountUTXOs(
         const allInputsSpent = tx.inputNoteIds.every(noteId => spentNoteIds.has(noteId));
 
         if (allInputsSpent) {
-          console.log(
-            `[UTXO Sync] Transaction ${tx.id.slice(0, 8)}... inputs already spent - marking confirmed`
-          );
           await updateWalletTransaction(accountAddress, tx.id, {
             status: 'confirmed',
           });
@@ -204,10 +170,6 @@ export async function syncAccountUTXOs(
     const expiredTxs = findExpiredTransactions(allTxs, TX_EXPIRY_MS);
 
     for (const expiredTx of expiredTxs) {
-      console.log(
-        `[UTXO Sync] Transaction ${expiredTx.id.slice(0, 8)}... expired - releasing notes`
-      );
-
       // Release locked notes
       if (expiredTx.inputNoteIds && expiredTx.inputNoteIds.length > 0) {
         await releaseInFlightNotes(accountAddress, expiredTx.inputNoteIds);
@@ -220,17 +182,14 @@ export async function syncAccountUTXOs(
     }
 
     const confirmedFromNewSpent = pendingTxs.filter(tx => areTransactionInputsSpent(tx, diff.nowSpent)).length;
-    const summary = {
+
+    return {
       newIncoming,
       newChange,
       spent: diff.nowSpent.length,
       confirmed: confirmedFromNewSpent + confirmedFromPreviousSpent,
       expired: expiredTxs.length,
     };
-
-    console.log(`[UTXO Sync] Sync complete:`, summary);
-
-    return summary;
   });
 }
 
@@ -246,20 +205,15 @@ export async function initializeAccountUTXOs(
   rpcClient: NockchainBrowserRPCClient
 ): Promise<void> {
   return withAccountLock(accountAddress, async () => {
-    console.log(`[UTXO Sync] Initializing UTXO store for ${accountAddress.slice(0, 20)}...`);
-
     // Check if already initialized
     const existingNotes = await getAccountNotes(accountAddress);
     if (existingNotes.length > 0) {
-      console.log(`[UTXO Sync] Account already has ${existingNotes.length} notes, skipping init`);
       return;
     }
 
     // Fetch current UTXOs from chain
     const balanceResult = await queryV1Balance(accountAddress, rpcClient);
     const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
-
-    console.log(`[UTXO Sync] Found ${chainNotes.length} UTXOs on chain for new account`);
 
     // Convert to stored notes (all available, no incoming tx records on first init)
     const storedNotes: StoredNote[] = chainNotes.map(note =>
@@ -270,8 +224,6 @@ export async function initializeAccountUTXOs(
     if (storedNotes.length > 0) {
       await saveNotes(accountAddress, storedNotes);
     }
-
-    console.log(`[UTXO Sync] Initialization complete: ${storedNotes.length} notes stored`);
   });
 }
 
@@ -332,8 +284,6 @@ export async function forceResyncAccount(
   rpcClient: NockchainBrowserRPCClient
 ): Promise<void> {
   return withAccountLock(accountAddress, async () => {
-    console.log(`[UTXO Sync] Force resync for ${accountAddress.slice(0, 20)}...`);
-
     // Fetch current UTXOs from chain
     const balanceResult = await queryV1Balance(accountAddress, rpcClient);
     const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
@@ -372,7 +322,5 @@ export async function forceResyncAccount(
 
     // Replace all notes (but keep pending state)
     await saveNotes(accountAddress, newStoredNotes);
-
-    console.log(`[UTXO Sync] Force resync complete: ${newStoredNotes.length} notes`);
   });
 }

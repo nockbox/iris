@@ -21,8 +21,6 @@ class NockProvider {
   request(args: RequestArgs): Promise<unknown> {
     const id = Math.random().toString(36).slice(2);
 
-    console.log('[Iris] Sending request:', args.method, { id, args });
-
     // Post message to content script
     window.postMessage(
       {
@@ -42,11 +40,6 @@ class NockProvider {
 
         // Check if this is our response (must have a reply field, not just the request)
         if (data?.target === MESSAGE_TARGET && data.id === id && data.reply !== undefined) {
-          console.log('[Iris] Matched response:', {
-            id,
-            reply: data.reply,
-            fullData: data,
-          });
           window.removeEventListener('message', handler);
           clearTimeout(timeoutId);
 

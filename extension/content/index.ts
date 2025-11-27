@@ -24,20 +24,14 @@ window.addEventListener('message', async (evt: MessageEvent) => {
     return;
   }
 
-  console.log('[Content Script] Forwarding to background:', data);
-
   // Forward to service worker and relay response back to page
   const reply = await chrome.runtime.sendMessage(data);
-
-  console.log('[Content Script] Received from background:', reply);
 
   const responseMessage = {
     target: MESSAGE_TARGETS.WALLET_BRIDGE,
     id: data.id,
     reply,
   };
-
-  console.log('[Content Script] Posting response to page:', responseMessage);
 
   window.postMessage(responseMessage, '*');
 });
@@ -47,8 +41,6 @@ window.addEventListener('message', async (evt: MessageEvent) => {
  * These are emitted when wallet state changes (account switch, lock, etc.)
  */
 chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
-  console.log('[Content Script] Received event from background:', message);
-
   // Only handle wallet events
   if (message.type !== 'WALLET_EVENT') {
     return;
@@ -64,6 +56,4 @@ chrome.runtime.onMessage.addListener((message, _sender, _sendResponse) => {
     },
     '*'
   );
-
-  console.log('[Content Script] Emitted event to page:', message.eventType);
 });

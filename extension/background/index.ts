@@ -189,7 +189,6 @@ async function createApprovalPopup(
     const alreadyQueued = requestQueue.some(r => r.id === requestId);
     if (!alreadyQueued) {
       requestQueue.push({ id: requestId, type });
-      console.log(`[Queue] Request ${requestId} queued. Queue length: ${requestQueue.length}`);
     }
     return;
   }
@@ -208,14 +207,9 @@ async function createApprovalPopup(
     hashPrefix = APPROVAL_CONSTANTS.SIGN_MESSAGE_HASH_PREFIX;
   }
   const popupUrl = chrome.runtime.getURL(`popup/index.html#${hashPrefix}${requestId}`);
-  console.log(
-    `[Approval] Creating approval popup for request ${requestId} with URL ${popupUrl} and type ${type}`
-  );
 
   // Try to reuse existing approval window
   if (approvalWindowId !== null) {
-    console.log(`[Approval] Reusing existing approval window ${approvalWindowId}`);
-
     try {
       const existingWindow = await chrome.windows.get(approvalWindowId);
 
@@ -228,8 +222,7 @@ async function createApprovalPopup(
         await chrome.windows.remove(approvalWindowId);
         approvalWindowId = null;
       }
-    } catch (error) {
-      console.log(error);
+    } catch {
       // Window was closed or doesn't exist, create new one
       approvalWindowId = null;
     }
@@ -275,15 +268,12 @@ function processNextRequest() {
   if (requestQueue.length > 0) {
     while (true) {
       const next = requestQueue.shift()!;
-      console.log(`[Queue] Processing next request ${next.id}. Remaining: ${requestQueue.length}`);
       if (!pendingRequests.has(next.id)) {
         continue;
       }
       createApprovalPopup(next.id, next.type);
       break;
     }
-  } else {
-    console.log('[Queue] No more requests in queue');
   }
 }
 
@@ -1035,11 +1025,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         try {
-          console.log('[Background] Estimating transaction fee via vault:', {
-            to: estimateTo.slice(0, 20) + '...',
-            amount: estimateAmount,
-          });
-
           const result = await vault.estimateTransactionFee(estimateTo, estimateAmount);
 
           if ('error' in result) {
@@ -1069,10 +1054,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         try {
-          console.log('[Background] Estimating max send amount:', {
-            to: maxSendTo.slice(0, 20) + '...',
-          });
-
           const maxResult = await vault.estimateMaxSendAmount(maxSendTo);
 
           if ('error' in maxResult) {
@@ -1114,8 +1095,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         try {
-          console.log('[Background] Sending transaction via V2 (UTXO store)...', { sendMax: sendMaxV2 });
-
           const v2Result = await vault.sendTransactionV2(
             sendToV2,
             sendAmountV2,
@@ -1124,12 +1103,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           );
 
           if ('error' in v2Result) {
-            console.error('[Background] SendTransactionV2 failed:', v2Result.error);
             sendResponse({ error: v2Result.error });
             return;
           }
 
-          console.log('[Background] Transaction sent via V2:', v2Result.txId);
           sendResponse({
             txid: v2Result.txId,
             broadcasted: v2Result.broadcasted,
@@ -1168,21 +1145,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         try {
-          console.log('[Background] Sending transaction:', {
-            to: sendTo.slice(0, 20) + '...',
-            amount: sendAmount,
-            fee: sendFee,
-          });
-
           const result = await vault.sendTransaction(sendTo, sendAmount, sendFee);
 
           if ('error' in result) {
-            console.error('[Background] Transaction failed:', result.error);
             sendResponse({ error: result.error });
             return;
           }
 
-          console.log('[Background] Transaction sent successfully:', result.txId);
           sendResponse({
             txid: result.txId,
             broadcasted: result.broadcasted,

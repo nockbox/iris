@@ -33,11 +33,6 @@ export async function deriveSimpleFirstName(pkhBase58: string): Promise<string> 
     throw new Error('PKH must be a non-empty base58 string');
   }
 
-  console.log('[First-Name] Input PKH:', {
-    length: pkhBase58.length,
-    full: pkhBase58,
-  });
-
   // Create a simple PKH-only spend condition
   const pkh = wasm.Pkh.single(pkhBase58);
   const condition = wasm.SpendCondition.newPkh(pkh);
@@ -45,11 +40,6 @@ export async function deriveSimpleFirstName(pkhBase58: string): Promise<string> 
   // Get the first-name from the spend condition
   const firstNameDigest = condition.firstName();
   const firstNameBase58 = firstNameDigest.value;
-
-  console.log('[First-Name] ✅ Derived simple first-name:', {
-    length: firstNameBase58.length,
-    full: firstNameBase58,
-  });
 
   // Verify it's the right length (40 bytes → ~55 chars base58)
   if (firstNameBase58.length < 50 || firstNameBase58.length > 60) {
@@ -94,15 +84,10 @@ export async function deriveCoinbaseFirstName(pkhBase58: string): Promise<string
   const firstNameDigest = condition.firstName();
   const firstNameBase58 = firstNameDigest.value;
 
-  console.log('[First-Name] ✅ Derived coinbase first-name:', {
-    length: firstNameBase58.length,
-    full: firstNameBase58,
-  });
-
   // Verify it's the right length (40 bytes → ~55 chars base58)
   if (firstNameBase58.length < 50 || firstNameBase58.length > 60) {
     console.warn(
-      `[First-Name] ⚠️ WARNING: Coinbase first-name length ${firstNameBase58.length} is outside expected range 50-60 chars`
+      `[First-Name] Coinbase first-name length ${firstNameBase58.length} is outside expected range 50-60 chars`
     );
   }
 

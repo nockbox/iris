@@ -49,8 +49,6 @@ export function SendReviewScreen() {
     setError('');
 
     try {
-      console.log('[SendReview] Sending transaction via V2 (UTXO store)...');
-
       const amountInNicks = nockToNick(lastTransaction.amount);
       const feeInNicks = nockToNick(lastTransaction.fee);
 
@@ -75,8 +73,6 @@ export function SendReviewScreen() {
       }
 
       if (result?.txid) {
-        console.log('[SendReview] Transaction sent! txid:', result.txid);
-
         // Update lastTransaction with txid
         useStore.getState().setLastTransaction({
           ...lastTransaction,

@@ -57,18 +57,9 @@ export class NockchainBrowserRPCClient {
    * @param address - Base58-encoded V1 address
    */
   async getBalance(address: string): Promise<Note[]> {
-    console.log(
-      `[RPC Browser] Fetching balance for ${address.slice(0, 20)}... from ${this.endpoint}`
-    );
-
     try {
       const client = await this.ensureClient();
       const response = await client.getBalanceByAddress(address);
-
-      console.log('[RPC Browser] Balance response:', {
-        noteCount: response.notes?.length || 0,
-        blockHeight: response.height?.value,
-      });
 
       // Report successful RPC call
       reportRpcStatus(true);
@@ -90,44 +81,14 @@ export class NockchainBrowserRPCClient {
    * @returns Array of notes with matching first-name
    */
   async getNotesByFirstName(firstNameBase58: string): Promise<Note[]> {
-    console.log(
-      `[RPC Browser] Fetching notes by first-name ${firstNameBase58.slice(0, 20)}... from ${this.endpoint}`
-    );
-
     try {
       const client = await this.ensureClient();
-
-      console.log(
-        '[RPC Browser] Sending gRPC request for first-name:',
-        firstNameBase58.slice(0, 20) + '...'
-      );
       const response = await client.getBalanceByFirstName(firstNameBase58);
-
-      const noteCount = response.notes?.length || 0;
-      console.log('[RPC Browser] Balance response:', {
-        noteCount,
-        blockHeight: response.height?.value,
-      });
-
-      // DEBUG: Log the raw response structure
-      console.log('[RPC Browser] ===== RAW RESPONSE STRUCTURE =====');
-      console.log('[RPC Browser] response keys:', Object.keys(response));
-      if (response.notes && response.notes.length > 0) {
-        console.log('[RPC Browser] First note keys:', Object.keys(response.notes[0]));
-        console.log('[RPC Browser] First note full object:', response.notes[0]);
-      }
-      console.log('[RPC Browser] ===== END RAW RESPONSE =====');
-
-      const notes = this.convertBalanceToNotes(response);
-      console.log(
-        `[RPC Browser] Converted ${notes.length} notes, total assets:`,
-        notes.reduce((sum, n) => sum + n.assets, 0)
-      );
 
       // Report successful RPC call
       reportRpcStatus(true);
 
-      return notes;
+      return this.convertBalanceToNotes(response);
     } catch (error) {
       console.error('[RPC Browser] Error fetching notes by first-name:', error);
       // Report failed RPC call
@@ -165,13 +126,10 @@ export class NockchainBrowserRPCClient {
    * @returns Transaction ID if successful
    */
   async sendTransaction(rawTx: any): Promise<string> {
-    console.log('[RPC Browser] Sending transaction...');
-
     try {
       const client = await this.ensureClient();
       const response = await client.sendTransaction(rawTx);
 
-      console.log('[RPC Browser] Transaction sent successfully');
       // Report successful RPC call
       reportRpcStatus(true);
       return response;
@@ -244,56 +202,6 @@ export class NockchainBrowserRPCClient {
     // WASM client returns note_version with V1 format
     const noteVersion = protoNote.note_version;
     const noteData = noteVersion?.V1 || protoNote.v1;
-
-    // DEBUG: Log what we're getting from RPC
-    console.log('[RPC Browser] ===== FULL BALANCE ENTRY DEBUG =====');
-    console.log('[RPC Browser] balanceEntry keys:', Object.keys(balanceEntry));
-    console.log('[RPC Browser] balanceEntry.source:', balanceEntry.source);
-    console.log('[RPC Browser] balanceEntry.output_source:', balanceEntry.output_source);
-    console.log('[RPC Browser] protoNote keys:', Object.keys(protoNote));
-    console.log('[RPC Browser] protoNote.source:', protoNote.source);
-    console.log('[RPC Browser] protoNote.output_source:', protoNote.output_source);
-    console.log('[RPC Browser] noteVersion:', noteVersion);
-    console.log('[RPC Browser] noteDataHash:', noteDataHash);
-
-    // Check if there's noteData in the response
-    if (noteData) {
-      console.log('[RPC Browser] noteData keys:', Object.keys(noteData));
-      console.log('[RPC Browser] noteData.source:', noteData.source);
-      console.log('[RPC Browser] noteData.output_source:', noteData.output_source);
-      console.log('[RPC Browser] noteData.note_data:', noteData.note_data);
-      if (noteData.note_data) {
-        console.log(
-          '[RPC Browser] convertProtoNote - noteData.note_data.entries:',
-          noteData.note_data.entries
-        );
-        console.log(
-          '[RPC Browser] convertProtoNote - noteData.note_data.hash:',
-          noteData.note_data.hash
-        );
-        console.log(
-          '[RPC Browser] convertProtoNote - noteData.note_data keys:',
-          Object.keys(noteData.note_data)
-        );
-
-        // DETAILED: Inspect entries array structure
-        if (noteData.note_data.entries && Array.isArray(noteData.note_data.entries)) {
-          console.log(
-            '[RPC Browser] noteData.note_data.entries.length:',
-            noteData.note_data.entries.length
-          );
-          noteData.note_data.entries.forEach((entry: any, idx: number) => {
-            console.log(`[RPC Browser] Entry ${idx}:`, {
-              key: entry.key,
-              blobType: typeof entry.blob,
-              blobIsUint8Array: entry.blob instanceof Uint8Array,
-              blobLength: entry.blob?.length,
-              blobFirst20Bytes: entry.blob?.slice?.(0, 20),
-            });
-          });
-        }
-      }
-    }
 
     if (!noteData) {
       console.warn('[RPC Browser] Unknown note format:', protoNote);

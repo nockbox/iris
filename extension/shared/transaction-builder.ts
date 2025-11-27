@@ -27,11 +27,6 @@ export async function discoverSpendConditionForNote(
 
   const candidates: Array<{ name: string; condition: wasm.SpendCondition }> = [];
 
-  console.log(
-    '[TxBuilder] Trying to match lock-root against name.first:',
-    note.nameFirst.slice(0, 20) + '...'
-  );
-
   // 1) PKH only (standard simple note)
   try {
     const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(senderPKH));
@@ -76,21 +71,10 @@ export async function discoverSpendConditionForNote(
     console.warn('[TxBuilder] Failed to create PKH+TIM(abs:origin+100) condition:', e);
   }
 
-  console.log(`[TxBuilder] Successfully created ${candidates.length} candidate conditions`);
-
   // Find the candidate whose first-name matches note.nameFirst
-  // The note's name.first is derived from the spend condition
   for (const candidate of candidates) {
-    const lockRoot = candidate.condition.hash().value;
-    // Get the first-name directly from the spend condition
     const derivedFirstName = candidate.condition.firstName().value;
-
-    console.log(`[TxBuilder] Candidate ${candidate.name}:`);
-    console.log(`  Lock-root: ${lockRoot.slice(0, 20)}...`);
-    console.log(`  First-name: ${derivedFirstName.slice(0, 20)}...`);
-
     if (derivedFirstName === note.nameFirst) {
-      console.log(`[TxBuilder] ✅ MATCH! Using spend condition: ${candidate.name}`);
       return candidate.condition;
     }
   }
@@ -194,35 +178,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
         'Note missing protoNote - cannot build transaction. RPC must provide full note data.'
       );
     }
-
-    console.log('[TxBuilder] Creating Note from protobuf with:', {
-      version: 'V1',
-      originPage: note.originPage,
-      assets: note.assets,
-      hasProtoNote: !!note.protoNote,
-    });
-
-    // DEBUG: Log the actual protoNote data to verify note_data.entries
-    console.log('[TxBuilder] DEBUG: protoNote data:', note.protoNote);
-    if (note.protoNote?.note_version?.V1?.note_data) {
-      console.log(
-        '[TxBuilder] DEBUG: note_data.entries:',
-        note.protoNote.note_version.V1.note_data.entries
-      );
-    }
-
-    // Use fromProtobuf to correctly deserialize NoteData entries
-    // This ensures parent_hash is computed correctly
     return wasm.Note.fromProtobuf(note.protoNote);
-  });
-
-  console.log('[TxBuilder] Creating transaction with:', {
-    inputCount: wasmNotes.length,
-    recipientPKH: recipientPKH.slice(0, 20) + '...',
-    amount,
-    fee,
-    refundPKH: refundPKH.slice(0, 20) + '...',
-    includeLockData,
   });
 
   // Create transaction builder with PKH digests (builder computes lock-roots)
@@ -252,84 +208,15 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     includeLockData
   );
 
-  // Log calculated fees before signing (new method names: curFee, calcFee)
-  const calculatedFee = builder.calcFee();
-  const currentFee = builder.curFee();
-  const txSizeWords = Number(calculatedFee) / Number(DEFAULT_FEE_PER_WORD);
-
-  console.log('[TxBuilder] ⚠️ FEE CALCULATION:', {
-    inputCount: notes.length,
-    txSizeWords: txSizeWords.toFixed(1),
-    calculatedFeeNOCK: (Number(calculatedFee) / 65536).toFixed(2),
-    userProvidedFeeNOCK: fee ? (fee / 65536).toFixed(2) : 'auto',
-    feeShortfallNOCK: fee ? ((Number(calculatedFee) - fee) / 65536).toFixed(2) : 'N/A',
-  });
-
-  // DEBUG: Check which notes are actually in the transaction
-  const actualNotesUsed = builder.allNotes();
-  const actualNotesList = actualNotesUsed.notes;
-  console.log('[TxBuilder] DEBUG: Notes actually used in transaction:', {
-    totalNotesPassedIn: notes.length,
-    notesActuallyUsed: Array.isArray(actualNotesList) ? actualNotesList.length : 0,
-    noteAssets: Array.isArray(actualNotesList) ? actualNotesList.map((n: any) => n.assets) : [],
-  });
-
-  console.log('[TxBuilder] Signing transaction...');
-
-  // Sign the transaction (new API - sign() now returns void)
+  // Sign and validate the transaction
   builder.sign(privateKey);
-
-  console.log('[TxBuilder] Validating transaction...');
-
-  // Validate the transaction
   builder.validate();
-
-  console.log('[TxBuilder] Building final transaction...');
 
   // Get the fee before building (for return value)
   const feeUsed = Number(builder.curFee());
 
-  // Build the final transaction (new API - build() returns wasm.RawTx)
-
+  // Build the final transaction
   const rawTx = builder.build();
-
-  console.log('[TxBuilder]  Transaction signed and built, txId:', rawTx.id.value);
-
-  // DEBUG: Log parent_hash from seeds to diagnose rejection
-  try {
-    const pbTx = rawTx.toProtobuf();
-    console.log('[TxBuilder]  DEBUG: Inspecting transaction seeds...');
-    console.log(pbTx);
-    // Try to access seeds if available (rawTx is WASM object with potentially hidden properties)
-    const rawTxAny = rawTx as any;
-    if (rawTxAny.seeds && Array.isArray(rawTxAny.seeds)) {
-      console.log('[TxBuilder] Seeds count:', rawTxAny.seeds.length);
-      rawTxAny.seeds.forEach((seed: any, i: number) => {
-        console.log(`[TxBuilder] Seed ${i}:`, {
-          parent_hash: seed.parent_hash?.value
-            ? seed.parent_hash.value.slice(0, 30) + '...'
-            : 'N/A',
-          lock_root: seed.lock_root?.value ? seed.lock_root.value.slice(0, 30) + '...' : 'N/A',
-        });
-      });
-    } else {
-      console.log('[TxBuilder]   Seeds not directly accessible on rawTx');
-    }
-  } catch (e) {
-    console.log('[TxBuilder]   Could not inspect seeds:', e);
-  }
-
-  // DEBUG: Log the note data that was used to build this transaction
-  console.log('[TxBuilder]  DEBUG: Input notes used for transaction:');
-  notes.forEach((note, i) => {
-    console.log(`[TxBuilder] Input ${i}:`, {
-      originPage: note.originPage,
-      nameFirst: note.nameFirst.slice(0, 30) + '...',
-      nameLast: note.nameLast.slice(0, 30) + '...',
-      noteDataHash: note.noteDataHash.slice(0, 30) + '...',
-      assets: note.assets,
-    });
-  });
 
   return {
     txId: rawTx.id.value,
@@ -389,8 +276,6 @@ export async function buildPayment(
     );
   }
 
-  console.log('[TxBuilder]  Spend condition verified, building transaction...');
-
   return buildTransaction({
     notes: [note],
     spendCondition,
@@ -446,8 +331,6 @@ export async function buildMultiNotePayment(
     );
   }
 
-  console.log(`[TxBuilder] Building multi-note transaction with ${notes.length} inputs`);
-
   // Create sender's PKH digest string for change
   const senderPKH = publicKeyToPKHDigest(senderPublicKey);
 
@@ -457,8 +340,6 @@ export async function buildMultiNotePayment(
 
   for (let i = 0; i < notes.length; i++) {
     const note = notes[i];
-    console.log(`[TxBuilder] Discovering spend condition for note ${i + 1}/${notes.length}...`);
-
     const spendCondition = await discoverSpendConditionForNote(senderPKH, {
       nameFirst: note.nameFirst,
       originPage: note.originPage,
@@ -475,8 +356,6 @@ export async function buildMultiNotePayment(
 
     spendConditions.push(spendCondition);
   }
-
-  console.log('[TxBuilder] All spend conditions verified, building transaction...');
 
   // Use provided refundPKH or default to sender's PKH
   // For "send max", refundPKH = recipientPKH to sweep all funds to recipient
