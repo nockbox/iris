@@ -1004,6 +1004,150 @@ export class Vault {
   }
 
   /**
+   * Build and sign a transaction without broadcasting it
+   * This allows the UI to pre-build transactions for review before broadcasting
+   *
+   * @param to - Recipient PKH address (base58-encoded digest string)
+   * @param amount - Amount in nicks
+   * @param fee - Transaction fee in nicks (optional, WASM will auto-calculate if not provided)
+   * @returns Transaction ID and protobuf transaction object (not broadcasted)
+   */
+  async buildAndSignTransaction(
+    to: string,
+    amount: number,
+    fee: number
+  ): Promise<{ txId: string; protobufTx: any; jammedTx: Uint8Array } | { error: string }> {
+    if (this.state.locked || !this.mnemonic) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    try {
+      // Initialize WASM modules
+      await initWasmModules();
+
+      // Derive the account's private and public keys based on derivation method
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
+      const accountKey =
+        currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+
+      if (!accountKey.privateKey || !accountKey.publicKey) {
+        if (currentAccount.derivation !== 'master') {
+          accountKey.free();
+        }
+        masterKey.free();
+        return { error: 'Keys unavailable' };
+      }
+
+      try {
+        // Create RPC client
+        const rpcClient = createBrowserClient();
+
+        console.log('[Vault] Fetching UTXOs for transaction...');
+        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
+
+        if (balanceResult.utxoCount === 0) {
+          return { error: 'No UTXOs available. Your wallet may have zero balance.' };
+        }
+
+        console.log(`[Vault] Found ${balanceResult.utxoCount} UTXOs`);
+
+        // Combine simple and coinbase notes
+        const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+
+        // Calculate total available
+        const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
+        console.log(
+          `[Vault] Passing ${notes.length} UTXO(s) to WASM (total: ${totalAvailable} nicks, need: ${amount} + fee)`
+        );
+
+        // Convert ALL notes to transaction builder format
+        // WASM will automatically select the minimum number needed
+        const txBuilderNotes = await Promise.all(
+          notes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
+        );
+
+        // Build and sign the transaction
+        console.log('[Vault] Building transaction with params:', {
+          recipientPKH: to.slice(0, 20) + '...',
+          availableInputs: txBuilderNotes.length,
+          amount,
+          fee: fee !== undefined ? fee : 'auto-calculated by WASM',
+          senderPublicKey: base58.encode(accountKey.publicKey).slice(0, 20) + '...',
+        });
+
+        // Always use buildMultiNotePayment - it handles both single and multiple notes
+        // WASM will automatically select the minimum number of notes needed
+        const constructedTx = await buildMultiNotePayment(
+          txBuilderNotes,
+          to,
+          amount,
+          accountKey.publicKey,
+          accountKey.privateKey,
+          fee
+        );
+
+        console.log('[Vault] Transaction signed:', constructedTx.txId);
+
+        // Convert to protobuf format for gRPC
+        const protobufTx = constructedTx.nockchainTx.toRawTx().toProtobuf();
+
+        return {
+          txId: constructedTx.txId,
+          protobufTx,
+          jammedTx: constructedTx.nockchainTx.toJam(),
+        };
+      } finally {
+        // Clean up WASM memory
+        if (currentAccount.derivation !== 'master') {
+          accountKey.free();
+        }
+        masterKey.free();
+      }
+    } catch (error) {
+      console.error('[Vault] Error building and signing transaction:', error);
+      return {
+        error: `Failed to build and sign transaction: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  /**
+   * Broadcast a raw signed transaction to the network
+   * This is a simpler method that doesn't require note conversion or WASM
+   *
+   * @param protobufTx - The protobuf transaction object (not WASM, already converted)
+   * @returns Transaction ID and broadcast status
+   */
+  async broadcastTransaction(
+    protobufTx: any
+  ): Promise<{ txId: string; broadcasted: boolean } | { error: string }> {
+    try {
+      const rpcClient = createBrowserClient();
+      console.log('[Vault] Broadcasting pre-signed transaction...');
+
+      const txId = await rpcClient.sendTransaction(protobufTx);
+
+      console.log('[Vault] Transaction broadcasted successfully:', txId);
+
+      return {
+        txId,
+        broadcasted: true,
+      };
+    } catch (error) {
+      console.error('[Vault] Error broadcasting transaction:', error);
+      return {
+        error: `Failed to broadcast transaction: ${error instanceof Error ? error.message : String(error)}`,
+      };
+    }
+  }
+
+  /**
    * Send a transaction to the network
    * This is the high-level API for sending NOCK to a recipient
    * TODO: Clean up logs
@@ -1103,10 +1247,13 @@ export class Vault {
 
         console.log('[Vault] Transaction signed:', constructedTx.txId);
         console.log('[Vault] Transaction version:', constructedTx.version);
-        console.log('[Vault] wasm.RawTx object keys:', Object.keys(constructedTx.rawTx));
+        console.log(
+          '[Vault] wasm.NockchainTx object keys:',
+          Object.keys(constructedTx.nockchainTx)
+        );
 
         // Convert to protobuf format for gRPC
-        const protobufTx = constructedTx.rawTx.toProtobuf();
+        const protobufTx = constructedTx.nockchainTx.toRawTx().toProtobuf();
         console.log('[Vault] Protobuf tx object keys:', Object.keys(protobufTx));
         console.log(
           '[Vault] Protobuf tx sample:',
@@ -1346,7 +1493,7 @@ export class Vault {
 
           // 7. Broadcast transaction
           console.log('[Vault V2] Broadcasting transaction...');
-          const protobufTx = constructedTx.rawTx.toProtobuf();
+          const protobufTx = constructedTx.nockchainTx.toRawTx().toProtobuf();
           const broadcastTxId = await rpcClient.sendTransaction(protobufTx);
 
           // 8. Update tx status to broadcasted
@@ -1470,7 +1617,7 @@ export class Vault {
       const signedTx = builder.build();
 
       // Convert to protobuf for return
-      const protobuf = signedTx.toProtobuf();
+      const protobuf = signedTx.toRawTx().toProtobuf();
 
       return protobuf;
     } finally {

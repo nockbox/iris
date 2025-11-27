@@ -102,9 +102,10 @@ export function TransactionDetailsScreen() {
   }
 
   const currentAddress = wallet.currentAccount?.address || '';
-  const counterpartyAddress = selectedTransaction.direction === 'outgoing'
-    ? selectedTransaction.recipient
-    : selectedTransaction.sender;
+  const counterpartyAddress =
+    selectedTransaction.direction === 'outgoing'
+      ? selectedTransaction.recipient
+      : selectedTransaction.sender;
 
   const fromAddress =
     selectedTransaction.direction === 'outgoing'
@@ -117,9 +118,7 @@ export function TransactionDetailsScreen() {
 
   const networkFee = `${feeNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`;
   const totalNock =
-    selectedTransaction.direction === 'outgoing'
-      ? amountNock + feeNock
-      : amountNock;
+    selectedTransaction.direction === 'outgoing' ? amountNock + feeNock : amountNock;
   const total = `${totalNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`;
   const totalUsd = `$${(totalNock * priceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   const transactionId = selectedTransaction.txHash || selectedTransaction.id;

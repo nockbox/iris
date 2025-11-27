@@ -143,8 +143,8 @@ export interface ConstructedTransaction {
   txId: string;
   /** Transaction version */
   version: number;
-  /** Raw transaction object (for additional operations) */
-  rawTx: wasm.RawTx;
+  /** Nockchain transaction object (for additional operations) */
+  nockchainTx: wasm.NockchainTx;
   /** Fee used in the transaction (in nicks) */
   feeUsed: number;
 }
@@ -291,33 +291,13 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
 
   // Build the final transaction (new API - build() returns wasm.RawTx)
 
-  const rawTx = builder.build();
+  const nockchainTx = builder.build();
 
-  console.log('[TxBuilder]  Transaction signed and built, txId:', rawTx.id.value);
+  console.log('[TxBuilder]  Transaction signed and built, txId:', nockchainTx.id.value);
 
   // DEBUG: Log parent_hash from seeds to diagnose rejection
-  try {
-    const pbTx = rawTx.toProtobuf();
-    console.log('[TxBuilder]  DEBUG: Inspecting transaction seeds...');
-    console.log(pbTx);
-    // Try to access seeds if available (rawTx is WASM object with potentially hidden properties)
-    const rawTxAny = rawTx as any;
-    if (rawTxAny.seeds && Array.isArray(rawTxAny.seeds)) {
-      console.log('[TxBuilder] Seeds count:', rawTxAny.seeds.length);
-      rawTxAny.seeds.forEach((seed: any, i: number) => {
-        console.log(`[TxBuilder] Seed ${i}:`, {
-          parent_hash: seed.parent_hash?.value
-            ? seed.parent_hash.value.slice(0, 30) + '...'
-            : 'N/A',
-          lock_root: seed.lock_root?.value ? seed.lock_root.value.slice(0, 30) + '...' : 'N/A',
-        });
-      });
-    } else {
-      console.log('[TxBuilder]   Seeds not directly accessible on rawTx');
-    }
-  } catch (e) {
-    console.log('[TxBuilder]   Could not inspect seeds:', e);
-  }
+  const pbTx = nockchainTx.toRawTx().toProtobuf();
+  console.log('[TxBuilder]  DEBUG: Inspecting transaction', pbTx);
 
   // DEBUG: Log the note data that was used to build this transaction
   console.log('[TxBuilder]  DEBUG: Input notes used for transaction:');
@@ -332,9 +312,9 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   });
 
   return {
-    txId: rawTx.id.value,
+    txId: nockchainTx.id.value,
     version: 1, // V1 only
-    rawTx,
+    nockchainTx,
     feeUsed,
   };
 }

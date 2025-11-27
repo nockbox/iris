@@ -30,16 +30,16 @@ const accountLocks = new Map<string, Promise<void>>();
  * Execute a function with exclusive access to an account's UTXO state
  * Prevents race conditions when building multiple transactions rapidly
  */
-export async function withAccountLock<T>(
-  accountAddress: string,
-  fn: () => Promise<T>
-): Promise<T> {
+export async function withAccountLock<T>(accountAddress: string, fn: () => Promise<T>): Promise<T> {
   const prev = accountLocks.get(accountAddress) ?? Promise.resolve();
   let resolveNext: () => void;
   const next = new Promise<void>(res => {
     resolveNext = res;
   });
-  accountLocks.set(accountAddress, prev.then(() => next));
+  accountLocks.set(
+    accountAddress,
+    prev.then(() => next)
+  );
 
   await prev; // Wait for previous holder
 
@@ -130,9 +130,7 @@ export async function getSpendableBalance(accountAddress: string): Promise<numbe
  */
 export async function getPendingOutgoingBalance(accountAddress: string): Promise<number> {
   const notes = await getAccountNotes(accountAddress);
-  return notes
-    .filter(n => n.state === 'in_flight')
-    .reduce((sum, note) => sum + note.assets, 0);
+  return notes.filter(n => n.state === 'in_flight').reduce((sum, note) => sum + note.assets, 0);
 }
 
 /**
@@ -147,9 +145,7 @@ export async function getTotalKnownBalance(accountAddress: string): Promise<{
   const available = notes
     .filter(n => n.state === 'available')
     .reduce((sum, n) => sum + n.assets, 0);
-  const pending = notes
-    .filter(n => n.state === 'in_flight')
-    .reduce((sum, n) => sum + n.assets, 0);
+  const pending = notes.filter(n => n.state === 'in_flight').reduce((sum, n) => sum + n.assets, 0);
 
   return {
     available,
@@ -162,10 +158,7 @@ export async function getTotalKnownBalance(accountAddress: string): Promise<{
  * Save/update notes for an account
  * Merges with existing notes, updating state for known notes
  */
-export async function saveNotes(
-  accountAddress: string,
-  newNotes: StoredNote[]
-): Promise<void> {
+export async function saveNotes(accountAddress: string, newNotes: StoredNote[]): Promise<void> {
   const store = await getUTXOStore();
 
   if (!store[accountAddress]) {
@@ -218,25 +211,22 @@ export async function markNotesInFlight(
   }
 
   if (lockedCount !== noteIds.length) {
-    throw new Error(
-      `Failed to lock all notes: expected ${noteIds.length}, found ${lockedCount}`
-    );
+    throw new Error(`Failed to lock all notes: expected ${noteIds.length}, found ${lockedCount}`);
   }
 
   store[accountAddress].version += 1;
   await saveUTXOStore(store);
 
-  console.log(`[UTXO Store] Marked ${lockedCount} notes as in_flight for tx ${walletTxId.slice(0, 8)}...`);
+  console.log(
+    `[UTXO Store] Marked ${lockedCount} notes as in_flight for tx ${walletTxId.slice(0, 8)}...`
+  );
 }
 
 /**
  * Mark notes as spent (transaction confirmed)
  * Called when sync detects the notes are no longer on-chain
  */
-export async function markNotesSpent(
-  accountAddress: string,
-  noteIds: string[]
-): Promise<void> {
+export async function markNotesSpent(accountAddress: string, noteIds: string[]): Promise<void> {
   const store = await getUTXOStore();
 
   if (!store[accountAddress]) {
@@ -450,9 +440,7 @@ async function saveWalletTxStore(store: WalletTxStore): Promise<void> {
 /**
  * Get all wallet transactions for an account
  */
-export async function getWalletTransactions(
-  accountAddress: string
-): Promise<WalletTransaction[]> {
+export async function getWalletTransactions(accountAddress: string): Promise<WalletTransaction[]> {
   const store = await getWalletTxStore();
   return store[accountAddress] || [];
 }

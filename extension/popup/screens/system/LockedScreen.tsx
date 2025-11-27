@@ -50,7 +50,7 @@ export function LockedScreen() {
       const { STORAGE_KEYS } = await import('../../../shared/constants');
       const stored = await chrome.storage.local.get([STORAGE_KEYS.CACHED_BALANCES]);
       const cachedBalances = (stored[STORAGE_KEYS.CACHED_BALANCES] || {}) as Record<string, number>;
-      const cachedBalance = currentAccount ? cachedBalances[currentAccount.address] ?? 0 : 0;
+      const cachedBalance = currentAccount ? (cachedBalances[currentAccount.address] ?? 0) : 0;
 
       syncWallet({
         ...wallet,

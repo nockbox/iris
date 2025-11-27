@@ -13,6 +13,7 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: resolve(__dirname, 'examples/index.html'),
+        txBuilder: resolve(__dirname, 'examples/tx-builder.html'),
       },
     },
   },

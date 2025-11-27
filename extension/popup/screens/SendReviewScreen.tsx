@@ -60,11 +60,7 @@ export function SendReviewScreen() {
         broadcasted?: boolean;
         walletTx?: any;
         error?: string;
-      }>(INTERNAL_METHODS.SEND_TRANSACTION_V2, [
-        lastTransaction.to,
-        amountInNicks,
-        feeInNicks,
-      ]);
+      }>(INTERNAL_METHODS.SEND_TRANSACTION_V2, [lastTransaction.to, amountInNicks, feeInNicks]);
 
       if (result?.error) {
         setError(result.error);
