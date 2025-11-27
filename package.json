@@ -1,6 +1,6 @@
 {
   "name": "iris",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Iris - Chrome Wallet Extension for Nockchain",
   "type": "module",
   "scripts": {
