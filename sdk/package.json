@@ -9,10 +9,6 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    },
-    "./wasm": {
-      "types": "./dist/wasm.d.ts",
-      "import": "./dist/wasm.js"
     }
   },
   "files": [
@@ -36,7 +32,7 @@
     "blockchain",
     "schnorr"
   ],
-  "author": "Nockbox Inc",
+  "author": "NockBox inc.",
   "license": "MIT",
   "devDependencies": {
     "typescript": "^5.5.3",
@@ -45,7 +41,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/nockbox/wallet-frontend.git",
+    "url": "https://github.com/nockbox/iris.git",
     "directory": "sdk"
   },
   "dependencies": {

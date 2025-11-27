@@ -1,0 +1,33 @@
+name: Build and Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm ci && cd sdk && npm ci
+      - run: cd sdk && npm run build
+      - run: npm run build
+
+      - name: Zip dist contents
+        run: |
+          cd dist
+          zip -r ../iris-wallet.zip ./*
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: iris-wallet.zip

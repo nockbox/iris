@@ -1146,7 +1146,7 @@ export class Vault {
         );
 
         // Convert to protobuf format for gRPC and broadcast
-        const protobufTx = constructedTx.nockchainTx.toProtobuf();
+        const protobufTx = constructedTx.nockchainTx.toRawTx().toProtobuf();
         await rpcClient.sendTransaction(protobufTx);
 
         return {
@@ -1327,7 +1327,7 @@ export class Vault {
           );
 
           // 7. Broadcast transaction
-          const protobufTx = constructedTx.nockchainTx.toProtobuf();
+          const protobufTx = constructedTx.nockchainTx.toRawTx().toProtobuf();
           await rpcClient.sendTransaction(protobufTx);
 
           // 8. Update tx status to broadcasted
@@ -1449,7 +1449,7 @@ export class Vault {
       const signedTx = builder.build();
 
       // Convert to protobuf for return
-      const protobuf = signedTx.toProtobuf();
+      const protobuf = signedTx.toRawTx().toProtobuf();
 
       return protobuf;
     } finally {
