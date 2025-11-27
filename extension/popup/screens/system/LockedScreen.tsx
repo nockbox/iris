@@ -111,8 +111,8 @@ export function LockedScreen() {
 
   return (
     <div className="h-screen flex items-center justify-center bg-[var(--color-bg)]">
-      <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)]">
-      <div className="flex flex-col justify-between h-full px-4 py-8">
+      <div className="relative w-[357px] h-[calc(max(min(600px,100vh),500px))] bg-[var(--color-bg)]">
+        <div className="flex flex-col justify-between h-full px-4 py-8">
           {/* Main content */}
           <div className="flex flex-col gap-8 w-full">
             {/* Logo and heading */}
@@ -232,17 +232,17 @@ export function LockedScreen() {
           </div>
         </div>
 
-      {/* Reset Confirmation Modal */}
-      <ConfirmModal
-        isOpen={showResetConfirm}
-        title="Reset wallet"
-        message="This will delete your current wallet and all data. You will need to create a new wallet or import an existing one."
-        confirmText="Reset"
-        cancelText="Cancel"
-        onConfirm={confirmResetWallet}
-        onCancel={cancelResetWallet}
-        variant="danger"
-      />
+        {/* Reset Confirmation Modal */}
+        <ConfirmModal
+          isOpen={showResetConfirm}
+          title="Reset wallet"
+          message="This will delete your current wallet and all data. You will need to create a new wallet or import an existing one."
+          confirmText="Reset"
+          cancelText="Cancel"
+          onConfirm={confirmResetWallet}
+          onCancel={cancelResetWallet}
+          variant="danger"
+        />
       </div>
     </div>
   );
