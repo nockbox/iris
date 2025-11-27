@@ -170,9 +170,7 @@ export async function syncAccountUTXOs(
     // This handles the case where inputs were marked spent in a previous sync
     // but the transaction wasn't confirmed (e.g., laptop closed mid-sync)
     let confirmedFromPreviousSpent = 0;
-    const stillPendingTxs = pendingTxs.filter(
-      tx => !areTransactionInputsSpent(tx, diff.nowSpent)
-    );
+    const stillPendingTxs = pendingTxs.filter(tx => !areTransactionInputsSpent(tx, diff.nowSpent));
 
     if (stillPendingTxs.length > 0) {
       // Get fresh notes to check against already-spent inputs
@@ -219,7 +217,9 @@ export async function syncAccountUTXOs(
       });
     }
 
-    const confirmedFromNewSpent = pendingTxs.filter(tx => areTransactionInputsSpent(tx, diff.nowSpent)).length;
+    const confirmedFromNewSpent = pendingTxs.filter(tx =>
+      areTransactionInputsSpent(tx, diff.nowSpent)
+    ).length;
     const summary = {
       newIncoming,
       newChange,

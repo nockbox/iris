@@ -123,7 +123,7 @@ signRawTxBtn.onclick = async () => {
     const txId = rawTx.id;
     log('Transaction ID: ' + txId.value);
 
-    const rawTxProtobuf = rawTx.toProtobuf();
+    const rawTxProtobuf = rawTx.toRawTx().toProtobuf();
 
     // Get notes and spend conditions from builder
     const txNotes = builder.allNotes();
@@ -144,10 +144,9 @@ signRawTxBtn.onclick = async () => {
     // Convert to jam string for file download
     const signedTx = wasm.RawTx.fromProtobuf(signedTxProtobuf);
     const jamBytes = signedTx.toJam();
-    const signedTxJam = new TextDecoder().decode(jamBytes);
 
     // 9. Download to file using transaction ID
-    const blob = new Blob([signedTxJam], { type: 'text/plain' });
+    const blob = new Blob([new Uint8Array(jamBytes)], { type: 'application/jam' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
