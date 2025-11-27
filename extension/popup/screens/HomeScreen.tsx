@@ -701,12 +701,6 @@ export function HomeScreen() {
                     className="font-display font-medium text-[14px] leading-[18px] tracking-[0.14px] m-0"
                     style={{ color: 'var(--color-text-muted)' }}
                   >
-                    No activity yet.
-                  </p>
-                  <p
-                    className="font-display font-medium text-[14px] leading-[18px] tracking-[0.14px] m-0"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
                     {displayBalance === 0
                       ? 'Your wallet is ready to receive NOCK.'
                       : 'Make your first NOCK transaction.'}
