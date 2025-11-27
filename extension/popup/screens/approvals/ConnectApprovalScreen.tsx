@@ -1,6 +1,7 @@
 import { useStore } from '../../store';
 import { ChevronLeftIcon } from '../../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../../components/AccountIcon';
+import { SiteIcon } from '../../components/SiteIcon';
 import { truncateAddress } from '../../utils/format';
 import { send } from '../../utils/messaging';
 import { INTERNAL_METHODS } from '../../../shared/constants';
@@ -54,13 +55,8 @@ export function ConnectApprovalScreen() {
       <div className="px-4 pb-2">
         {/* Site Icon & Info */}
         <div className="text-center mb-4">
-          <div
-            className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-3"
-            style={{ backgroundColor: surface }}
-          >
-            <span className="text-2xl font-bold" style={{ color: textPrimary }}>
-              {domain.charAt(0).toUpperCase()}
-            </span>
+          <div className="mb-3">
+            <SiteIcon origin={origin} domain={domain} size="lg" showSSL={true} />
           </div>
           <h3 className="text-lg font-semibold mb-1" style={{ color: textPrimary }}>
             {domain}

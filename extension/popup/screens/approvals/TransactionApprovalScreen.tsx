@@ -2,6 +2,7 @@ import { useStore } from '../../store';
 import { ChevronLeftIcon } from '../../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../../components/icons/ChevronRightIcon';
 import { AccountIcon } from '../../components/AccountIcon';
+import { SiteIcon } from '../../components/SiteIcon';
 import { truncateAddress } from '../../utils/format';
 import { send } from '../../utils/messaging';
 import {
@@ -67,8 +68,9 @@ export function TransactionApprovalScreen() {
           <span className="text-xs" style={{ color: textMuted }}>
             From
           </span>
+          <SiteIcon origin={origin} domain={displayOrigin} size="sm" showSSL={true} />
           <span
-            className="text-sm font-semibold truncate max-w-[200px]"
+            className="text-sm font-semibold truncate max-w-[160px]"
             style={{ color: textPrimary }}
           >
             {displayOrigin}

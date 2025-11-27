@@ -6,6 +6,7 @@ import { SignRawTxRequest } from '../../../shared/types';
 import { useAutoRejectOnClose } from '../../hooks/useAutoRejectOnClose';
 import { ChevronLeftIcon } from '../../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../../components/AccountIcon';
+import { SiteIcon } from '../../components/SiteIcon';
 import { truncateAddress } from '../../utils/format';
 import { nickToNock, formatNock } from '../../../shared/currency';
 
@@ -149,13 +150,21 @@ export function SignRawTxScreen() {
           <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
             Requesting Site
           </label>
-          <div className="rounded-lg p-3" style={{ backgroundColor: surface }}>
-            <p className="text-sm font-semibold mb-0.5" style={{ color: textPrimary }}>
-              {origin.includes('://') ? new URL(origin).hostname : origin}
-            </p>
-            <p className="text-xs break-all" style={{ color: textMuted }}>
-              {origin}
-            </p>
+          <div className="rounded-lg p-3 flex items-center gap-3" style={{ backgroundColor: surface }}>
+            <SiteIcon 
+              origin={origin} 
+              domain={origin.includes('://') ? new URL(origin).hostname : origin}
+              size="md" 
+              showSSL={true} 
+            />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-semibold mb-0.5" style={{ color: textPrimary }}>
+                {origin.includes('://') ? new URL(origin).hostname : origin}
+              </p>
+              <p className="text-xs break-all" style={{ color: textMuted }}>
+                {origin}
+              </p>
+            </div>
           </div>
         </div>
 
