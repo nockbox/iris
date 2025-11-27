@@ -133,69 +133,52 @@ export function SignRawTxScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
       <div className="w-[357px] max-h-screen flex flex-col" style={{ backgroundColor: bg }}>
-      {/* Header */}
-      <div className="flex items-center justify-center px-4 py-4 shrink-0">
-        <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>
-          Sign Raw Transaction
-        </h2>
-      </div>
-
-      {/* Content */}
-      <div className="px-4 pb-2 flex-1 overflow-y-auto">
-        {/* Site Info */}
-        <div className="mb-3">
-          <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
-            Requesting Site
-          </label>
-          <div className="rounded-lg p-3 flex items-center gap-3" style={{ backgroundColor: surface }}>
-            <SiteIcon 
-              origin={origin} 
-              domain={origin.includes('://') ? new URL(origin).hostname : origin}
-              size="md" 
-              showSSL={true} 
-            />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold mb-0.5" style={{ color: textPrimary }}>
-                {origin.includes('://') ? new URL(origin).hostname : origin}
-              </p>
-              <p className="text-xs break-all" style={{ color: textMuted }}>
-                {origin}
-              </p>
-            </div>
-          </div>
+        {/* Header */}
+        <div className="flex items-center justify-center px-4 py-4 shrink-0">
+          <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>
+            Sign Raw Transaction
+          </h2>
         </div>
 
-        {/* Raw Transaction Content */}
-        <div className="mb-3">
-          <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
-            Inputs ({notes.length})
-          </label>
-          <div className="max-h-48 overflow-y-auto">
-            {notes.map((note: any, index: number) => (
-              <NoteItem
-                key={`input-${index}`}
-                note={note}
-                type="from"
-                textPrimary={textPrimary}
-                textMuted={textMuted}
-                surface={surface}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/* Raw Transaction Outputs */}
-        {outputs && outputs.length > 0 && (
+        {/* Content */}
+        <div className="px-4 pb-2 flex-1 overflow-y-auto">
+          {/* Site Info */}
           <div className="mb-3">
             <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
-              Outputs ({outputs.length})
+              Requesting Site
+            </label>
+            <div
+              className="rounded-lg p-3 flex items-center gap-3"
+              style={{ backgroundColor: surface }}
+            >
+              <SiteIcon
+                origin={origin}
+                domain={origin.includes('://') ? new URL(origin).hostname : origin}
+                size="md"
+                showSSL={true}
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold mb-0.5" style={{ color: textPrimary }}>
+                  {origin.includes('://') ? new URL(origin).hostname : origin}
+                </p>
+                <p className="text-xs break-all" style={{ color: textMuted }}>
+                  {origin}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Raw Transaction Content */}
+          <div className="mb-3">
+            <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+              Inputs ({notes.length})
             </label>
             <div className="max-h-48 overflow-y-auto">
-              {outputs.map((output: any, index: number) => (
+              {notes.map((note: any, index: number) => (
                 <NoteItem
-                  key={`output-${index}`}
-                  note={output}
-                  type="to"
+                  key={`input-${index}`}
+                  note={note}
+                  type="from"
                   textPrimary={textPrimary}
                   textMuted={textMuted}
                   surface={surface}
@@ -203,58 +186,78 @@ export function SignRawTxScreen() {
               ))}
             </div>
           </div>
-        )}
 
-        {/* Network Fee */}
-        <div className="mb-3">
-          <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
-            Network Fee
-          </label>
-          <div className="rounded-lg p-3" style={{ backgroundColor: surface }}>
-            <p className="text-sm font-semibold" style={{ color: textPrimary }}>
-              {formattedFee} NOCK
-            </p>
-          </div>
-        </div>
+          {/* Raw Transaction Outputs */}
+          {outputs && outputs.length > 0 && (
+            <div className="mb-3">
+              <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+                Outputs ({outputs.length})
+              </label>
+              <div className="max-h-48 overflow-y-auto">
+                {outputs.map((output: any, index: number) => (
+                  <NoteItem
+                    key={`output-${index}`}
+                    note={output}
+                    type="to"
+                    textPrimary={textPrimary}
+                    textMuted={textMuted}
+                    surface={surface}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
 
-        {/* Account */}
-        <div>
-          <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
-            Signing Account
-          </label>
-          <div
-            className="rounded-lg p-3 flex items-center gap-2.5"
-            style={{ backgroundColor: surface }}
-          >
-            <AccountIcon
-              styleId={wallet.currentAccount?.iconStyleId}
-              color={wallet.currentAccount?.iconColor}
-              className="w-8 h-8 shrink-0"
-            />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium" style={{ color: textPrimary }}>
-                {wallet.currentAccount?.name || 'Unknown'}
-              </p>
-              <p className="text-xs font-mono mt-0.5" style={{ color: textMuted }}>
-                {truncateAddress(wallet.currentAccount?.address)}
+          {/* Network Fee */}
+          <div className="mb-3">
+            <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+              Network Fee
+            </label>
+            <div className="rounded-lg p-3" style={{ backgroundColor: surface }}>
+              <p className="text-sm font-semibold" style={{ color: textPrimary }}>
+                {formattedFee} NOCK
               </p>
             </div>
           </div>
-        </div>
-      </div>
 
-      {/* Footer Buttons */}
-      <div
-        className="mt-auto px-4 py-2.5 shrink-0 flex gap-3"
-        style={{ borderTop: `1px solid ${divider}` }}
-      >
-        <button onClick={handleDecline} className="btn-secondary flex-1">
-          Decline
-        </button>
-        <button onClick={handleSign} className="btn-primary flex-1">
-          Sign
-        </button>
-      </div>
+          {/* Account */}
+          <div>
+            <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+              Signing Account
+            </label>
+            <div
+              className="rounded-lg p-3 flex items-center gap-2.5"
+              style={{ backgroundColor: surface }}
+            >
+              <AccountIcon
+                styleId={wallet.currentAccount?.iconStyleId}
+                color={wallet.currentAccount?.iconColor}
+                className="w-8 h-8 shrink-0"
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium" style={{ color: textPrimary }}>
+                  {wallet.currentAccount?.name || 'Unknown'}
+                </p>
+                <p className="text-xs font-mono mt-0.5" style={{ color: textMuted }}>
+                  {truncateAddress(wallet.currentAccount?.address)}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer Buttons */}
+        <div
+          className="mt-auto px-4 py-2.5 shrink-0 flex gap-3"
+          style={{ borderTop: `1px solid ${divider}` }}
+        >
+          <button onClick={handleDecline} className="btn-secondary flex-1">
+            Decline
+          </button>
+          <button onClick={handleSign} className="btn-primary flex-1">
+            Sign
+          </button>
+        </div>
       </div>
     </div>
   );

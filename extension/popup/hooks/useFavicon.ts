@@ -1,9 +1,9 @@
 /**
  * useFavicon - Fetch and cache website favicon
- * 
+ *
  * Attempts to load favicon from origin's /favicon.ico
  * Falls back to null if not found (triggers letter avatar fallback)
- * 
+ *
  * Note: We intentionally don't use Google's favicon service because
  * it returns a generic globe icon for unknown sites, which looks worse
  * than a clean letter avatar.
@@ -30,7 +30,7 @@ export function useFavicon(origin: string): string | null {
 
         // Try direct favicon.ico
         const directFavicon = `${domain}/favicon.ico`;
-        
+
         // Test if image loads successfully
         const img = new Image();
         img.onload = () => {

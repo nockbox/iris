@@ -51,7 +51,7 @@ export function SiteIcon({ origin, domain, size = 'lg', showSSL = true }: SiteIc
             src={faviconUrl}
             alt={`${domain} favicon`}
             className="w-full h-full object-cover"
-            onError={(e) => {
+            onError={e => {
               // Hide broken image, show letter fallback
               e.currentTarget.style.display = 'none';
               const parent = e.currentTarget.parentElement;

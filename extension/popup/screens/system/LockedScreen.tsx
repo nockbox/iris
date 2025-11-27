@@ -111,138 +111,138 @@ export function LockedScreen() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg)]">
-      <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)]">
+      <div className="relative w-[357px] h-[calc(min(600px,100vh))] bg-[var(--color-bg)]">
         <div className="flex flex-col justify-between h-full px-4 py-8">
-        {/* Main content */}
-        <div className="flex flex-col gap-8 w-full">
-          {/* Logo and heading */}
-          <div className="flex flex-col items-center gap-3 w-full">
-            <AnimatedLogo />
-            <div className="flex flex-col gap-2 items-center text-center w-full">
-              <h1
-                className="font-serif font-medium text-[var(--color-text-primary)]"
-                style={{
-                  fontSize: 'var(--font-size-xl)',
-                  lineHeight: 'var(--line-height-relaxed)',
-                  letterSpacing: '-0.02em',
-                }}
-              >
-                Welcome back
-              </h1>
-              <p
-                className="font-sans text-[var(--color-text-muted)]"
-                style={{
-                  fontSize: 'var(--font-size-sm)',
-                  lineHeight: 'var(--line-height-snug)',
-                  letterSpacing: '0.02em',
-                }}
-              >
-                Your safe wallet for Nockchain
-              </p>
-            </div>
-          </div>
-
-          {/* Password input and unlock button */}
-          <div className="flex flex-col gap-4 w-full">
-            <div className="flex flex-col gap-1.5 w-full">
-              <label
-                className="font-sans font-medium text-[var(--color-text-primary)]"
-                style={{
-                  fontSize: 'var(--font-size-sm)',
-                  lineHeight: 'var(--line-height-snug)',
-                  letterSpacing: '0.02em',
-                }}
-              >
-                Password
-              </label>
-              <div className="bg-[var(--color-bg)] border border-[var(--color-surface-700)] rounded-lg p-3 flex items-center gap-2.5 h-[52px]">
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => {
-                    setPassword(e.target.value);
-                    setError('');
-                  }}
-                  onKeyDown={e => e.key === 'Enter' && handleUnlock()}
-                  placeholder="Enter your password"
-                  autoFocus
-                  className="flex-1 bg-transparent font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] outline-none"
+          {/* Main content */}
+          <div className="flex flex-col gap-8 w-full">
+            {/* Logo and heading */}
+            <div className="flex flex-col items-center gap-3 w-full">
+              <AnimatedLogo />
+              <div className="flex flex-col gap-2 items-center text-center w-full">
+                <h1
+                  className="font-serif font-medium text-[var(--color-text-primary)]"
                   style={{
-                    fontSize: 'var(--font-size-base)',
-                    lineHeight: 'var(--line-height-snug)',
-                    letterSpacing: '0.01em',
+                    fontSize: 'var(--font-size-xl)',
+                    lineHeight: 'var(--line-height-relaxed)',
+                    letterSpacing: '-0.02em',
                   }}
-                />
-                <button
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
                 >
-                  {showPassword ? (
-                    <EyeOffIcon className="h-4 w-4" />
-                  ) : (
-                    <EyeIcon className="h-4 w-4" />
-                  )}
-                </button>
+                  Welcome back
+                </h1>
+                <p
+                  className="font-sans text-[var(--color-text-muted)]"
+                  style={{
+                    fontSize: 'var(--font-size-sm)',
+                    lineHeight: 'var(--line-height-snug)',
+                    letterSpacing: '0.02em',
+                  }}
+                >
+                  Your safe wallet for Nockchain
+                </p>
               </div>
             </div>
 
-            {/* Error message */}
-            {error && <Alert type="error">{error}</Alert>}
+            {/* Password input and unlock button */}
+            <div className="flex flex-col gap-4 w-full">
+              <div className="flex flex-col gap-1.5 w-full">
+                <label
+                  className="font-sans font-medium text-[var(--color-text-primary)]"
+                  style={{
+                    fontSize: 'var(--font-size-sm)',
+                    lineHeight: 'var(--line-height-snug)',
+                    letterSpacing: '0.02em',
+                  }}
+                >
+                  Password
+                </label>
+                <div className="bg-[var(--color-bg)] border border-[var(--color-surface-700)] rounded-lg p-3 flex items-center gap-2.5 h-[52px]">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={e => {
+                      setPassword(e.target.value);
+                      setError('');
+                    }}
+                    onKeyDown={e => e.key === 'Enter' && handleUnlock()}
+                    placeholder="Enter your password"
+                    autoFocus
+                    className="flex-1 bg-transparent font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] outline-none"
+                    style={{
+                      fontSize: 'var(--font-size-base)',
+                      lineHeight: 'var(--line-height-snug)',
+                      letterSpacing: '0.01em',
+                    }}
+                  />
+                  <button
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]"
+                  >
+                    {showPassword ? (
+                      <EyeOffIcon className="h-4 w-4" />
+                    ) : (
+                      <EyeIcon className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+              </div>
 
-            {/* Unlock button */}
-            <button
-              onClick={handleUnlock}
-              className="w-full h-12 px-5 py-[15px] bg-[var(--color-text-primary)] text-[var(--color-bg)] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90"
+              {/* Error message */}
+              {error && <Alert type="error">{error}</Alert>}
+
+              {/* Unlock button */}
+              <button
+                onClick={handleUnlock}
+                className="w-full h-12 px-5 py-[15px] bg-[var(--color-text-primary)] text-[var(--color-bg)] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90"
+                style={{
+                  fontFamily: 'var(--font-sans)',
+                  fontSize: 'var(--font-size-base)',
+                  fontWeight: 500,
+                  lineHeight: 'var(--line-height-snug)',
+                  letterSpacing: '0.01em',
+                }}
+              >
+                Unlock
+              </button>
+            </div>
+          </div>
+
+          {/* Bottom text with reset link */}
+          <div className="flex flex-col gap-3 items-center text-center w-full">
+            <p
+              className="font-sans text-[var(--color-text-muted)]"
               style={{
-                fontFamily: 'var(--font-sans)',
+                fontSize: 'var(--font-size-sm)',
+                lineHeight: 'var(--line-height-snug)',
+                letterSpacing: '0.02em',
+              }}
+            >
+              Can't login? You can delete your current wallet and create a new one
+            </p>
+            <button
+              onClick={handleResetWallet}
+              className="font-sans font-medium text-[var(--color-text-primary)] underline hover:opacity-80"
+              style={{
                 fontSize: 'var(--font-size-base)',
-                fontWeight: 500,
                 lineHeight: 'var(--line-height-snug)',
                 letterSpacing: '0.01em',
               }}
             >
-              Unlock
+              Reset wallet
             </button>
           </div>
         </div>
 
-        {/* Bottom text with reset link */}
-        <div className="flex flex-col gap-3 items-center text-center w-full">
-          <p
-            className="font-sans text-[var(--color-text-muted)]"
-            style={{
-              fontSize: 'var(--font-size-sm)',
-              lineHeight: 'var(--line-height-snug)',
-              letterSpacing: '0.02em',
-            }}
-          >
-            Can't login? You can delete your current wallet and create a new one
-          </p>
-          <button
-            onClick={handleResetWallet}
-            className="font-sans font-medium text-[var(--color-text-primary)] underline hover:opacity-80"
-            style={{
-              fontSize: 'var(--font-size-base)',
-              lineHeight: 'var(--line-height-snug)',
-              letterSpacing: '0.01em',
-            }}
-          >
-            Reset wallet
-          </button>
-        </div>
-      </div>
-
-      {/* Reset Confirmation Modal */}
-      <ConfirmModal
-        isOpen={showResetConfirm}
-        title="Reset wallet"
-        message="This will delete your current wallet and all data. You will need to create a new wallet or import an existing one."
-        confirmText="Reset"
-        cancelText="Cancel"
-        onConfirm={confirmResetWallet}
-        onCancel={cancelResetWallet}
-        variant="danger"
-      />
+        {/* Reset Confirmation Modal */}
+        <ConfirmModal
+          isOpen={showResetConfirm}
+          title="Reset wallet"
+          message="This will delete your current wallet and all data. You will need to create a new wallet or import an existing one."
+          confirmText="Reset"
+          cancelText="Cancel"
+          onConfirm={confirmResetWallet}
+          onCancel={cancelResetWallet}
+          variant="danger"
+        />
       </div>
     </div>
   );

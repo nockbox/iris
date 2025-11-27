@@ -494,8 +494,8 @@ export function ImportScreen() {
                     letterSpacing: '0.01em',
                   }}
                 >
-                  Only V1 wallets are supported. If you use a secret phrase from V0, this will create
-                  a new V1 wallet.{' '}
+                  Only V1 wallets are supported. If you use a secret phrase from V0, this will
+                  create a new V1 wallet.{' '}
                   <a
                     href="https://iriswallet.io/faq"
                     target="_blank"

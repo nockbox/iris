@@ -41,83 +41,83 @@ export function ConnectApprovalScreen() {
   return (
     <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
       <div className="w-[357px] max-h-screen flex flex-col" style={{ backgroundColor: bg }}>
-      {/* Header */}
-      <div className="flex items-center justify-center px-4 py-4 shrink-0">
-        <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>
-          Connect Request
-        </h2>
-      </div>
-
-      {/* Content */}
-      <div className="px-4 pb-2">
-        {/* Site Icon & Info */}
-        <div className="text-center mb-4">
-          <div className="mb-3">
-            <SiteIcon origin={origin} domain={domain} size="lg" showSSL={true} />
-          </div>
-          <h3 className="text-lg font-semibold mb-1" style={{ color: textPrimary }}>
-            {domain}
-          </h3>
-          <p className="text-xs break-all px-4" style={{ color: textMuted }}>
-            {origin}
-          </p>
+        {/* Header */}
+        <div className="flex items-center justify-center px-4 py-4 shrink-0">
+          <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>
+            Connect Request
+          </h2>
         </div>
 
-        {/* Permissions */}
-        <div className="rounded-lg p-3 mb-3" style={{ backgroundColor: surface }}>
-          <p className="text-sm mb-2 font-medium" style={{ color: textPrimary }}>
-            Requesting permission to:
-          </p>
-          <div className="space-y-1.5">
-            <div className="flex items-start gap-2 text-sm" style={{ color: textPrimary }}>
-              <span style={{ color: green }}>✓</span>
-              <span>View your wallet address</span>
+        {/* Content */}
+        <div className="px-4 pb-2">
+          {/* Site Icon & Info */}
+          <div className="text-center mb-4">
+            <div className="mb-3">
+              <SiteIcon origin={origin} domain={domain} size="lg" showSSL={true} />
             </div>
-            <div className="flex items-start gap-2 text-sm" style={{ color: textPrimary }}>
-              <span style={{ color: green }}>✓</span>
-              <span>Request transaction approvals</span>
+            <h3 className="text-lg font-semibold mb-1" style={{ color: textPrimary }}>
+              {domain}
+            </h3>
+            <p className="text-xs break-all px-4" style={{ color: textMuted }}>
+              {origin}
+            </p>
+          </div>
+
+          {/* Permissions */}
+          <div className="rounded-lg p-3 mb-3" style={{ backgroundColor: surface }}>
+            <p className="text-sm mb-2 font-medium" style={{ color: textPrimary }}>
+              Requesting permission to:
+            </p>
+            <div className="space-y-1.5">
+              <div className="flex items-start gap-2 text-sm" style={{ color: textPrimary }}>
+                <span style={{ color: green }}>✓</span>
+                <span>View your wallet address</span>
+              </div>
+              <div className="flex items-start gap-2 text-sm" style={{ color: textPrimary }}>
+                <span style={{ color: green }}>✓</span>
+                <span>Request transaction approvals</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Account */}
+          <div>
+            <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+              Connecting Account
+            </label>
+            <div
+              className="rounded-lg p-3 flex items-center gap-2.5"
+              style={{ backgroundColor: surface }}
+            >
+              <AccountIcon
+                styleId={wallet.currentAccount?.iconStyleId}
+                color={wallet.currentAccount?.iconColor}
+                className="w-8 h-8 shrink-0"
+              />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-medium" style={{ color: textPrimary }}>
+                  {wallet.currentAccount?.name || 'Unknown'}
+                </p>
+                <p className="text-xs font-mono mt-0.5" style={{ color: textMuted }}>
+                  {truncateAddress(wallet.currentAccount?.address)}
+                </p>
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Account */}
-        <div>
-          <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
-            Connecting Account
-          </label>
-          <div
-            className="rounded-lg p-3 flex items-center gap-2.5"
-            style={{ backgroundColor: surface }}
-          >
-            <AccountIcon
-              styleId={wallet.currentAccount?.iconStyleId}
-              color={wallet.currentAccount?.iconColor}
-              className="w-8 h-8 shrink-0"
-            />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium" style={{ color: textPrimary }}>
-                {wallet.currentAccount?.name || 'Unknown'}
-              </p>
-              <p className="text-xs font-mono mt-0.5" style={{ color: textMuted }}>
-                {truncateAddress(wallet.currentAccount?.address)}
-              </p>
-            </div>
-          </div>
+        {/* Footer Buttons */}
+        <div
+          className="mt-auto px-4 py-2.5 shrink-0 flex gap-3"
+          style={{ borderTop: `1px solid ${divider}` }}
+        >
+          <button onClick={handleReject} className="btn-secondary flex-1">
+            Cancel
+          </button>
+          <button onClick={handleConnect} className="btn-primary flex-1">
+            Connect
+          </button>
         </div>
-      </div>
-
-      {/* Footer Buttons */}
-      <div
-        className="mt-auto px-4 py-2.5 shrink-0 flex gap-3"
-        style={{ borderTop: `1px solid ${divider}` }}
-      >
-        <button onClick={handleReject} className="btn-secondary flex-1">
-          Cancel
-        </button>
-        <button onClick={handleConnect} className="btn-primary flex-1">
-          Connect
-        </button>
-      </div>
       </div>
     </div>
   );
