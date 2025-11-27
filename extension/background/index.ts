@@ -306,7 +306,6 @@ async function emitWalletEvent(eventType: string, data: unknown) {
   await loadApprovedOrigins();
   await vault.init(); // Load encrypted vault header to detect vault existence
   scheduleAlarm();
-
 })();
 
 // Clean up approval window ID when window is closed

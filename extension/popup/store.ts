@@ -391,7 +391,8 @@ export const useStore = create<AppStore>((set, get) => ({
           console.warn(`[Store] Could not get balance for ${account.name}:`, err);
           // Keep previous balance if fetch fails
           accountBalances[account.address] = get().wallet.accountBalances[account.address] ?? 0;
-          accountSpendableBalances[account.address] = get().wallet.accountSpendableBalances[account.address] ?? 0;
+          accountSpendableBalances[account.address] =
+            get().wallet.accountSpendableBalances[account.address] ?? 0;
         }
       }
 

@@ -128,7 +128,7 @@ export interface ConstructedTransaction {
   /** Transaction version */
   version: number;
   /** Raw transaction object (for additional operations) */
-  nockchainTx: wasm.RawTx;
+  nockchainTx: wasm.NockchainTx;
   /** Fee used in the transaction (in nicks) */
   feeUsed: number;
 }
