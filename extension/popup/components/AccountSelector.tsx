@@ -79,7 +79,7 @@ export function AccountSelector() {
   function handleImportWallet() {
     // Show warning - importing will replace current wallet
     const confirmed = confirm(
-      'WARNING: Importing a wallet will replace your current wallet. Make sure you have backed up your current recovery phrase. Continue?'
+      'WARNING: Importing a wallet will replace your current wallet. Make sure you have backed up your current secret phrase. Continue?'
     );
     if (confirmed) {
       navigate('onboarding-import');

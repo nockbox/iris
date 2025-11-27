@@ -1,7 +1,7 @@
 /**
  * Onboarding State Management
  * Handles persisting and retrieving onboarding progress to ensure users
- * complete their seed phrase backup even if they close the popup mid-flow.
+ * complete their secret phrase backup even if they close the popup mid-flow.
  */
 
 import { STORAGE_KEYS } from './constants';
@@ -10,7 +10,7 @@ import { STORAGE_KEYS } from './constants';
  * Onboarding state stored in chrome.storage.local
  */
 export interface OnboardingState {
-  /** Whether seed phrase backup has been completed */
+  /** Whether secret phrase backup has been completed */
   completed: boolean;
   /** Current onboarding step (only present if not completed) */
   step?: 'backup' | 'verify';
@@ -30,7 +30,7 @@ export async function setOnboardingInProgress(): Promise<void> {
 
 /**
  * Mark onboarding as complete
- * Called when user successfully verifies their seed phrase
+ * Called when user successfully verifies their secret phrase
  */
 export async function markOnboardingComplete(): Promise<void> {
   const state: OnboardingState = {

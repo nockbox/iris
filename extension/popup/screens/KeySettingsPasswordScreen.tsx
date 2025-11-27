@@ -46,7 +46,7 @@ export function KeySettingsPasswordScreen() {
         navigate('view-secret-phrase');
       }
     } catch (err) {
-      setError('Failed to retrieve seed phrase');
+      setError('Failed to retrieve secret phrase');
       console.error('Failed to get mnemonic:', err);
     } finally {
       setIsLoading(false);

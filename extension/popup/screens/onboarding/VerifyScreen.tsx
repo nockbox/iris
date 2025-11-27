@@ -8,7 +8,7 @@ import { Alert } from '../../components/Alert';
 import lockIcon from '../../assets/lock-icon.svg';
 
 /**
- * Generates 6 unique random positions from 0-23 for seed phrase verification
+ * Generates 6 unique random positions from 0-23 for secret phrase verification
  */
 function generateRandomPositions(): number[] {
   const positions = Array.from({ length: 24 }, (_, i) => i);
@@ -64,7 +64,7 @@ export function VerifyScreen() {
       setOnboardingMnemonic(null);
       navigate('onboarding-success');
     } else {
-      setError('One or more words are incorrect. Please check your recovery phrase and try again.');
+      setError('One or more words are incorrect. Please check your secret phrase and try again.');
     }
   }
 
@@ -99,7 +99,7 @@ export function VerifyScreen() {
             letterSpacing: '0.01em',
           }}
         >
-          Save your recovery phrase
+          Save your secret phrase
         </h2>
         <div className="w-8" /> {/* Spacer for centering */}
       </div>
@@ -121,7 +121,7 @@ export function VerifyScreen() {
                   letterSpacing: '-0.02em',
                 }}
               >
-                Verify recovery phrase.
+                Verify secret phrase.
               </h1>
               <p
                 className="font-sans text-[var(--color-text-muted)]"

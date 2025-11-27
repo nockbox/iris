@@ -107,7 +107,7 @@ export function ResumeBackupScreen() {
               color: 'var(--color-text-muted)',
             }}
           >
-            You need to backup your recovery phrase to secure your wallet. Enter your password to
+            You need to backup your secret phrase to secure your wallet. Enter your password to
             continue.
           </p>
 
@@ -121,7 +121,7 @@ export function ResumeBackupScreen() {
                 color: 'var(--color-red)',
               }}
             >
-              <strong>Important:</strong> Without backing up your recovery phrase, you risk losing
+              <strong>Important:</strong> Without backing up your secret phrase, you risk losing
               access to your wallet if you forget your password.
             </p>
           </div>

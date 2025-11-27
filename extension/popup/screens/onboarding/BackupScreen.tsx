@@ -62,7 +62,7 @@ export function BackupScreen() {
             letterSpacing: '0.01em',
           }}
         >
-          Save your recovery phrase
+          Save your secret phrase
         </h2>
         <div className="w-8" /> {/* Spacer for centering */}
       </div>
@@ -89,7 +89,7 @@ export function BackupScreen() {
             </h1>
           </div>
 
-          {/* Recovery phrase section */}
+          {/* Secret phrase section */}
           <div className="flex flex-col gap-3">
             {/* Warning box */}
             <div className="bg-[var(--color-surface-900)] rounded-lg p-3">
@@ -105,7 +105,7 @@ export function BackupScreen() {
               </p>
             </div>
 
-            {/* Recovery phrase grid */}
+            {/* Secret phrase grid */}
             <div className="relative">
               <div className="grid grid-cols-2 gap-2">
                 {words.map((word, index) => (
@@ -159,7 +159,7 @@ export function BackupScreen() {
                   ? 'bg-[var(--color-primary)]'
                   : 'bg-transparent border-2 border-[var(--color-surface-700)]'
               }`}
-              aria-label="Confirm you've written down the recovery phrase"
+              aria-label="Confirm you've written down the secret phrase"
             >
               {hasConfirmed && (
                 <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -181,7 +181,7 @@ export function BackupScreen() {
                 letterSpacing: '0.02em',
               }}
             >
-              I've securely written down all 24 words of my recovery phrase
+              I've securely written down all 24 words of my secret phrase
             </p>
           </div>
         </div>
@@ -201,7 +201,7 @@ export function BackupScreen() {
               letterSpacing: '0.01em',
             }}
           >
-            Show seed phrase
+            Show secret phrase
           </button>
         ) : (
           <div className="flex gap-3">

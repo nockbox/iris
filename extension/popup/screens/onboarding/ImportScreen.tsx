@@ -121,7 +121,7 @@ export function ImportScreen() {
 
     if (result?.error) {
       if (result.error === ERROR_CODES.INVALID_MNEMONIC) {
-        setError('Invalid recovery phrase. Please check your words and try again.');
+        setError('Invalid secret phrase. Please check your words and try again.');
       } else {
         setError(`Error: ${result.error}`);
       }
@@ -470,7 +470,7 @@ export function ImportScreen() {
                   letterSpacing: '0.01em',
                 }}
               >
-                Enter your 24-word recovery phrase.
+                Enter your 24-word secret phrase.
                 <br />
                 Paste into first field to auto-fill all words.
               </p>
@@ -494,7 +494,7 @@ export function ImportScreen() {
                     letterSpacing: '0.01em',
                   }}
                 >
-                  Only V1 wallets are supported. If you use a seed phrase from V0, this will create
+                  Only V1 wallets are supported. If you use a secret phrase from V0, this will create
                   a new V1 wallet.{' '}
                   <a
                     href="https://iriswallet.io/faq"

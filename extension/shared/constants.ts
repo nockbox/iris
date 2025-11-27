@@ -198,7 +198,7 @@ export const STORAGE_KEYS = {
   /** Auto-lock timeout in minutes */
   AUTO_LOCK_MINUTES: 'autoLockMinutes',
 
-  /** Onboarding state - tracks whether seed phrase backup is complete */
+  /** Onboarding state - tracks whether secret phrase backup is complete */
   ONBOARDING_STATE: 'onboardingState',
 
   /** Array of approved origins (websites that can access wallet) */
@@ -287,7 +287,7 @@ export const USER_ACTIVITY_METHODS = new Set([
   INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING,
   INTERNAL_METHODS.HIDE_ACCOUNT,
   INTERNAL_METHODS.SET_AUTO_LOCK,
-  INTERNAL_METHODS.GET_MNEMONIC, // Viewing recovery phrase is user activity
+  INTERNAL_METHODS.GET_MNEMONIC, // Viewing secret phrase is user activity
 ]);
 
 /**

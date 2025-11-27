@@ -1,5 +1,5 @@
 /**
- * Recovery Phrase Screen - View wallet's secret recovery phrase
+ * Recovery Phrase Screen - View wallet's secret phrase
  * Requires password confirmation for security
  */
 
@@ -64,19 +64,19 @@ export function RecoveryPhraseScreen() {
           >
             <ChevronLeftIcon />
           </button>
-          <h2 className="text-xl font-semibold">View Recovery Phrase</h2>
+          <h2 className="text-xl font-semibold">View Secret Phrase</h2>
         </div>
 
         <div
           className="mb-6 p-3 rounded-lg"
           style={{ backgroundColor: 'var(--color-red-light)', color: 'var(--color-red)' }}
         >
-          <strong>Warning:</strong> Never share your recovery phrase with anyone. Anyone with access
+          <strong>Warning:</strong> Never share your secret phrase with anyone. Anyone with access
           to this phrase can access your funds.
         </div>
 
         <p className="text-sm mb-4" style={{ color: 'var(--color-text-muted)' }}>
-          Enter your password to reveal your 24-word secret recovery phrase.
+          Enter your password to reveal your 24-word secret phrase.
         </p>
 
         <input
@@ -114,7 +114,7 @@ export function RecoveryPhraseScreen() {
           style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
         >
           <EyeIcon className="w-4 h-4 inline mr-2" />
-          Reveal Recovery Phrase
+          Reveal Secret Phrase
         </button>
 
         <button
@@ -130,7 +130,7 @@ export function RecoveryPhraseScreen() {
     );
   }
 
-  // Recovery phrase display view
+  // Secret phrase display view
   return (
     <div
       className="w-[357px] h-[600px] flex flex-col p-4"
@@ -145,7 +145,7 @@ export function RecoveryPhraseScreen() {
         >
           <ChevronLeftIcon />
         </button>
-        <h2 className="text-xl font-semibold">Secret Recovery Phrase</h2>
+        <h2 className="text-xl font-semibold">Secret Phrase</h2>
       </div>
 
       <div

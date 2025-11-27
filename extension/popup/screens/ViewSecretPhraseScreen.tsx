@@ -7,8 +7,8 @@ import { exportKeyfile, downloadKeyfile } from '../../shared/keyfile';
 import { Alert } from '../components/Alert';
 
 /**
- * ViewSecretPhraseScreen - Display user's 24-word recovery phrase
- * Shows mnemonic seed phrase with security warnings and reveal functionality
+ * ViewSecretPhraseScreen - Display user's 24-word secret phrase
+ * Shows mnemonic secret phrase with security warnings and reveal functionality
  */
 export function ViewSecretPhraseScreen() {
   const { navigate, onboardingMnemonic, setOnboardingMnemonic } = useStore();
@@ -17,8 +17,8 @@ export function ViewSecretPhraseScreen() {
   const [isExporting, setIsExporting] = useState(false);
   const [copiedSeed, setCopiedSeed] = useState(false);
 
-  // Get seed phrase from temporary store (set by KeySettingsPasswordScreen)
-  const seedPhrase = onboardingMnemonic ? onboardingMnemonic.split(' ') : [];
+  // Get secret phrase from temporary store (set by KeySettingsPasswordScreen)
+  const secretPhrase = onboardingMnemonic ? onboardingMnemonic.split(' ') : [];
 
   function handleBack() {
     // Clear mnemonic from memory when leaving screen
@@ -30,14 +30,14 @@ export function ViewSecretPhraseScreen() {
     setIsRevealed(true);
   }
 
-  async function handleCopySeedPhrase() {
+  async function handleCopySecretPhrase() {
     if (onboardingMnemonic) {
       try {
         await navigator.clipboard.writeText(onboardingMnemonic);
         setCopiedSeed(true);
         setTimeout(() => setCopiedSeed(false), 2000);
       } catch (err) {
-        console.error('Failed to copy seed phrase:', err);
+        console.error('Failed to copy secret phrase:', err);
       }
     }
   }
@@ -115,7 +115,7 @@ export function ViewSecretPhraseScreen() {
             {isExporting ? 'Downloading...' : 'Download keyfile'}
           </button>
 
-          {/* Seed Phrase Grid */}
+          {/* Secret Phrase Grid */}
           <div className="relative flex flex-col gap-2">
             {/* 12 rows of 2 words each */}
             {[0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22].map(startIndex => (
@@ -138,7 +138,7 @@ export function ViewSecretPhraseScreen() {
                       </span>
                     </div>
                     <span className="font-sans font-medium text-sm tracking-[0.14px] leading-[18px] flex-1">
-                      {seedPhrase[startIndex]}
+                      {secretPhrase[startIndex]}
                     </span>
                   </div>
                 </div>
@@ -161,7 +161,7 @@ export function ViewSecretPhraseScreen() {
                       </span>
                     </div>
                     <span className="font-sans font-medium text-sm tracking-[0.14px] leading-[18px] flex-1">
-                      {seedPhrase[startIndex + 1]}
+                      {secretPhrase[startIndex + 1]}
                     </span>
                   </div>
                 </div>
@@ -188,7 +188,7 @@ export function ViewSecretPhraseScreen() {
         style={{ borderTop: '1px solid var(--color-divider)', backgroundColor: 'var(--color-bg)' }}
       >
         <button
-          onClick={isRevealed ? handleCopySeedPhrase : handleReveal}
+          onClick={isRevealed ? handleCopySecretPhrase : handleReveal}
           disabled={copiedSeed}
           className="w-full h-12 rounded-lg font-sans font-medium text-sm tracking-[0.14px] leading-[18px] transition-opacity hover:opacity-90 flex items-center justify-center gap-2"
           style={{
@@ -197,7 +197,7 @@ export function ViewSecretPhraseScreen() {
           }}
         >
           {copiedSeed && <CheckIcon className="w-5 h-5" />}
-          {!isRevealed ? 'Show seed phrase' : copiedSeed ? 'Copied!' : 'Copy Seed Phrase'}
+          {!isRevealed ? 'Show secret phrase' : copiedSeed ? 'Copied!' : 'Copy Secret Phrase'}
         </button>
       </div>
 
