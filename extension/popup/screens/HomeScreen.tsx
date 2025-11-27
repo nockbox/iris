@@ -529,7 +529,7 @@ export function HomeScreen() {
         >
           <div className="mb-3">
             <div className="flex items-baseline gap-[6px]">
-              {!isInitialized ? (
+              {!isInitialized || (isBalanceFetching && wallet.balance === 0) ? (
                 <>
                   <div className="h-[40px] w-32 rounded skeleton-shimmer" />
                   <div className="h-[28px] w-16 rounded skeleton-shimmer" />
@@ -580,7 +580,7 @@ export function HomeScreen() {
               </button>
             </div>
             <div className="mt-1 text-[13px] font-medium leading-[18px] flex items-center gap-1">
-              {isPriceFetching ? (
+              {isPriceFetching || (isBalanceFetching && wallet.balance === 0) ? (
                 <div className="h-[14px] w-36 rounded skeleton-shimmer" />
               ) : (
                 <>

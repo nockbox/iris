@@ -28,9 +28,10 @@ export function SuccessScreen() {
 
   const formattedAddress = formatAddress(wallet.address || '');
 
-  async function handleStartUsing() {
-    // Fetch balance before navigating to home screen
-    await fetchBalance();
+  function handleStartUsing() {
+    // Start fetching balance in background (non-blocking)
+    fetchBalance();
+    // Navigate immediately - HomeScreen will show loading state
     navigate('home');
   }
 
