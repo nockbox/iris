@@ -128,7 +128,7 @@ export interface ConstructedTransaction {
   /** Transaction version */
   version: number;
   /** Raw transaction object (for additional operations) */
-  rawTx: wasm.RawTx;
+  nockchainTx: wasm.RawTx;
   /** Fee used in the transaction (in nicks) */
   feeUsed: number;
 }
@@ -216,12 +216,12 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   const feeUsed = Number(builder.curFee());
 
   // Build the final transaction
-  const rawTx = builder.build();
+  const nockchainTx = builder.build();
 
   return {
-    txId: rawTx.id.value,
+    txId: nockchainTx.id.value,
     version: 1, // V1 only
-    rawTx,
+    nockchainTx,
     feeUsed,
   };
 }

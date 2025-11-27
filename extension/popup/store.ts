@@ -275,7 +275,9 @@ export const useStore = create<AppStore>((set, get) => ({
       const cachedBalances = (stored[STORAGE_KEYS.CACHED_BALANCES] || {}) as Record<string, number>;
 
       // Initial wallet state with confirmed balances (available balance computed after TX fetch)
-      const confirmedBalance = state.currentAccount ? cachedBalances[state.currentAccount.address] || 0 : 0;
+      const confirmedBalance = state.currentAccount
+        ? cachedBalances[state.currentAccount.address] || 0
+        : 0;
       const walletState: WalletState = {
         locked: state.locked,
         address: state.address || null,

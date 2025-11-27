@@ -5,12 +5,7 @@
  * It's purely functional, making it easy to test.
  */
 
-import type {
-  StoredNote,
-  FetchedUTXO,
-  UTXODiff,
-  WalletTransaction,
-} from './types';
+import type { StoredNote, FetchedUTXO, UTXODiff, WalletTransaction } from './types';
 
 /**
  * Compute the diff between local UTXO store and fetched chain state
@@ -115,20 +110,14 @@ export function classifyNewUTXO(
 /**
  * Filter notes by state
  */
-export function filterNotesByState(
-  notes: StoredNote[],
-  state: StoredNote['state']
-): StoredNote[] {
+export function filterNotesByState(notes: StoredNote[], state: StoredNote['state']): StoredNote[] {
   return notes.filter(n => n.state === state);
 }
 
 /**
  * Get notes that are locked by a specific transaction
  */
-export function getNotesForTransaction(
-  notes: StoredNote[],
-  walletTxId: string
-): StoredNote[] {
+export function getNotesForTransaction(notes: StoredNote[], walletTxId: string): StoredNote[] {
   return notes.filter(n => n.pendingTxId === walletTxId);
 }
 
@@ -139,10 +128,7 @@ export function getNotesForTransaction(
  * @param maxAgeMs - Maximum age in milliseconds before considered expired
  * @returns Notes that have been pending too long
  */
-export function findExpiredNotes(
-  notes: StoredNote[],
-  maxAgeMs: number
-): StoredNote[] {
+export function findExpiredNotes(notes: StoredNote[], maxAgeMs: number): StoredNote[] {
   const now = Date.now();
   return notes.filter(note => {
     if (note.state !== 'in_flight') {
@@ -187,10 +173,7 @@ export function findExpiredTransactions(
  * @param nowSpent - Notes that are no longer on chain
  * @returns true if all inputs are spent
  */
-export function areTransactionInputsSpent(
-  tx: WalletTransaction,
-  nowSpent: StoredNote[]
-): boolean {
+export function areTransactionInputsSpent(tx: WalletTransaction, nowSpent: StoredNote[]): boolean {
   if (!tx.inputNoteIds || tx.inputNoteIds.length === 0) {
     return false;
   }
