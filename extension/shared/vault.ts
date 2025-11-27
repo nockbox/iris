@@ -61,8 +61,6 @@ async function convertNoteForTxBuilder(note: BalanceNote, ownerPKH: string): Pro
   }
 
   if (note.noteDataHashBase58) {
-    // Use pre-computed noteDataHash from RPC response
-    console.log('[Vault] Using pre-computed noteDataHash from RPC response');
     noteDataHash = note.noteDataHashBase58;
   } else {
     // Fallback - use protoNote for Note.fromProtobuf()
@@ -229,9 +227,7 @@ export class Vault {
     // Use first preset style for consistent initial experience
     const firstPreset = PRESET_WALLET_STYLES[0];
 
-    console.log('[Vault.setup] Deriving address from master key...');
     const masterAddress = await deriveAddressFromMaster(words);
-    console.log('[Vault.setup] Got master address:', masterAddress);
 
     const firstAccount: Account = {
       name: 'Wallet 1',
@@ -685,16 +681,8 @@ export class Vault {
       // Create RPC client
       const rpcClient = createBrowserClient();
 
-      console.log('[Vault] Querying balance for', currentAccount.address.slice(0, 20) + '...');
-
       // Query balance using V1 balance query (derives first-names automatically)
       const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
-
-      console.log('[Vault]  Balance retrieved:', {
-        totalNock: balanceResult.totalNock,
-        totalNicks: balanceResult.totalNicks.toString(),
-        utxoCount: balanceResult.utxoCount,
-      });
 
       return {
         totalNock: balanceResult.totalNock,
@@ -847,26 +835,14 @@ export class Vault {
     try {
       // Create RPC client
       const rpcClient = createBrowserClient();
-
-      console.log('[Vault] Fetching UTXOs for', currentAccount.address.slice(0, 20) + '...');
       const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
       if (balanceResult.utxoCount === 0) {
         throw new Error('No UTXOs available. Your wallet may have zero balance.');
       }
 
-      console.log(
-        `[Vault] Found ${balanceResult.utxoCount} UTXOs (${balanceResult.simpleNotes.length} simple, ${balanceResult.coinbaseNotes.length} coinbase)`
-      );
-
       // Combine simple and coinbase notes
       const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
-
-      // Calculate total available
-      const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
-      console.log(
-        `[Vault] Passing ${notes.length} UTXO(s) to WASM (total: ${totalAvailable} nicks, need: ${amount} + fee)`
-      );
 
       // Convert ALL notes to transaction builder format
       // WASM will automatically select the minimum number needed
@@ -937,8 +913,6 @@ export class Vault {
 
       try {
         const rpcClient = createBrowserClient();
-
-        console.log('[Vault] Fetching UTXOs for fee estimation...');
         const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
         if (balanceResult.utxoCount === 0) {
@@ -946,21 +920,9 @@ export class Vault {
         }
 
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
-        const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
 
         // Sort UTXOs largest to smallest (WASM will select which ones to use)
-        // This gives WASM the best options first for optimal selection
         const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
-
-        console.log(
-          '[Vault] Passing all UTXOs to WASM for fee estimation (sorted largest first):',
-          {
-            totalUTXOs: sortedNotes.length,
-            utxoSizes: sortedNotes.map(n => (n.assets / 65536).toFixed(2) + ' NOCK'),
-            totalAvailableNOCK: (totalAvailable / 65536).toFixed(2),
-            amountNeeded: (amount / 65536).toFixed(2) + ' NOCK',
-          }
-        );
 
         // Convert ALL notes to transaction builder format
         // WASM will automatically select the optimal inputs
@@ -980,16 +942,7 @@ export class Vault {
         );
 
         // Get the calculated fee from the builder
-        const feeNicks = constructedTx.feeUsed;
-        const feeNOCK = feeNicks / 65536;
-
-        console.log('[Vault] Fee calculation result:', {
-          feeNicks,
-          feeNOCK: feeNOCK.toFixed(2),
-          feePercentOfAmount: ((feeNicks / amount) * 100).toFixed(1) + '%',
-        });
-
-        return { fee: feeNicks };
+        return { fee: constructedTx.feeUsed };
       } finally {
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
@@ -1048,8 +1001,6 @@ export class Vault {
 
       try {
         const rpcClient = createBrowserClient();
-
-        console.log('[Vault] Fetching UTXOs for max send estimation...');
         const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
         if (balanceResult.utxoCount === 0) {
@@ -1058,11 +1009,6 @@ export class Vault {
 
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
         const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
-
-        console.log('[Vault] Max send estimation:', {
-          totalUTXOs: notes.length,
-          totalAvailableNOCK: (totalAvailable / NOCK_TO_NICKS).toFixed(2),
-        });
 
         // Convert ALL notes to transaction builder format
         const txBuilderNotes = await Promise.all(
@@ -1079,11 +1025,6 @@ export class Vault {
         // Amount that requires all notes: total minus half the smallest note
         // This ensures WASM cannot satisfy the amount without using every note
         const estimationAmount = totalAvailable - Math.floor(smallestNote / 2);
-
-        console.log('[Vault] Max estimation forcing all notes:', {
-          smallestNoteNOCK: (smallestNote / NOCK_TO_NICKS).toFixed(2),
-          estimationAmountNOCK: (estimationAmount / NOCK_TO_NICKS).toFixed(2),
-        });
 
         if (estimationAmount <= 0) {
           return { error: 'Balance too low to send. Need more than fee amount.' };
@@ -1105,13 +1046,6 @@ export class Vault {
         if (maxAmount <= 0) {
           return { error: 'Balance too low. Fee would exceed available funds.' };
         }
-
-        console.log('[Vault] Max send calculation:', {
-          totalAvailableNOCK: (totalAvailable / NOCK_TO_NICKS).toFixed(4),
-          feeNOCK: (fee / NOCK_TO_NICKS).toFixed(4),
-          maxAmountNOCK: (maxAmount / NOCK_TO_NICKS).toFixed(4),
-          utxoCount: notes.length,
-        });
 
         return {
           maxAmount,
@@ -1181,29 +1115,15 @@ export class Vault {
       try {
         // Create RPC client
         const rpcClient = createBrowserClient();
-
-        console.log('[Vault] Fetching UTXOs for transaction...');
         const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
         if (balanceResult.utxoCount === 0) {
           return { error: 'No UTXOs available. Your wallet may have zero balance.' };
         }
 
-        console.log(`[Vault] Found ${balanceResult.utxoCount} UTXOs`);
-
         // Combine simple and coinbase notes
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
         const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
-
-        console.log('[Vault] Passing all UTXOs to WASM (sorted largest first):', {
-          totalUTXOs: sortedNotes.length,
-          utxoSizes: sortedNotes.map(n => (n.assets / 65536).toFixed(2) + ' NOCK'),
-          totalAvailableNOCK: (sortedNotes.reduce((sum, n) => sum + n.assets, 0) / 65536).toFixed(
-            2
-          ),
-          amountNeeded: (amount / 65536).toFixed(2) + ' NOCK',
-          feeProvided: fee ? (fee / 65536).toFixed(2) + ' NOCK' : 'auto',
-        });
 
         // Convert ALL notes to transaction builder format
         // WASM will automatically select the optimal inputs
@@ -1212,15 +1132,6 @@ export class Vault {
         );
 
         // Build and sign the transaction
-        console.log('[Vault] Building transaction with params:', {
-          recipientPKH: to.slice(0, 20) + '...',
-          availableInputs: txBuilderNotes.length,
-          amount,
-          fee: fee !== undefined ? fee : 'auto-calculated by WASM',
-          senderPublicKey: base58.encode(accountKey.publicKey).slice(0, 20) + '...',
-        });
-
-        // Always use buildMultiNotePayment - it handles both single and multiple notes
         // WASM will automatically select the minimum number of notes needed
         const constructedTx = await buildMultiNotePayment(
           txBuilderNotes,
@@ -1231,73 +1142,9 @@ export class Vault {
           fee
         );
 
-        console.log('[Vault] Transaction signed:', constructedTx.txId);
-        console.log('[Vault] Transaction version:', constructedTx.version);
-        console.log('[Vault] wasm.RawTx object keys:', Object.keys(constructedTx.rawTx));
-
-        // Convert to protobuf format for gRPC
+        // Convert to protobuf format for gRPC and broadcast
         const protobufTx = constructedTx.rawTx.toProtobuf();
-        console.log('[Vault] Protobuf tx object keys:', Object.keys(protobufTx));
-        console.log(
-          '[Vault] Protobuf tx sample:',
-          JSON.stringify(protobufTx).slice(0, 200) + '...'
-        );
-
-        // DEBUG: Log the spend details
-        if (protobufTx.spends && protobufTx.spends.length > 0) {
-          const spendEntry = protobufTx.spends[0];
-          console.log('[Vault] First spend entry:', {
-            spendEntryKeys: Object.keys(spendEntry),
-            hasName: !!spendEntry.name,
-            hasSpend: !!spendEntry.spend,
-            name: spendEntry.name
-              ? {
-                  first: spendEntry.name.first?.slice(0, 20) + '...',
-                  last: spendEntry.name.last?.slice(0, 20) + '...',
-                }
-              : 'missing',
-          });
-
-          if (spendEntry.spend) {
-            console.log('[Vault] Spend object:', {
-              spendKeys: Object.keys(spendEntry.spend),
-              hasWitness: !!spendEntry.spend.witness,
-              hasLegacy: !!spendEntry.spend.legacy,
-              spend_kind: spendEntry.spend.spend_kind,
-            });
-
-            // Check if spend_kind contains the actual spend data
-            if (spendEntry.spend.spend_kind) {
-              console.log('[Vault] Spend kind:', {
-                spendKindKeys: Object.keys(spendEntry.spend.spend_kind),
-                hasWitness: !!spendEntry.spend.spend_kind.witness,
-                hasLegacy: !!spendEntry.spend.spend_kind.legacy,
-              });
-
-              if (spendEntry.spend.spend_kind.witness) {
-                console.log('[Vault] Witness spend:', {
-                  witnessKeys: Object.keys(spendEntry.spend.spend_kind.witness),
-                  seedCount: spendEntry.spend.spend_kind.witness.seeds?.length || 0,
-                  fee: spendEntry.spend.spend_kind.witness.fee,
-                });
-              }
-            }
-
-            if (spendEntry.spend.witness) {
-              console.log('[Vault] Witness spend (direct):', {
-                witnessKeys: Object.keys(spendEntry.spend.witness),
-                seedCount: spendEntry.spend.witness.seeds?.length || 0,
-                fee: spendEntry.spend.witness.fee,
-              });
-            }
-          }
-        }
-
-        // Broadcast the transaction to the network
-        console.log('[Vault] Broadcasting transaction...');
-        const broadcastTxId = await rpcClient.sendTransaction(protobufTx);
-
-        console.log('[Vault]  Transaction broadcasted successfully:', broadcastTxId);
+        await rpcClient.sendTransaction(protobufTx);
 
         return {
           txId: constructedTx.txId,
@@ -1385,9 +1232,6 @@ export class Vault {
           }
 
           const totalAvailable = availableStoredNotes.reduce((sum, n) => sum + n.assets, 0);
-          console.log(
-            `[Vault V2] Available: ${availableStoredNotes.length} UTXOs, ${(totalAvailable / NOCK_TO_NICKS).toFixed(2)} NOCK`
-          );
 
           // 2. Estimate fee if not provided (rough estimate: 2 NOCK should cover most cases)
           const estimatedFee = fee ?? 2 * NOCK_TO_NICKS;
@@ -1399,9 +1243,6 @@ export class Vault {
             // SEND MAX: Use ALL available UTXOs, no change back to sender
             selectedStoredNotes = availableStoredNotes;
             expectedChange = 0; // All goes to recipient (minus fee)
-            console.log(
-              `[Vault V2] SEND MAX: Using all ${selectedStoredNotes.length} UTXOs (${(totalAvailable / NOCK_TO_NICKS).toFixed(2)} NOCK)`
-            );
           } else {
             // NORMAL: Select only notes needed for amount + fee
             const targetAmount = amount + estimatedFee;
@@ -1416,10 +1257,6 @@ export class Vault {
             selectedStoredNotes = selected;
             const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
             expectedChange = selectedTotal - amount - estimatedFee;
-
-            console.log(
-              `[Vault V2] Selected ${selectedStoredNotes.length} notes (${(selectedTotal / NOCK_TO_NICKS).toFixed(2)} NOCK) for tx ${walletTxId.slice(0, 8)}...`
-            );
           }
 
           selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
@@ -1473,14 +1310,6 @@ export class Vault {
             sortedFreshNotes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
           );
 
-          console.log('[Vault V2] Building transaction with fresh notes:', {
-            inputs: txBuilderNotes.length,
-            recipient: to.slice(0, 20) + '...',
-            amount: (amount / NOCK_TO_NICKS).toFixed(2) + ' NOCK',
-            fee: fee ? (fee / NOCK_TO_NICKS).toFixed(2) + ' NOCK' : 'auto',
-            sendMax: !!sendMax,
-          });
-
           // For sendMax: set refundPKH = recipient so all funds go to recipient (sweep)
           const refundAddress = sendMax ? to : undefined;
 
@@ -1495,9 +1324,8 @@ export class Vault {
           );
 
           // 7. Broadcast transaction
-          console.log('[Vault V2] Broadcasting transaction...');
           const protobufTx = constructedTx.rawTx.toProtobuf();
-          const broadcastTxId = await rpcClient.sendTransaction(protobufTx);
+          await rpcClient.sendTransaction(protobufTx);
 
           // 8. Update tx status to broadcasted
           walletTx.fee = constructedTx.feeUsed;
@@ -1508,8 +1336,6 @@ export class Vault {
             txHash: constructedTx.txId,
             status: 'broadcasted_unconfirmed',
           });
-
-          console.log('[Vault V2] Transaction broadcasted:', broadcastTxId);
 
           return {
             txId: constructedTx.txId,
