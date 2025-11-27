@@ -32,28 +32,6 @@ export default defineConfig({
         writeFileSync(manifestPath, JSON.stringify(builtManifest, null, 2));
       },
     },
-    // Copy font files from @fontsource packages
-    {
-      name: 'copy-fonts',
-      writeBundle() {
-        const fontsDir = resolve(__dirname, 'dist/assets/files');
-        if (!existsSync(fontsDir)) {
-          mkdirSync(fontsDir, { recursive: true });
-        }
-
-        // Copy Inter font files
-        const interFiles = resolve(__dirname, 'node_modules/@fontsource/inter/files');
-        if (existsSync(interFiles)) {
-          cpSync(interFiles, fontsDir, { recursive: true });
-        }
-
-        // Copy Lora font files
-        const loraFiles = resolve(__dirname, 'node_modules/@fontsource/lora/files');
-        if (existsSync(loraFiles)) {
-          cpSync(loraFiles, fontsDir, { recursive: true });
-        }
-      },
-    },
   ],
   root: 'extension',
   build: {
@@ -61,6 +39,7 @@ export default defineConfig({
     emptyOutDir: true,
     // Disable CSS code splitting to avoid document.* injection in service worker
     cssCodeSplit: false,
+    minify: 'terser',
     rollupOptions: {
       output: {
         // Preserve WASM files during build
