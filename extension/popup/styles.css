@@ -43,24 +43,38 @@
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
 
   /* Font Sizes */
-  --font-size-xs: 0.75rem; /* 12px */
-  --font-size-sm: 0.8125rem; /* 13px */
-  --font-size-base: 0.875rem; /* 14px */
-  --font-size-lg: 1rem; /* 16px */
-  --font-size-xl: 1.5rem; /* 24px */
-  --font-size-2xl: 2.25rem; /* 36px */
+  --font-size-xs: 0.75rem;
+  /* 12px */
+  --font-size-sm: 0.8125rem;
+  /* 13px */
+  --font-size-base: 0.875rem;
+  /* 14px */
+  --font-size-lg: 1rem;
+  /* 16px */
+  --font-size-xl: 1.5rem;
+  /* 24px */
+  --font-size-2xl: 2.25rem;
+  /* 36px */
 
   /* Line Heights */
-  --line-height-tight: 1rem; /* 16px */
-  --line-height-snug: 1.125rem; /* 18px */
-  --line-height-normal: 1.375rem; /* 22px */
-  --line-height-relaxed: 1.75rem; /* 28px */
-  --line-height-loose: 2.5rem; /* 40px */
+  --line-height-tight: 1rem;
+  /* 16px */
+  --line-height-snug: 1.125rem;
+  /* 18px */
+  --line-height-normal: 1.375rem;
+  /* 22px */
+  --line-height-relaxed: 1.75rem;
+  /* 28px */
+  --line-height-loose: 2.5rem;
+  /* 40px */
 
   /* Letter Spacing */
-  --letter-spacing-tight: -0.02em; /* -2% */
-  --letter-spacing-normal: 0.01em; /* 1% */
-  --letter-spacing-wide: 0.02em; /* 2% */
+  --letter-spacing-tight: -0.02em;
+  /* -2% */
+  --letter-spacing-normal: 0.01em;
+  /* 1% */
+  --letter-spacing-wide: 0.02em;
+  /* 2% */
 
   /* Shadows */
   --shadow-xs: 0 0 4px 0 #05050514;
@@ -138,12 +152,15 @@ button {
 
 /* Hide scrollbars globally */
 * {
-  -ms-overflow-style: none; /* IE and Edge */
-  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scrollbar-width: none;
+  /* Firefox */
 }
 
 *::-webkit-scrollbar {
-  display: none; /* Chrome, Safari, Opera */
+  display: none;
+  /* Chrome, Safari, Opera */
 }
 
 /* Custom component classes */
@@ -227,10 +244,13 @@ button {
 
 /* Hide scrollbar while keeping scroll functionality */
 .no-scrollbar {
-  -ms-overflow-style: none; /* IE and Edge */
-  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none;
+  /* IE and Edge */
+  scrollbar-width: none;
+  /* Firefox */
 }
 
 .no-scrollbar::-webkit-scrollbar {
-  display: none; /* Chrome, Safari, Opera */
+  display: none;
+  /* Chrome, Safari, Opera */
 }

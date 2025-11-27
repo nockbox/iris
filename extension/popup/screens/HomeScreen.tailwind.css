@@ -1,6 +1,3 @@
-/* --- Fonts (Google Fonts or self-host) --- */
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Lora:wght@500;600;700&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -13,12 +10,15 @@ body,
 
 :root {
   --header-h: 120px;
-} /* fallback if JS measuring fails */
+}
+
+/* fallback if JS measuring fails */
 
 /* Optional nicer scrollbar inside the popup */
 .scroll-thin::-webkit-scrollbar {
   width: 8px;
 }
+
 .scroll-thin::-webkit-scrollbar-thumb {
   background: rgba(0, 0, 0, 0.15);
   border-radius: 6px;
@@ -28,15 +28,19 @@ body,
 .wallet-dropdown-item .wallet-balance {
   display: block;
 }
+
 .wallet-dropdown-item .wallet-settings-icon {
   display: none;
 }
+
 .wallet-dropdown-item:hover {
   background-color: var(--color-surface-900);
 }
+
 .wallet-dropdown-item:hover .wallet-balance {
   display: none;
 }
+
 .wallet-dropdown-item:hover .wallet-settings-icon {
   display: flex;
 }
@@ -46,6 +50,7 @@ body,
   0% {
     background-position: -468px 0;
   }
+
   100% {
     background-position: 468px 0;
   }
