@@ -17,7 +17,16 @@ export function LockedScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [showResetConfirm, setShowResetConfirm] = useState(false);
-  const { navigate, syncWallet, wallet, fetchBalance } = useStore();
+  const {
+    navigate,
+    syncWallet,
+    wallet,
+    fetchBalance,
+    pendingConnectRequest,
+    pendingTransactionRequest,
+    pendingSignRequest,
+    pendingSignRawTxRequest,
+  } = useStore();
 
   async function handleUnlock() {
     // Clear previous errors
@@ -66,7 +75,18 @@ export function LockedScreen() {
       // Trigger balance fetch after successful unlock
       fetchBalance();
 
-      navigate('home');
+      // Navigate to pending approval if one exists, otherwise go home
+      if (pendingConnectRequest) {
+        navigate('connect-approval');
+      } else if (pendingTransactionRequest) {
+        navigate('approve-transaction');
+      } else if (pendingSignRequest) {
+        navigate('sign-message');
+      } else if (pendingSignRawTxRequest) {
+        navigate('approve-sign-raw-tx');
+      } else {
+        navigate('home');
+      }
     }
   }
 
@@ -90,8 +110,9 @@ export function LockedScreen() {
   }
 
   return (
-    <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)]">
-      <div className="flex flex-col justify-between h-full px-4 py-8">
+    <div className="min-h-screen flex items-center justify-center bg-[var(--color-bg)]">
+      <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)]">
+        <div className="flex flex-col justify-between h-full px-4 py-8">
         {/* Main content */}
         <div className="flex flex-col gap-8 w-full">
           {/* Logo and heading */}
@@ -222,6 +243,7 @@ export function LockedScreen() {
         onCancel={cancelResetWallet}
         variant="danger"
       />
+      </div>
     </div>
   );
 }

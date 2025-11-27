@@ -56,9 +56,11 @@ export function useApprovalDetection({
         .then(request => {
           if (request && !('error' in request)) {
             setPendingConnectRequest(request);
-            // Only navigate if wallet is unlocked
+            // Navigate to approval screen if unlocked, or locked screen if locked
             if (!walletLocked) {
               navigate('connect-approval');
+            } else {
+              navigate('locked');
             }
           }
         })
@@ -71,9 +73,11 @@ export function useApprovalDetection({
         .then(request => {
           if (request && !('error' in request)) {
             setPendingTransactionRequest(request);
-            // Only navigate if wallet is unlocked
+            // Navigate to approval screen if unlocked, or locked screen if locked
             if (!walletLocked) {
               navigate('approve-transaction');
+            } else {
+              navigate('locked');
             }
           }
         })
@@ -86,9 +90,11 @@ export function useApprovalDetection({
         .then(request => {
           if (request && !('error' in request)) {
             setPendingSignRequest(request);
-            // Only navigate if wallet is unlocked
+            // Navigate to approval screen if unlocked, or locked screen if locked
             if (!walletLocked) {
               navigate('sign-message');
+            } else {
+              navigate('locked');
             }
           }
         })
@@ -96,14 +102,16 @@ export function useApprovalDetection({
     } else if (hash.startsWith(APPROVAL_CONSTANTS.SIGN_RAW_TX_HASH_PREFIX)) {
       const requestId = hash.replace(APPROVAL_CONSTANTS.SIGN_RAW_TX_HASH_PREFIX, '');
 
-      // Fetch pending sign request from background
+      // Fetch pending sign raw tx request from background
       send<SignRawTxRequest>(INTERNAL_METHODS.GET_PENDING_SIGN_RAW_TX_REQUEST, [requestId])
         .then(request => {
           if (request && !('error' in request)) {
             setPendingSignRawTxRequest(request);
-            // Only navigate if wallet is unlocked
+            // Navigate to approval screen if unlocked, or locked screen if locked
             if (!walletLocked) {
               navigate('approve-sign-raw-tx');
+            } else {
+              navigate('locked');
             }
           }
         })

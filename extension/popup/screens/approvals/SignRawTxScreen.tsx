@@ -4,7 +4,6 @@ import { INTERNAL_METHODS, APPROVAL_CONSTANTS } from '../../../shared/constants'
 import { send } from '../../utils/messaging';
 import { SignRawTxRequest } from '../../../shared/types';
 import { useAutoRejectOnClose } from '../../hooks/useAutoRejectOnClose';
-import { ChevronLeftIcon } from '../../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../../components/AccountIcon';
 import { SiteIcon } from '../../components/SiteIcon';
 import { truncateAddress } from '../../utils/format';
@@ -132,12 +131,10 @@ export function SignRawTxScreen() {
   const divider = 'var(--color-divider)';
 
   return (
-    <div className="w-[357px] h-screen flex flex-col" style={{ backgroundColor: bg }}>
+    <div className="min-h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
+      <div className="w-[357px] max-h-screen flex flex-col" style={{ backgroundColor: bg }}>
       {/* Header */}
-      <div className="flex items-center gap-3 px-4 py-2.5 shrink-0">
-        <button onClick={handleDecline} style={{ color: textPrimary }}>
-          <ChevronLeftIcon />
-        </button>
+      <div className="flex items-center justify-center px-4 py-4 shrink-0">
         <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>
           Sign Raw Transaction
         </h2>
@@ -257,6 +254,7 @@ export function SignRawTxScreen() {
         <button onClick={handleSign} className="btn-primary flex-1">
           Sign
         </button>
+      </div>
       </div>
     </div>
   );

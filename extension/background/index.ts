@@ -240,13 +240,38 @@ async function createApprovalPopup(
     const width = UI_CONSTANTS.POPUP_WIDTH;
     const height = UI_CONSTANTS.POPUP_HEIGHT;
 
-    // Let Chrome position the popup automatically to avoid bounds errors
-    // Chrome will position it in a visible location
+    // Calculate position near top-right corner (where extension icon typically is)
+    // Get the current window to determine screen bounds
+    let left = 100;
+    let top = 100;
+
+    try {
+      const currentWindow = await chrome.windows.getCurrent();
+      if (currentWindow.left !== undefined && currentWindow.width !== undefined) {
+        // Position near top-right of current window
+        // Place it slightly inward from the edge for better UX
+        const marginFromRight = 20;
+        const marginFromTop = 80; // Below browser chrome/toolbar
+
+        left = currentWindow.left + currentWindow.width - width - marginFromRight;
+        top = currentWindow.top !== undefined ? currentWindow.top + marginFromTop : 80;
+
+        // Ensure it's not off-screen (minimum 0)
+        left = Math.max(0, left);
+        top = Math.max(0, top);
+      }
+    } catch (err) {
+      // If we can't get current window, use safe default position
+      console.warn('Could not determine window position, using defaults');
+    }
+
     const newWindow = await chrome.windows.create({
       url: popupUrl,
       type: 'popup',
       width,
       height,
+      left,
+      top,
       focused: true,
     });
 
