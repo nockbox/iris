@@ -51,40 +51,9 @@ const REQUEST_EXPIRATION_MS = 5 * 60 * 1000; // 5 minutes
 
 /**
  * RPC connection status
+ * Updated by popup via REPORT_RPC_STATUS when actual gRPC calls succeed/fail
  */
 let isRpcConnected = true;
-
-/**
- * Check RPC connection health
- * Uses a simple fetch to avoid document/DOM dependencies in service worker
- */
-async function checkRpcConnection() {
-  try {
-    // Simple connectivity check with timeout - ping the RPC endpoint
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
-
-    await fetch(RPC_ENDPOINT, {
-      method: 'HEAD',
-      mode: 'no-cors', // Avoid CORS issues for health check
-      signal: controller.signal,
-    });
-
-    clearTimeout(timeoutId);
-
-    // If we get here without throwing, connection is OK
-    if (!isRpcConnected) {
-      isRpcConnected = true;
-      console.log('[Background] RPC connection restored');
-    }
-  } catch (error) {
-    // Connection failed (timeout, network error, etc.)
-    if (isRpcConnected) {
-      isRpcConnected = false;
-      console.warn('[Background] RPC connection lost:', error);
-    }
-  }
-}
 
 /**
  * Load approved origins from storage
@@ -348,9 +317,6 @@ async function emitWalletEvent(eventType: string, data: unknown) {
   await vault.init(); // Load encrypted vault header to detect vault existence
   scheduleAlarm();
 
-  // Initialize RPC connection monitoring
-  checkRpcConnection(); // Initial check
-  setInterval(checkRpcConnection, 10000); // Check every 10 seconds
 })();
 
 // Clean up approval window ID when window is closed
@@ -750,6 +716,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       case INTERNAL_METHODS.GET_CONNECTION_STATUS:
         sendResponse({ connected: isRpcConnected });
+        return;
+
+      case INTERNAL_METHODS.REPORT_RPC_STATUS:
+        // Popup reports actual gRPC call success/failure
+        const rpcHealthy = payload.params?.[0] as boolean;
+        if (typeof rpcHealthy === 'boolean' && rpcHealthy !== isRpcConnected) {
+          isRpcConnected = rpcHealthy;
+        }
+        sendResponse({ ok: true });
         return;
 
       // Note: GET_WALLET_TRANSACTIONS is called directly from popup context

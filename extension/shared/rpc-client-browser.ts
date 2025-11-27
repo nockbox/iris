@@ -7,7 +7,24 @@ import { GrpcClient } from '@nockbox/iris-wasm/iris_wasm.js';
 import type { Note } from './types';
 import { base58 } from '@scure/base';
 import { ensureWasmInitialized } from './wasm-utils.js';
-import { RPC_ENDPOINT } from './constants.js';
+import { RPC_ENDPOINT, INTERNAL_METHODS } from './constants.js';
+
+/**
+ * Report RPC connection status to background service worker
+ * This updates the connection indicator (green/red dot) in the UI
+ */
+async function reportRpcStatus(healthy: boolean): Promise<void> {
+  try {
+    await chrome.runtime.sendMessage({
+      payload: {
+        method: INTERNAL_METHODS.REPORT_RPC_STATUS,
+        params: [healthy],
+      },
+    });
+  } catch {
+    // Ignore errors - background may not be ready
+  }
+}
 
 /**
  * Browser RPC client for Nockchain blockchain
@@ -53,9 +70,14 @@ export class NockchainBrowserRPCClient {
         blockHeight: response.height?.value,
       });
 
+      // Report successful RPC call
+      reportRpcStatus(true);
+
       return this.convertBalanceToNotes(response);
     } catch (error) {
       console.error('[RPC Browser] Error fetching balance:', error);
+      // Report failed RPC call
+      reportRpcStatus(false);
       throw new Error(
         `Failed to fetch balance: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -102,9 +124,14 @@ export class NockchainBrowserRPCClient {
         notes.reduce((sum, n) => sum + n.assets, 0)
       );
 
+      // Report successful RPC call
+      reportRpcStatus(true);
+
       return notes;
     } catch (error) {
       console.error('[RPC Browser] Error fetching notes by first-name:', error);
+      // Report failed RPC call
+      reportRpcStatus(false);
       throw new Error(
         `Failed to fetch notes by first-name: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -145,9 +172,13 @@ export class NockchainBrowserRPCClient {
       const response = await client.sendTransaction(rawTx);
 
       console.log('[RPC Browser] Transaction sent successfully');
+      // Report successful RPC call
+      reportRpcStatus(true);
       return response;
     } catch (error) {
       console.error('[RPC Browser] Error sending transaction:', error);
+      // Report failed RPC call
+      reportRpcStatus(false);
       throw new Error(
         `Failed to send transaction: ${error instanceof Error ? error.message : String(error)}`
       );
@@ -163,9 +194,13 @@ export class NockchainBrowserRPCClient {
     try {
       const client = await this.ensureClient();
       const accepted = await client.transactionAccepted(txId);
+      // Report successful RPC call
+      reportRpcStatus(true);
       return accepted;
     } catch (error) {
       console.error('[RPC Browser] Error checking transaction status:', error);
+      // Report failed RPC call
+      reportRpcStatus(false);
       return false;
     }
   }

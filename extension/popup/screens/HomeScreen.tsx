@@ -105,7 +105,8 @@ export function HomeScreen() {
     console.log('[HomeScreen] Wallet transactions updated:', walletTransactions);
   }, [walletTransactions]);
 
-  // Check RPC connection status on mount only (polling handled by background service)
+  // Check RPC connection status on mount and after balance fetching completes
+  // (RPC calls update the status in background, so re-check after they finish)
   useEffect(() => {
     async function checkConnection() {
       const result = await send<{ connected?: boolean }>(
@@ -114,8 +115,11 @@ export function HomeScreen() {
       );
       setIsConnected(result?.connected ?? true);
     }
-    checkConnection();
-  }, []);
+    // Check when balance fetching completes (not while fetching)
+    if (!isBalanceFetching) {
+      checkConnection();
+    }
+  }, [isBalanceFetching]);
 
   // Get accounts from vault (filter out hidden accounts)
   const accounts = (wallet.accounts || []).filter(acc => !acc.hidden);
@@ -206,6 +210,7 @@ export function HomeScreen() {
       console.log('[HomeScreen] Balance and transactions refreshed.');
     } finally {
       setIsRefreshing(false);
+      // Connection status is automatically re-checked by useEffect when isBalanceFetching changes
     }
   }
 

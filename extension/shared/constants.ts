@@ -63,6 +63,9 @@ export const INTERNAL_METHODS = {
   /** Get RPC connection status */
   GET_CONNECTION_STATUS: 'wallet:getConnectionStatus',
 
+  /** Report RPC connection status from popup (where gRPC calls happen) */
+  REPORT_RPC_STATUS: 'wallet:reportRpcStatus',
+
   /** Get pending transaction request for approval */
   GET_PENDING_TRANSACTION: 'wallet:getPendingTransaction',
 
