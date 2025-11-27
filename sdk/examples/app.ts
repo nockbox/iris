@@ -119,11 +119,11 @@ signRawTxBtn.onclick = async () => {
 
     // 7. Build the transaction and get notes/spend conditions
     log('Building raw transaction...');
-    const rawTx = builder.build();
-    const txId = rawTx.id;
+    const nockchainTx = builder.build();
+    const txId = nockchainTx.id;
     log('Transaction ID: ' + txId.value);
 
-    const rawTxProtobuf = rawTx.toRawTx().toProtobuf();
+    const rawTxProtobuf = nockchainTx.toRawTx().toProtobuf();
 
     // Get notes and spend conditions from builder
     const txNotes = builder.allNotes();
@@ -134,7 +134,7 @@ signRawTxBtn.onclick = async () => {
     // 8. Sign using provider.signRawTx (pass wasm objects directly)
     log('Signing transaction...');
     const signedTxProtobuf = await provider.signRawTx({
-      rawTx: rawTx, // Pass wasm RawTx directly
+      rawTx: rawTxProtobuf, // Pass wasm RawTx directly
       notes: txNotes.notes, // Pass wasm Note objects directly
       spendConditions: txNotes.spendConditions, // Pass wasm SpendCondition objects directly
     });

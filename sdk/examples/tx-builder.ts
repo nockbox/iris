@@ -58,7 +58,7 @@ const state = {
   missingUnlocks: [] as any[], // Missing type definition in WASM module
 
   // Transaction
-  rawTx: null as wasm.NockchainTx | null,
+  nockchainTx: null as wasm.NockchainTx | null,
   signedTx: null as wasm.NockchainTx | null,
   signedTxId: null as string | null,
 };
@@ -647,7 +647,7 @@ function updateBuilder() {
 
   if (!allBalanced) {
     state.builder = null;
-    state.rawTx = null;
+    state.nockchainTx = null;
     state.missingUnlocks = [];
     state.signedTx = null; // Clear signed TX state
     state.signedTxId = null;
@@ -728,10 +728,10 @@ function updateBuilder() {
 
     // Try to build raw tx
     try {
-      state.rawTx = builder.build();
+      state.nockchainTx = builder.build();
     } catch (e) {
       console.log('Cannot build yet - missing unlocks:', e);
-      state.rawTx = null;
+      state.nockchainTx = null;
     }
 
     // Clear signed TX state as builder changed
@@ -744,7 +744,7 @@ function updateBuilder() {
   } catch (e) {
     console.error('Failed to build transaction:', e);
     state.builder = null;
-    state.rawTx = null;
+    state.nockchainTx = null;
     state.missingUnlocks = [];
     state.signedTx = null; // Clear signed TX state
     state.signedTxId = null;
@@ -798,9 +798,9 @@ function applyPreimages() {
 
   // Try to build again
   try {
-    state.rawTx = state.builder.build();
+    state.nockchainTx = state.builder.build();
   } catch (e) {
-    state.rawTx = null;
+    state.nockchainTx = null;
   }
 
   // Clear signed TX state as builder changed
@@ -914,7 +914,7 @@ function renderUnlocks() {
 }
 
 function renderTransaction() {
-  if (!state.builder || !state.rawTx) {
+  if (!state.builder || !state.nockchainTx) {
     txValidation.innerHTML = '';
     txInfo.innerHTML = '';
     outputsList.innerHTML = '';
@@ -967,13 +967,13 @@ function renderTransaction() {
           <span style="color: #9ca3af">Calculated Fee:</span> <span>${formatNock(nicksToNock(calcFee))} NOCK</span>
         </div>
         <div>
-          <span style="color: #9ca3af">TX ID:</span> ${renderCopyableId(state.rawTx.id.value, 'TX ID')}
+          <span style="color: #9ca3af">TX ID:</span> ${renderCopyableId(state.nockchainTx.id.value, 'TX ID')}
         </div>
       </div>
     `;
 
     // Outputs
-    const outputs = state.rawTx.outputs();
+    const outputs = state.nockchainTx.outputs();
     if (outputs && outputs.length > 0) {
       outputsList.innerHTML = outputs
         .map((output: wasm.Note, index: number) => {
@@ -1637,11 +1637,11 @@ closePreimageModal.onclick = cancelPreimageBtn.onclick = () =>
 addPreimageConfirmBtn.onclick = () => addPreimageFromFile();
 
 downloadTxBtn.onclick = () => {
-  if (!state.rawTx) return;
+  if (!state.nockchainTx) return;
 
   try {
-    const jamBytes = state.rawTx.toJam();
-    const txId = state.rawTx.id.value;
+    const jamBytes = state.nockchainTx.toJam();
+    const txId = state.nockchainTx.id.value;
 
     const blob = new Blob([new Uint8Array(jamBytes)], { type: 'application/jam' });
     const url = URL.createObjectURL(blob);
@@ -1661,7 +1661,7 @@ downloadTxBtn.onclick = () => {
 };
 
 signTxBtn.onclick = async () => {
-  if (!state.rawTx || !state.builder || !state.provider) return;
+  if (!state.nockchainTx || !state.builder || !state.provider) return;
 
   try {
     // Get all notes and spend conditions from builder
@@ -1669,7 +1669,7 @@ signTxBtn.onclick = async () => {
 
     // Sign using provider
     const signedTxProtobuf = await state.provider.signRawTx({
-      rawTx: state.rawTx.toRawTx(),
+      rawTx: state.nockchainTx.toRawTx(),
       notes: txNotes.notes,
       spendConditions: txNotes.spendConditions,
     });
