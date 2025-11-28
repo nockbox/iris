@@ -714,8 +714,9 @@ export class Vault {
   /**
    * Signs a message using Nockchain WASM cryptography
    * Derives the account's private key and signs the message digest
+   * @returns Object containing signature JSON and public key (hex-encoded)
    */
-  async signMessage(params: unknown): Promise<string> {
+  async signMessage(params: unknown): Promise<{ signature: string; publicKey: string }> {
     if (this.state.locked || !this.mnemonic) {
       throw new Error('Wallet is locked');
     }
@@ -736,7 +737,7 @@ export class Vault {
         ? masterKey // Use master key directly for master-derived accounts
         : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
-    if (!accountKey.privateKey) {
+    if (!accountKey.privateKey || !accountKey.publicKey) {
       if (currentAccount?.derivation !== 'master') {
         accountKey.free();
       }
@@ -753,6 +754,11 @@ export class Vault {
       s: Array.from(signature.s),
     });
 
+    // Convert public key to hex string for easy transport
+    const publicKeyHex = Array.from(accountKey.publicKey)
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+
     // Clean up WASM memory
     signature.free();
     if (currentAccount?.derivation !== 'master') {
@@ -760,8 +766,11 @@ export class Vault {
     }
     masterKey.free();
 
-    // Return the signature JSON
-    return signatureJson;
+    // Return the signature JSON and public key
+    return {
+      signature: signatureJson,
+      publicKey: publicKeyHex,
+    };
   }
 
   /**
