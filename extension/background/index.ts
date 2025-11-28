@@ -861,8 +861,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
 
           try {
-            const { signature, publicKey } = await vault.signMessage([signRequest.message]);
-            approveSignPending.sendResponse({ signature, publicKey });
+            const { signature, publicKeyHex } = await vault.signMessage([signRequest.message]);
+            approveSignPending.sendResponse({ signature, publicKeyHex });
             cancelPendingRequest(approveSignId);
             processNextRequest();
             sendResponse({ success: true });

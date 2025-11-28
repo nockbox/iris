@@ -120,17 +120,17 @@ export class NockchainProvider {
   /**
    * Sign an arbitrary message with the current account
    * @param message - The message to sign
-   * @returns Promise resolving to the signature and public key (for verification)
+   * @returns Promise resolving to the signature and public key hex (for verification)
    * @throws {NoAccountError} If no account is connected
    * @throws {UserRejectedError} If the user rejects the signing request
    * @throws {RpcError} If the RPC call fails
    */
-  async signMessage(message: string): Promise<{ signature: string; publicKey: string }> {
+  async signMessage(message: string): Promise<{ signature: string; publicKeyHex: string }> {
     if (!this.isConnected) {
       throw new NoAccountError();
     }
 
-    return this.request<{ signature: string; publicKey: string }>({
+    return this.request<{ signature: string; publicKeyHex: string }>({
       method: PROVIDER_METHODS.SIGN_MESSAGE,
       params: [message],
     });

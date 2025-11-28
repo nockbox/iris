@@ -716,7 +716,7 @@ export class Vault {
    * Derives the account's private key and signs the message digest
    * @returns Object containing signature JSON and public key (hex-encoded)
    */
-  async signMessage(params: unknown): Promise<{ signature: string; publicKey: string }> {
+  async signMessage(params: unknown): Promise<{ signature: string; publicKeyHex: string }> {
     if (this.state.locked || !this.mnemonic) {
       throw new Error('Wallet is locked');
     }
@@ -769,7 +769,7 @@ export class Vault {
     // Return the signature JSON and public key
     return {
       signature: signatureJson,
-      publicKey: publicKeyHex,
+      publicKeyHex,
     };
   }
 
