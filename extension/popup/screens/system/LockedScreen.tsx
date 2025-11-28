@@ -111,7 +111,7 @@ export function LockedScreen() {
 
   return (
     <div className="w-[357px] h-[600px] bg-[var(--color-bg)]">
-      <div className="flex flex-col items-center justify-center justify-between h-full px-4 py-8">
+      <div className="flex flex-col justify-between h-full px-4 py-8">
         {/* Main content */}
         <div className="flex flex-col gap-8 w-full">
           {/* Logo and heading */}
