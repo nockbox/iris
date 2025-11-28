@@ -1,7 +1,7 @@
 import { useStore } from '../store';
 import IrisLogo96 from '../assets/iris-logo-96.svg';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
-import { version } from '../../../package.json';
+import { version } from '../../../package-lock.json';
 
 /**
  * AboutScreen

@@ -6,7 +6,7 @@ import ClockIcon from '../assets/clock-icon.svg';
 import { CloseIcon } from '../components/icons/CloseIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import AboutIcon from '../assets/settings-gear-icon.svg';
-import { version } from '../../../package.json';
+import { version } from '../../../package-lock.json';
 
 export function SettingsScreen() {
   const { navigate } = useStore();
