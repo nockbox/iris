@@ -69,7 +69,7 @@ export function TransactionApprovalScreen() {
               <span className="text-xs" style={{ color: textMuted }}>
                 From
               </span>
-              <SiteIcon origin={origin} domain={displayOrigin} size="sm" showSSL={true} />
+              <SiteIcon origin={origin} domain={displayOrigin} size="sm" />
               <span
                 className="text-sm font-semibold truncate max-w-[160px]"
                 style={{ color: textPrimary }}

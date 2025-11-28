@@ -65,7 +65,6 @@ export function SignMessageScreen() {
                   origin={origin}
                   domain={origin.includes('://') ? new URL(origin).hostname : origin}
                   size="md"
-                  showSSL={true}
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-semibold mb-0.5" style={{ color: textPrimary }}>

@@ -57,7 +57,7 @@ export function ConnectApprovalScreen() {
             {/* Site Icon & Info */}
             <div className="text-center mb-4">
               <div className="mb-3">
-                <SiteIcon origin={origin} domain={domain} size="lg" showSSL={true} />
+                <SiteIcon origin={origin} domain={domain} size="lg" />
               </div>
               <h3 className="text-lg font-semibold mb-1" style={{ color: textPrimary }}>
                 {domain}
