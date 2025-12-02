@@ -44,6 +44,22 @@ export function Popup() {
     navigate,
   });
 
+  // Listen for wallet events (e.g., auto-lock)
+  useEffect(() => {
+    const handleMessage = (message: any) => {
+      if (message.type === 'WALLET_EVENT' && message.eventType === 'LOCKED') {
+        syncWallet({
+          ...wallet,
+          locked: true,
+        });
+        navigate('locked');
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(handleMessage);
+    return () => chrome.runtime.onMessage.removeListener(handleMessage);
+  }, [wallet, syncWallet, navigate]);
+
   // Poll for vault state changes (e.g., auto-lock)
   useEffect(() => {
     const interval = setInterval(async () => {

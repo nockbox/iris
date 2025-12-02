@@ -329,15 +329,25 @@ async function emitWalletEvent(eventType: string, data: unknown) {
   const stored = await chrome.storage.local.get([
     STORAGE_KEYS.AUTO_LOCK_MINUTES,
     STORAGE_KEYS.LAST_ACTIVITY,
+    STORAGE_KEYS.MANUALLY_LOCKED,
   ]);
-  autoLockMinutes = stored[STORAGE_KEYS.AUTO_LOCK_MINUTES] ?? AUTOLOCK_MINUTES;
+
+  const storedMinutes = stored[STORAGE_KEYS.AUTO_LOCK_MINUTES];
+  autoLockMinutes = typeof storedMinutes === 'number' ? storedMinutes : Number(storedMinutes) || 0;
+
   // Load persisted lastActivity (survives SW restarts), fallback to now if not set
   lastActivity = stored[STORAGE_KEYS.LAST_ACTIVITY] ?? Date.now();
+
+  // Load persisted manuallyLocked state
+  manuallyLocked = Boolean(stored[STORAGE_KEYS.MANUALLY_LOCKED]);
+
   await loadApprovedOrigins();
   await vault.init(); // Load encrypted vault header to detect vault existence
-  // Only schedule alarm if auto-lock is enabled
+  // Only schedule alarm if auto-lock is enabled, otherwise ensure any stale alarm is cleared
   if (autoLockMinutes > 0) {
     scheduleAlarm();
+  } else {
+    chrome.alarms.clear(ALARM_NAMES.AUTO_LOCK);
   }
 })();
 
@@ -355,11 +365,11 @@ chrome.windows.onRemoved.addListener(windowId => {
  * Only counts user-initiated actions, not passive polling
  * Persists to storage so it survives service worker restarts
  */
-function touchActivity(method?: string) {
+async function touchActivity(method?: string) {
   if (method && USER_ACTIVITY_METHODS.has(method as any)) {
     lastActivity = Date.now();
-    // Persist to storage (fire and forget - don't await)
-    chrome.storage.local.set({ [STORAGE_KEYS.LAST_ACTIVITY]: lastActivity });
+    // Persist to storage (await to ensure it's saved)
+    await chrome.storage.local.set({ [STORAGE_KEYS.LAST_ACTIVITY]: lastActivity });
   }
 }
 
@@ -380,7 +390,7 @@ function isFromPopup(sender: chrome.runtime.MessageSender): boolean {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     const { payload } = msg || {};
-    touchActivity(payload?.method);
+    await touchActivity(payload?.method);
 
     // Guard: internal methods (wallet:*) can only be called from popup/extension pages
     if (payload?.method?.startsWith('wallet:') && !isFromPopup(_sender)) {
@@ -583,7 +593,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       // Internal methods (called from popup)
       case INTERNAL_METHODS.SET_AUTO_LOCK:
-        autoLockMinutes = payload.params?.[0] ?? 0;
+        const newMinutes = payload.params?.[0];
+        autoLockMinutes = typeof newMinutes === 'number' ? newMinutes : Number(newMinutes) || 0;
+
         await chrome.storage.local.set({
           [STORAGE_KEYS.AUTO_LOCK_MINUTES]: autoLockMinutes,
         });
@@ -608,6 +620,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         if ('ok' in unlockResult && unlockResult.ok) {
           // Clear manual lock flag when successfully unlocked
           manuallyLocked = false;
+          await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
           await emitWalletEvent('connect', { chainId: 'nockchain-1' });
         }
         return;
@@ -615,6 +628,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case INTERNAL_METHODS.LOCK:
         // Set manual lock flag - user explicitly locked, don't auto-unlock
         manuallyLocked = true;
+        await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: true });
         await vault.lock();
         sendResponse({ ok: true });
 
@@ -1220,22 +1234,26 @@ chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name !== ALARM_NAMES.AUTO_LOCK) return;
 
   // Don't auto-lock if set to "never" (0 minutes) - stop the alarm cycle
-  if (autoLockMinutes === 0) {
-    return; // Don't reschedule - alarm stops until user enables auto-lock
+  if (autoLockMinutes <= 0) {
+    chrome.alarms.clear(ALARM_NAMES.AUTO_LOCK);
+    return;
   }
 
   // Don't auto-lock if user manually locked - respect their choice
   if (manuallyLocked) {
-    scheduleAlarm();
     return;
   }
 
   const idleMs = Date.now() - lastActivity;
   if (idleMs >= autoLockMinutes * 60_000) {
-    await vault.lock();
+    try {
+      await vault.lock();
+      // Notify popup to update UI immediately
+      await emitWalletEvent('LOCKED', { reason: 'auto-lock' });
+    } catch (error) {
+      console.error('Auto-lock failed:', error);
+    }
   }
-
-  scheduleAlarm();
 });
 
 /**

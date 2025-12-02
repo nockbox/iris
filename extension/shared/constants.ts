@@ -215,6 +215,9 @@ export const STORAGE_KEYS = {
 
   /** Last user activity timestamp for auto-lock (survives SW restarts) */
   LAST_ACTIVITY: 'lastActivity',
+
+  /** Whether the user manually locked the wallet (survives SW restarts) */
+  MANUALLY_LOCKED: 'manuallyLocked',
 } as const;
 
 /** Current storage schema version - increment when making breaking changes */
