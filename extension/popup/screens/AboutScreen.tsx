@@ -1,6 +1,7 @@
 import { useStore } from '../store';
 import IrisLogo96 from '../assets/iris-logo-96.svg';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
+import { version } from '../../../package-lock.json';
 
 /**
  * AboutScreen
@@ -63,13 +64,7 @@ export function AboutScreen() {
 
         <div className="w-full flex flex-col items-center justify-center gap-1">
           <p className="m-0 text-base font-medium leading-[22px] tracking-[0.16px] text-center">
-            Iris Version 1.0.0
-          </p>
-          <p
-            className="m-0 text-[13px] leading-[18px] tracking-[0.26px] text-center"
-            style={{ color: 'var(--color-text-muted)' }}
-          >
-            Extension ID: nock_wallet_v1
+            Iris Version {version}
           </p>
         </div>
 

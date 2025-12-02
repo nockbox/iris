@@ -6,6 +6,7 @@ import ClockIcon from '../assets/clock-icon.svg';
 import { CloseIcon } from '../components/icons/CloseIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import AboutIcon from '../assets/settings-gear-icon.svg';
+import { version } from '../../../package-lock.json';
 
 export function SettingsScreen() {
   const { navigate } = useStore();
@@ -101,13 +102,7 @@ export function SettingsScreen() {
               className="m-0 text-[12px] leading-4 tracking-[0.24px] text-center"
               style={{ color: 'var(--color-text-muted)' }}
             >
-              Version 1.0.0
-            </p>
-            <p
-              className="m-0 text-[12px] leading-4 tracking-[0.24px] text-center"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
-              Extension ID: nock_wallet_v1
+              Version {version}
             </p>
           </div>
         </div>

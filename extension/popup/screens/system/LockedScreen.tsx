@@ -11,6 +11,11 @@ import { ConfirmModal } from '../../components/ConfirmModal';
 import { EyeIcon } from '../../components/icons/EyeIcon';
 import { EyeOffIcon } from '../../components/icons/EyeOffIcon';
 import { AnimatedLogo } from '../../components/AnimatedLogo';
+import vectorLeft from '../../assets/vector-left.svg';
+import vectorRight from '../../assets/vector-right.svg';
+import vectorTopRight from '../../assets/vector-top-right.svg';
+import vectorTopRightRotated from '../../assets/vector-top-right-rotated.svg';
+import vectorBottomLeft from '../../assets/vector-bottom-left.svg';
 
 export function LockedScreen() {
   const [password, setPassword] = useState('');
@@ -110,8 +115,45 @@ export function LockedScreen() {
   }
 
   return (
-    <div className="w-[357px] h-[600px] bg-[var(--color-bg)]">
-      <div className="flex flex-col justify-between h-full px-4 py-8">
+    <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)] overflow-hidden">
+      {/* Decorative vector elements - final positioning */}
+      {/* Top-left curved wave */}
+      <img
+        src={vectorLeft}
+        alt=""
+        className="absolute left-[-14px] top-[93px] w-[89px] h-[70px]"
+        aria-hidden="true"
+      />
+      {/* Top-right curved line */}
+      <img
+        src={vectorTopRight}
+        alt=""
+        className="absolute left-[303px] top-[168px] w-[80px] h-[45px]"
+        aria-hidden="true"
+      />
+      {/* Top-right rotated icon - partially off-screen at top */}
+      <img
+        src={vectorTopRightRotated}
+        alt=""
+        className="absolute left-[247px] top-[-19px] w-[63px] h-[67px]"
+        style={{ transform: 'rotate(24.65deg)' }}
+        aria-hidden="true"
+      />
+      {/* Bottom-right icon */}
+      <img
+        src={vectorRight}
+        alt=""
+        className="absolute left-[287px] top-[395px] w-[49px] h-[79px]"
+        aria-hidden="true"
+      />
+      {/* Bottom-left icon */}
+      <img
+        src={vectorBottomLeft}
+        alt=""
+        className="absolute left-[-11px] top-[414px] w-[64px] h-[64px]"
+        aria-hidden="true"
+      />
+      <div className="relative flex flex-col justify-between h-full px-4 py-8 z-10">
         {/* Main content */}
         <div className="flex flex-col gap-8 w-full">
           {/* Logo and heading */}
