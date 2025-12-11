@@ -373,6 +373,66 @@ export class Vault {
   }
 
   /**
+   * Unlocks the vault using a cached encryption key (used for session restore)
+   */
+  async unlockWithKey(
+    key: CryptoKey
+  ): Promise<
+    | { ok: boolean; address: string; accounts: Account[]; currentAccount: Account }
+    | { error: string }
+  > {
+    const stored = await chrome.storage.local.get([
+      STORAGE_KEYS.ENCRYPTED_VAULT,
+      STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
+    ]);
+    const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
+    const currentAccountIndex =
+      (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
+
+    if (!enc) {
+      return { error: ERROR_CODES.NO_VAULT };
+    }
+
+    const pt = await decryptGCM(
+      key,
+      new Uint8Array(enc.cipher.iv),
+      new Uint8Array(enc.cipher.ct)
+    ).catch(() => null);
+
+    if (!pt) {
+      return { error: ERROR_CODES.BAD_PASSWORD };
+    }
+
+    const payload = JSON.parse(pt) as VaultPayload;
+    const accounts = payload.accounts;
+
+    this.mnemonic = payload.mnemonic;
+    this.encryptionKey = key;
+
+    this.state = {
+      locked: false,
+      accounts,
+      currentAccountIndex,
+      enc,
+    };
+
+    const currentAccount = accounts[currentAccountIndex] || accounts[0];
+    return {
+      ok: true,
+      address: currentAccount?.address || '',
+      accounts,
+      currentAccount,
+    };
+  }
+
+  /**
+   * Returns the cached encryption key (null when locked)
+   */
+  getEncryptionKey(): CryptoKey | null {
+    return this.encryptionKey;
+  }
+
+  /**
    * Helper method to save accounts back to the encrypted vault
    * Called whenever accounts are modified (create, rename, update styling, hide)
    * Requires wallet to be unlocked (encryptionKey must be in memory)
