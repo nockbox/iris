@@ -220,6 +220,14 @@ export const STORAGE_KEYS = {
   MANUALLY_LOCKED: 'manuallyLocked',
 } as const;
 
+/**
+ * Chrome Session Storage Keys - ephemeral cache for unlocked session data
+ */
+export const SESSION_STORAGE_KEYS = {
+  /** Cached encryption key to restore unlock state after SW restarts */
+  UNLOCK_CACHE: 'unlockCache',
+} as const;
+
 /** Current storage schema version - increment when making breaking changes */
 export const CURRENT_SCHEMA_VERSION = 1;
 

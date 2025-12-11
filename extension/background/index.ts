@@ -13,6 +13,7 @@ import {
   ALARM_NAMES,
   AUTOLOCK_MINUTES,
   STORAGE_KEYS,
+  SESSION_STORAGE_KEYS,
   USER_ACTIVITY_METHODS,
   UI_CONSTANTS,
   APPROVAL_CONSTANTS,
@@ -54,6 +55,101 @@ const REQUEST_EXPIRATION_MS = 5 * 60 * 1000; // 5 minutes
  * Updated by popup via REPORT_RPC_STATUS when actual gRPC calls succeed/fail
  */
 let isRpcConnected = true;
+
+type UnlockSessionCache = {
+  key: number[];
+};
+
+let sessionRestorePromise: Promise<void> | null = null;
+
+async function clearUnlockSessionCache(): Promise<void> {
+  try {
+    await chrome.storage.session?.remove(SESSION_STORAGE_KEYS.UNLOCK_CACHE);
+  } catch (error) {
+    console.error('[Background] Failed to clear unlock cache:', error);
+  }
+}
+
+async function persistUnlockSession(): Promise<void> {
+  const sessionStorage = chrome.storage.session;
+  if (!sessionStorage || vault.isLocked()) {
+    return;
+  }
+
+  const encryptionKey = vault.getEncryptionKey();
+  if (!encryptionKey) {
+    return;
+  }
+
+  try {
+    const rawKey = new Uint8Array(await crypto.subtle.exportKey('raw', encryptionKey));
+    await sessionStorage.set({
+      [SESSION_STORAGE_KEYS.UNLOCK_CACHE]: Array.from(rawKey),
+    });
+  } catch (error) {
+    console.error('[Background] Failed to persist unlock session:', error);
+  }
+}
+
+async function restoreUnlockSession(): Promise<void> {
+  const sessionStorage = chrome.storage.session;
+  if (!sessionStorage) {
+    return;
+  }
+
+  const stored = await sessionStorage.get([SESSION_STORAGE_KEYS.UNLOCK_CACHE]);
+  const cached = stored[SESSION_STORAGE_KEYS.UNLOCK_CACHE] as UnlockSessionCache['key'] | undefined;
+
+  if (!cached || cached.length === 0) {
+    return;
+  }
+
+  // Respect manual lock - never auto-unlock if user explicitly locked
+  if (manuallyLocked) {
+    await clearUnlockSessionCache();
+    return;
+  }
+
+  // Respect auto-lock timeout window
+  if (autoLockMinutes > 0) {
+    const idleMs = Date.now() - lastActivity;
+    if (idleMs >= autoLockMinutes * 60_000) {
+      await clearUnlockSessionCache();
+      return;
+    }
+  }
+
+  try {
+    const key = await crypto.subtle.importKey(
+      'raw',
+      new Uint8Array(cached),
+      { name: 'AES-GCM' },
+      false,
+      ['encrypt', 'decrypt']
+    );
+    const result = await vault.unlockWithKey(key);
+    if ('error' in result) {
+      await clearUnlockSessionCache();
+    }
+  } catch (error) {
+    console.error('[Background] Failed to restore unlock session:', error);
+    await clearUnlockSessionCache();
+  }
+}
+
+async function ensureSessionRestored(): Promise<void> {
+  if (!vault.isLocked()) {
+    return;
+  }
+
+  if (!sessionRestorePromise) {
+    sessionRestorePromise = restoreUnlockSession().finally(() => {
+      sessionRestorePromise = null;
+    });
+  }
+
+  await sessionRestorePromise;
+}
 
 /**
  * Load approved origins from storage
@@ -325,7 +421,7 @@ async function emitWalletEvent(eventType: string, data: unknown) {
 }
 
 // Initialize auto-lock setting, load approved origins, vault state, connection monitoring, and schedule alarms
-(async () => {
+const initPromise = (async () => {
   const stored = await chrome.storage.local.get([
     STORAGE_KEYS.AUTO_LOCK_MINUTES,
     STORAGE_KEYS.LAST_ACTIVITY,
@@ -343,6 +439,8 @@ async function emitWalletEvent(eventType: string, data: unknown) {
 
   await loadApprovedOrigins();
   await vault.init(); // Load encrypted vault header to detect vault existence
+  await restoreUnlockSession(); // Rehydrate unlock state if still within auto-lock window
+
   // Only schedule alarm if auto-lock is enabled, otherwise ensure any stale alarm is cleared
   if (autoLockMinutes > 0) {
     scheduleAlarm();
@@ -389,6 +487,8 @@ function isFromPopup(sender: chrome.runtime.MessageSender): boolean {
  */
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
+    await initPromise;
+    await ensureSessionRestored();
     const { payload } = msg || {};
     await touchActivity(payload?.method);
 
@@ -621,6 +721,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           // Clear manual lock flag when successfully unlocked
           manuallyLocked = false;
           await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
+          await persistUnlockSession();
           await emitWalletEvent('connect', { chainId: 'nockchain-1' });
         }
         return;
@@ -630,6 +731,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         manuallyLocked = true;
         await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: true });
         await vault.lock();
+        await clearUnlockSessionCache();
         sendResponse({ ok: true });
 
         // Emit disconnect event when wallet locks
@@ -639,6 +741,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case INTERNAL_METHODS.RESET_WALLET:
         // Reset the wallet completely - clears all data
         await vault.reset();
+        await clearUnlockSessionCache();
         manuallyLocked = false;
         sendResponse({ ok: true });
 
@@ -648,7 +751,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       case INTERNAL_METHODS.SETUP:
         // params: password, mnemonic (optional). If no mnemonic, generates one automatically.
-        sendResponse(await vault.setup(payload.params?.[0], payload.params?.[1]));
+        const setupResult = await vault.setup(payload.params?.[0], payload.params?.[1]);
+        sendResponse(setupResult);
+
+        if ('ok' in setupResult && setupResult.ok) {
+          manuallyLocked = false;
+          await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
+          await persistUnlockSession();
+        }
         return;
 
       case INTERNAL_METHODS.GET_STATE:
@@ -1233,6 +1343,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 chrome.alarms.onAlarm.addListener(async alarm => {
   if (alarm.name !== ALARM_NAMES.AUTO_LOCK) return;
 
+  await initPromise;
+  await ensureSessionRestored();
+
   // Don't auto-lock if set to "never" (0 minutes) - stop the alarm cycle
   if (autoLockMinutes <= 0) {
     chrome.alarms.clear(ALARM_NAMES.AUTO_LOCK);
@@ -1248,6 +1361,7 @@ chrome.alarms.onAlarm.addListener(async alarm => {
   if (idleMs >= autoLockMinutes * 60_000) {
     try {
       await vault.lock();
+      await clearUnlockSessionCache();
       // Notify popup to update UI immediately
       await emitWalletEvent('LOCKED', { reason: 'auto-lock' });
     } catch (error) {

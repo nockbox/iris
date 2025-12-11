@@ -35,7 +35,7 @@ export async function deriveKeyPBKDF2(
     },
     baseKey,
     { name: 'AES-GCM', length: 256 },
-    false,
+    true,
     ['encrypt', 'decrypt']
   );
   // Return key and salt as plain object (safe - no mutation of CryptoKey)
