@@ -44,7 +44,18 @@ class NockProvider implements InjectedNockchain {
           }
 
           if (data.reply?.error) {
-            reject(new Error(data.reply.error));
+            const err = data.reply.error;
+            // Handle RPC error objects with code/message properties
+            if (typeof err === 'object' && err !== null) {
+              const errorObj = err as { code?: number; message?: string };
+              const message = errorObj.message || JSON.stringify(err);
+              const error = new Error(message);
+              // Preserve error code
+              (error as Error & { code?: number }).code = errorObj.code;
+              reject(error);
+            } else {
+              reject(new Error(String(err)));
+            }
           } else {
             resolve(data.reply);
           }
