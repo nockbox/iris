@@ -220,7 +220,10 @@ export function SignRawTxScreen() {
                   Memo
                 </label>
                 <div className="rounded-lg p-3" style={{ backgroundColor: surface }}>
-                  <p className="text-sm whitespace-pre-wrap break-words" style={{ color: textPrimary }}>
+                  <p
+                    className="text-sm whitespace-pre-wrap break-words"
+                    style={{ color: textPrimary }}
+                  >
                     {memo}
                   </p>
                 </div>

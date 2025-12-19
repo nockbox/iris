@@ -4,6 +4,11 @@
     "module": "ESNext",
     "lib": ["ES2020", "DOM", "WebWorker"],
     "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@nockbox/iris-sdk": ["sdk/src/index.ts"],
+      "@nockbox/iris-sdk/*": ["sdk/src/*"]
+    },
     "jsx": "react-jsx",
     "strict": true,
     "esModuleInterop": true,

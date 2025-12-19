@@ -11,7 +11,11 @@
  */
 
 import { base16, base64, base64url } from '@scure/base';
-import type { Note as WasmNote, NoteDataEntry as WasmNoteDataEntry, RawTx as WasmRawTx } from '@nockbox/iris-wasm/iris_wasm.js';
+import type {
+  Note as WasmNote,
+  NoteDataEntry as WasmNoteDataEntry,
+  RawTx as WasmRawTx,
+} from '@nockbox/iris-wasm/iris_wasm.js';
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === 'object' && x !== null;
@@ -124,7 +128,9 @@ function isWasmNote(note: unknown): note is WasmNote {
   return isRecord(note) && 'noteData' in note;
 }
 
-function getNoteDataEntries(note: WasmNote | unknown): ReadonlyArray<WasmNoteDataEntry | ProtobufNoteDataEntryLike> {
+function getNoteDataEntries(
+  note: WasmNote | unknown
+): ReadonlyArray<WasmNoteDataEntry | ProtobufNoteDataEntryLike> {
   // WASM path (strongly typed)
   if (isWasmNote(note)) {
     return note.noteData.entries;
@@ -138,7 +144,9 @@ function getNoteDataEntries(note: WasmNote | unknown): ReadonlyArray<WasmNoteDat
   return Array.isArray(entries) ? (entries as ProtobufNoteDataEntryLike[]) : [];
 }
 
-function extractMemoFromOutputs(outputs: ReadonlyArray<WasmNote | unknown> | undefined): string | null {
+function extractMemoFromOutputs(
+  outputs: ReadonlyArray<WasmNote | unknown> | undefined
+): string | null {
   if (!outputs || !Array.isArray(outputs)) return null;
 
   for (const output of outputs) {
@@ -164,7 +172,9 @@ function extractMemoFromRawTx(rawTx: WasmRawTx | unknown): string | null {
   if (direct) return direct;
 
   // Some schemas may tuck memo under tx/body/etc.
-  const nested = decodeMemoValue((maybe as any)?.tx?.memo ?? (maybe as any)?.body?.memo ?? (maybe as any)?.transaction?.memo);
+  const nested = decodeMemoValue(
+    (maybe as any)?.tx?.memo ?? (maybe as any)?.body?.memo ?? (maybe as any)?.transaction?.memo
+  );
   if (nested) return nested;
 
   // As a last resort, shallow scan for keys named "memo" (case-insensitive) up to a small depth.
@@ -200,5 +210,3 @@ export function extractMemo(params: {
   // Prefer explicit tx-level memo if present; otherwise fall back to note_data entries.
   return extractMemoFromRawTx(params.rawTx) ?? extractMemoFromOutputs(params.outputs);
 }
-
-

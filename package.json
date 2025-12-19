@@ -1,6 +1,6 @@
 {
   "name": "iris",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Iris - Chrome Wallet Extension for Nockchain",
   "type": "module",
   "scripts": {
@@ -12,27 +12,27 @@
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@crxjs/vite-plugin": "^2.0.0-beta.23",
-    "@tailwindcss/postcss": "^4.1.14",
-    "@types/chrome": "^0.0.268",
-    "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
-    "autoprefixer": "^10.4.21",
-    "postcss": "^8.5.6",
-    "prettier": "^3.6.2",
-    "tailwindcss": "^4.1.14",
-    "terser": "^5.44.1",
-    "typescript": "^5.5.3",
-    "vite": "^5.3.3"
+    "@crxjs/vite-plugin": "2.3.0",
+    "@tailwindcss/postcss": "4.1.18",
+    "@types/chrome": "0.1.32",
+    "@types/react": "19.2.7",
+    "@types/react-dom": "19.2.3",
+    "autoprefixer": "10.4.23",
+    "postcss": "8.5.6",
+    "prettier": "3.7.4",
+    "tailwindcss": "4.1.18",
+    "terser": "5.44.1",
+    "typescript": "5.9.3",
+    "vite": "7.3.0"
   },
   "dependencies": {
-    "@fontsource/inter": "^5.2.8",
-    "@fontsource/lora": "^5.2.8",
+    "@fontsource/inter": "5.2.8",
+    "@fontsource/lora": "5.2.8",
     "@nockbox/iris-sdk": "file:./sdk",
-    "@scure/base": "^2.0.0",
-    "@scure/bip39": "^2.0.1",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0",
-    "zustand": "^5.0.8"
+    "@scure/base": "2.0.0",
+    "@scure/bip39": "2.0.1",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "zustand": "5.0.9"
   }
 }

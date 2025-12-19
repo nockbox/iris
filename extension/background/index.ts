@@ -26,6 +26,10 @@ import type {
   SignRawTxRequest,
 } from '../shared/types';
 
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null;
+}
+
 const vault = new Vault();
 let lastActivity = Date.now();
 let autoLockMinutes = AUTOLOCK_MINUTES;
@@ -155,9 +159,13 @@ async function ensureSessionRestored(): Promise<void> {
  * Load approved origins from storage
  */
 async function loadApprovedOrigins(): Promise<void> {
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.APPROVED_ORIGINS]);
-  const origins = stored[STORAGE_KEYS.APPROVED_ORIGINS] || [];
-  approvedOrigins = new Set(origins);
+  const stored = (await chrome.storage.local.get([STORAGE_KEYS.APPROVED_ORIGINS])) as Record<
+    string,
+    unknown
+  >;
+  const raw = stored[STORAGE_KEYS.APPROVED_ORIGINS];
+  const origins = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+  approvedOrigins = new Set<string>(origins);
 }
 
 /**
@@ -371,7 +379,7 @@ async function createApprovalPopup(
       focused: true,
     });
 
-    approvalWindowId = newWindow.id || null;
+    approvalWindowId = newWindow?.id ?? null;
   } finally {
     isCreatingWindow = false;
   }
@@ -422,17 +430,21 @@ async function emitWalletEvent(eventType: string, data: unknown) {
 
 // Initialize auto-lock setting, load approved origins, vault state, connection monitoring, and schedule alarms
 const initPromise = (async () => {
-  const stored = await chrome.storage.local.get([
+  const stored = (await chrome.storage.local.get([
     STORAGE_KEYS.AUTO_LOCK_MINUTES,
     STORAGE_KEYS.LAST_ACTIVITY,
     STORAGE_KEYS.MANUALLY_LOCKED,
-  ]);
+  ])) as Record<string, unknown>;
 
   const storedMinutes = stored[STORAGE_KEYS.AUTO_LOCK_MINUTES];
   autoLockMinutes = typeof storedMinutes === 'number' ? storedMinutes : Number(storedMinutes) || 0;
 
   // Load persisted lastActivity (survives SW restarts), fallback to now if not set
-  lastActivity = stored[STORAGE_KEYS.LAST_ACTIVITY] ?? Date.now();
+  const storedLastActivity = stored[STORAGE_KEYS.LAST_ACTIVITY];
+  lastActivity =
+    typeof storedLastActivity === 'number'
+      ? storedLastActivity
+      : Number(storedLastActivity) || Date.now();
 
   // Load persisted manuallyLocked state
   manuallyLocked = Boolean(stored[STORAGE_KEYS.MANUALLY_LOCKED]);
