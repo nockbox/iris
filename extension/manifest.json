@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Iris Wallet",
   "homepage_url": "https://iriswallet.io",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Iris Wallet - Browser Wallet for Nockchain",
   "icons": {
     "16": "icons/icon16.png",
