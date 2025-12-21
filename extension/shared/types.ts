@@ -112,6 +112,12 @@ export interface ConnectRequest {
   origin: string;
   /** Request timestamp */
   timestamp: number;
+
+  /** Optional signing context */
+  signWith?: 'v1' | 'v0';
+
+  /** v0 derivation label when signWith='v0' */
+  v0Derivation?: 'master' | 'child0' | 'hard0';
 }
 
 /**
@@ -126,6 +132,12 @@ export interface SignRequest {
   message: string;
   /** Request timestamp */
   timestamp: number;
+
+  /** Optional signing context */
+  signWith?: 'v1' | 'v0';
+
+  /** v0 derivation label when signWith='v0' */
+  v0Derivation?: 'master' | 'child0' | 'hard0';
 }
 
 /**
@@ -144,6 +156,12 @@ export interface TransactionRequest {
   fee: number;
   /** Request timestamp */
   timestamp: number;
+
+  /** Optional signing context */
+  signWith?: 'v1' | 'v0';
+
+  /** v0 derivation label when signWith='v0' */
+  v0Derivation?: 'master' | 'child0' | 'hard0';
 }
 
 /**
@@ -164,6 +182,12 @@ export interface SignRawTxRequest {
   outputs?: any[];
   /** Request timestamp */
   timestamp: number;
+
+  /** Optional signing context */
+  signWith?: 'v1' | 'v0';
+
+  /** v0 derivation label when signWith='v0' */
+  v0Derivation?: 'master' | 'child0' | 'hard0';
 }
 
 /**

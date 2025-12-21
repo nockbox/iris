@@ -148,6 +148,11 @@ interface EncryptedVault {
 interface VaultPayload {
   mnemonic: string;
   accounts: Account[];
+  // Optional v0 migration seedphrase (encrypted at rest).
+  v0Migration?: {
+    seedphrase: string;
+    passphrase?: string; // BIP39 passphrase (“25th word”)
+  } | null;
 }
 
 interface VaultState {
@@ -167,6 +172,10 @@ export class Vault {
 
   /** Decrypted mnemonic (only stored in memory while unlocked) */
   private mnemonic: string | null = null;
+
+  /** Decrypted v0 migration seedphrase (only stored in memory while unlocked) */
+  private v0Seedphrase: string | null = null;
+  private v0Passphrase: string | null = null;
 
   /** Derived encryption key (only stored in memory while unlocked, cleared on lock) */
   private encryptionKey: CryptoKey | null = null;
@@ -262,6 +271,7 @@ export class Vault {
     const vaultPayload: VaultPayload = {
       mnemonic: words,
       accounts: [firstAccount],
+      v0Migration: null,
     };
     const payloadJson = JSON.stringify(vaultPayload);
     const { iv, ct } = await encryptGCM(key, new TextEncoder().encode(payloadJson));
@@ -351,6 +361,8 @@ export class Vault {
 
       // Store decrypted data in memory (only after successful decrypt)
       this.mnemonic = mnemonic;
+      this.v0Seedphrase = payload.v0Migration?.seedphrase ?? null;
+      this.v0Passphrase = payload.v0Migration?.passphrase ?? null;
       this.encryptionKey = key; // Cache key for account operations
 
       this.state = {
@@ -373,6 +385,68 @@ export class Vault {
   }
 
   /**
+   * Unlocks the vault using a cached encryption key (used for session restore)
+   */
+  async unlockWithKey(
+    key: CryptoKey
+  ): Promise<
+    | { ok: boolean; address: string; accounts: Account[]; currentAccount: Account }
+    | { error: string }
+  > {
+    const stored = await chrome.storage.local.get([
+      STORAGE_KEYS.ENCRYPTED_VAULT,
+      STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
+    ]);
+    const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
+    const currentAccountIndex =
+      (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
+
+    if (!enc) {
+      return { error: ERROR_CODES.NO_VAULT };
+    }
+
+    const pt = await decryptGCM(
+      key,
+      new Uint8Array(enc.cipher.iv),
+      new Uint8Array(enc.cipher.ct)
+    ).catch(() => null);
+
+    if (!pt) {
+      return { error: ERROR_CODES.BAD_PASSWORD };
+    }
+
+    const payload = JSON.parse(pt) as VaultPayload;
+    const accounts = payload.accounts;
+
+    this.mnemonic = payload.mnemonic;
+    this.v0Seedphrase = payload.v0Migration?.seedphrase ?? null;
+    this.v0Passphrase = payload.v0Migration?.passphrase ?? null;
+    this.encryptionKey = key;
+
+    this.state = {
+      locked: false,
+      accounts,
+      currentAccountIndex,
+      enc,
+    };
+
+    const currentAccount = accounts[currentAccountIndex] || accounts[0];
+    return {
+      ok: true,
+      address: currentAccount?.address || '',
+      accounts,
+      currentAccount,
+    };
+  }
+
+  /**
+   * Returns the cached encryption key (null when locked)
+   */
+  getEncryptionKey(): CryptoKey | null {
+    return this.encryptionKey;
+  }
+
+  /**
    * Helper method to save accounts back to the encrypted vault
    * Called whenever accounts are modified (create, rename, update styling, hide)
    * Requires wallet to be unlocked (encryptionKey must be in memory)
@@ -386,6 +460,9 @@ export class Vault {
     const vaultPayload: VaultPayload = {
       mnemonic: this.mnemonic,
       accounts: this.state.accounts,
+      v0Migration: this.v0Seedphrase
+        ? { seedphrase: this.v0Seedphrase, passphrase: this.v0Passphrase ?? undefined }
+        : null,
     };
     const payloadJson = JSON.stringify(vaultPayload);
     const { iv, ct } = await encryptGCM(this.encryptionKey, new TextEncoder().encode(payloadJson));
@@ -418,6 +495,8 @@ export class Vault {
     // Clear sensitive data from memory for security
     this.state.accounts = []; // Clear accounts to enforce "no addresses while locked"
     this.mnemonic = null;
+    this.v0Seedphrase = null;
+    this.v0Passphrase = null;
     this.encryptionKey = null;
     return { ok: true };
   }
@@ -1334,6 +1413,131 @@ export class Vault {
    * @param params - Transaction parameters with raw tx jam and notes/spend conditions
    * @returns Hex-encoded signed transaction jam
    */
+  // ============================================================================
+  // v0 Migration seedphrase storage (encrypted in vault)
+  // ============================================================================
+
+  hasV0Seedphrase(): boolean {
+    return Boolean(this.v0Seedphrase);
+  }
+
+  private async pbkdf2SeedSha512(seedphrase: string, passphrase: string): Promise<Uint8Array> {
+    const normalized = seedphrase.trim().split(/\s+/).join(' ');
+    const salt = `mnemonic${passphrase ?? ''}`;
+    const enc = new TextEncoder();
+    const keyMaterial = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(normalized),
+      { name: 'PBKDF2' },
+      false,
+      ['deriveBits']
+    );
+    const bits = await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', hash: 'SHA-512', salt: enc.encode(salt), iterations: 2048 },
+      keyMaterial,
+      64 * 8
+    );
+    return new Uint8Array(bits);
+  }
+
+  async getV0Candidates(): Promise<
+    Array<{ label: 'master' | 'child0' | 'hard0'; addressB58: string; pkhDigest: string }>
+  > {
+    if (this.state.locked || !this.v0Seedphrase) {
+      throw new Error('Wallet is locked or no v0 seedphrase stored');
+    }
+
+    await initWasmModules();
+
+    const seed = await this.pbkdf2SeedSha512(this.v0Seedphrase, this.v0Passphrase ?? '');
+    const masterKey = wasm.deriveMasterKey(seed);
+    const child0 = masterKey.deriveChild(0);
+    const hard0 = masterKey.deriveChild(1 << 31);
+
+    try {
+      const rows = [
+        { label: 'master' as const, key: masterKey },
+        { label: 'child0' as const, key: child0 },
+        { label: 'hard0' as const, key: hard0 },
+      ];
+      return rows.map(r => ({
+        label: r.label,
+        addressB58: base58.encode(new Uint8Array(r.key.publicKey)),
+        pkhDigest: wasm.hashPublicKey(new Uint8Array(r.key.publicKey)),
+      }));
+    } finally {
+      hard0.free();
+      child0.free();
+      masterKey.free();
+    }
+  }
+
+  async setV0Seedphrase(params: {
+    seedphrase: string;
+    passphrase?: string;
+  }): Promise<{ ok: true } | { error: string }> {
+    if (this.state.locked || !this.encryptionKey || !this.state.enc || !this.mnemonic) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    this.v0Seedphrase = params.seedphrase.trim();
+    this.v0Passphrase = params.passphrase?.trim() || null;
+
+    // Re-encrypt the vault payload using the in-memory key (same pattern as account updates).
+    await this.saveAccountsToVault();
+    return { ok: true };
+  }
+
+  async clearV0Seedphrase(): Promise<{ ok: true } | { error: string }> {
+    if (this.state.locked || !this.encryptionKey || !this.state.enc || !this.mnemonic) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    this.v0Seedphrase = null;
+    this.v0Passphrase = null;
+
+    await this.saveAccountsToVault();
+    return { ok: true };
+  }
+
+  async signRawTxV0(params: {
+    rawTx: any;
+    notes: any[];
+    spendConditions: any[];
+    derivation: 'master' | 'child0' | 'hard0';
+  }): Promise<any> {
+    if (this.state.locked || !this.v0Seedphrase) {
+      throw new Error('Wallet is locked or no v0 seedphrase stored');
+    }
+
+    await initWasmModules();
+
+    const seed = await this.pbkdf2SeedSha512(this.v0Seedphrase, this.v0Passphrase ?? '');
+    const masterKey = wasm.deriveMasterKey(seed);
+    let key: any = masterKey;
+    if (params.derivation === 'child0') key = masterKey.deriveChild(0);
+    if (params.derivation === 'hard0') key = masterKey.deriveChild(1 << 31);
+
+    if (!key.privateKey) {
+      if (key !== masterKey) key.free();
+      masterKey.free();
+      throw new Error('Cannot sign: no private key available');
+    }
+
+    try {
+      const irisRawTx = wasm.RawTx.fromProtobuf(params.rawTx);
+      const irisNotes = params.notes.map(n => wasm.Note.fromProtobuf(n));
+      const irisSpendConditions = params.spendConditions.map(sc => wasm.SpendCondition.fromProtobuf(sc));
+      const builder = wasm.TxBuilder.fromTx(irisRawTx, irisNotes, irisSpendConditions);
+      builder.sign(key.privateKey);
+      const signedTx = builder.build();
+      return signedTx.toRawTx().toProtobuf();
+    } finally {
+      if (key !== masterKey) key.free();
+      masterKey.free();
+    }
+  }
+
   async signRawTx(params: {
     rawTx: any; // Protobuf wasm.RawTx object
     notes: any[]; // Protobuf Note objects

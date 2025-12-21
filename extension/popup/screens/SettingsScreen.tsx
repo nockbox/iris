@@ -23,6 +23,9 @@ export function SettingsScreen() {
   function handleLockTime() {
     navigate('lock-time');
   }
+  function handleV0Migration() {
+    navigate('v0-migration');
+  }
   function handleAbout() {
     navigate('about');
   }
@@ -89,6 +92,7 @@ export function SettingsScreen() {
           <Row icon={ThemeIcon} label="Theme settings" onClick={handleThemeSettings} />
           <Row icon={KeyIcon} label="Key settings" onClick={handleKeySettings} />
           <Row icon={ClockIcon} label="Lock time" onClick={handleLockTime} />
+          <Row icon={KeyIcon} label="Upgrade v0 → v1" onClick={handleV0Migration} />
           <Row icon={AboutIcon} label="About" onClick={handleAbout} />
         </div>
 

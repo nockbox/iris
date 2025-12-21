@@ -43,6 +43,7 @@ export type Screen =
   | 'wallet-styling'
   | 'about'
   | 'recovery-phrase'
+  | 'v0-migration'
 
   // Transaction screens
   | 'send'

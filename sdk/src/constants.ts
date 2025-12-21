@@ -17,6 +17,15 @@ export const PROVIDER_METHODS = {
 
   /** Sign a raw transaction */
   SIGN_RAW_TX: 'nock_signRawTx',
+
+  /** v0 migration: check if v0 seed is stored */
+  MIGRATE_V0_GET_STATUS: 'nock_migrateV0GetStatus',
+
+  /** v0 migration: derive candidate v0 addresses */
+  MIGRATE_V0_GET_CANDIDATES: 'nock_migrateV0GetCandidates',
+
+  /** v0 migration: sign a raw tx with stored v0 key */
+  MIGRATE_V0_SIGN_RAW_TX: 'nock_migrateV0SignRawTx',
 } as const;
 
 export type ProviderMethod = (typeof PROVIDER_METHODS)[keyof typeof PROVIDER_METHODS];

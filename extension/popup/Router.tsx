@@ -35,6 +35,7 @@ import { WalletSettingsScreen } from './screens/WalletSettingsScreen';
 import { WalletStylingScreen } from './screens/WalletStylingScreen';
 import { AboutScreen } from './screens/AboutScreen';
 import { RecoveryPhraseScreen } from './screens/RecoveryPhraseScreen';
+import { V0MigrationScreen } from './screens/V0MigrationScreen';
 
 export function Router() {
   const { currentScreen } = useStore();
@@ -82,6 +83,8 @@ export function Router() {
       return <AboutScreen />;
     case 'recovery-phrase':
       return <RecoveryPhraseScreen />;
+    case 'v0-migration':
+      return <V0MigrationScreen />;
 
     // Transactions
     case 'send':
