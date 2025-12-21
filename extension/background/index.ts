@@ -59,9 +59,13 @@ let isRpcConnected = true;
  * Load approved origins from storage
  */
 async function loadApprovedOrigins(): Promise<void> {
-  const stored = await chrome.storage.local.get([STORAGE_KEYS.APPROVED_ORIGINS]);
-  const origins = stored[STORAGE_KEYS.APPROVED_ORIGINS] || [];
-  approvedOrigins = new Set(origins);
+  const stored = (await chrome.storage.local.get([STORAGE_KEYS.APPROVED_ORIGINS])) as Record<
+    string,
+    unknown
+  >;
+  const raw = stored[STORAGE_KEYS.APPROVED_ORIGINS];
+  const origins = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
+  approvedOrigins = new Set<string>(origins);
 }
 
 /**
@@ -139,7 +143,6 @@ interface PendingRequest {
 const pendingRequests = new Map<string, PendingRequest>();
 // v0 migration provider methods (string-literal; not yet in published iris-sdk)
 const MIGRATE_V0_GET_STATUS = 'nock_migrateV0GetStatus';
-const MIGRATE_V0_GET_CANDIDATES = 'nock_migrateV0GetCandidates';
 const MIGRATE_V0_SIGN_RAW_TX = 'nock_migrateV0SignRawTx';
 
 
@@ -280,7 +283,7 @@ async function createApprovalPopup(
       focused: true,
     });
 
-    approvalWindowId = newWindow.id || null;
+    approvalWindowId = newWindow?.id ?? null;
   } finally {
     isCreatingWindow = false;
   }
@@ -331,17 +334,21 @@ async function emitWalletEvent(eventType: string, data: unknown) {
 
 // Initialize auto-lock setting, load approved origins, vault state, connection monitoring, and schedule alarms
 (async () => {
-  const stored = await chrome.storage.local.get([
+  const stored = (await chrome.storage.local.get([
     STORAGE_KEYS.AUTO_LOCK_MINUTES,
     STORAGE_KEYS.LAST_ACTIVITY,
     STORAGE_KEYS.MANUALLY_LOCKED,
-  ]);
+  ])) as Record<string, unknown>;
 
   const storedMinutes = stored[STORAGE_KEYS.AUTO_LOCK_MINUTES];
   autoLockMinutes = typeof storedMinutes === 'number' ? storedMinutes : Number(storedMinutes) || 0;
 
   // Load persisted lastActivity (survives SW restarts), fallback to now if not set
-  lastActivity = stored[STORAGE_KEYS.LAST_ACTIVITY] ?? Date.now();
+  const storedLastActivity = stored[STORAGE_KEYS.LAST_ACTIVITY];
+  lastActivity =
+    typeof storedLastActivity === 'number'
+      ? storedLastActivity
+      : Number(storedLastActivity) || Date.now();
 
   // Load persisted manuallyLocked state
   manuallyLocked = Boolean(stored[STORAGE_KEYS.MANUALLY_LOCKED]);
@@ -495,25 +502,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
         sendResponse({ ok: true, hasV0Seedphrase: vault.hasV0Seedphrase() });
-        return;
-      }
-
-      case MIGRATE_V0_GET_CANDIDATES: {
-        const origin = _sender.url || _sender.origin || '';
-        if (!isOriginApproved(origin)) {
-          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
-          return;
-        }
-        if (vault.isLocked()) {
-          sendResponse({ error: ERROR_CODES.LOCKED });
-          return;
-        }
-        try {
-          const rows = await vault.getV0Candidates();
-          sendResponse({ ok: true, candidates: rows });
-        } catch (err) {
-          sendResponse({ error: { code: -32000, message: err instanceof Error ? err.message : String(err) } });
-        }
         return;
       }
 

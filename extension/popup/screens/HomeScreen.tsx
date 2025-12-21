@@ -127,7 +127,8 @@ export function HomeScreen() {
   // Load balance hidden preference on mount
   useEffect(() => {
     chrome.storage.local.get([STORAGE_KEYS.BALANCE_HIDDEN]).then(result => {
-      setBalanceHidden(result[STORAGE_KEYS.BALANCE_HIDDEN] ?? false);
+      const raw = (result as Record<string, unknown>)[STORAGE_KEYS.BALANCE_HIDDEN];
+      setBalanceHidden(typeof raw === 'boolean' ? raw : Boolean(raw));
     });
   }, []);
 
