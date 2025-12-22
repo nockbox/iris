@@ -9,6 +9,7 @@ import { useAutoFocus } from '../../hooks/useAutoFocus';
 import { markOnboardingComplete } from '../../../shared/onboarding';
 import { INTERNAL_METHODS, UI_CONSTANTS, ERROR_CODES } from '../../../shared/constants';
 import { send } from '../../utils/messaging';
+import { formatWalletError } from '../../utils/formatWalletError';
 import lockIcon from '../../assets/lock-icon.svg';
 import { EyeIcon } from '../../components/icons/EyeIcon';
 import { EyeOffIcon } from '../../components/icons/EyeOffIcon';
@@ -130,7 +131,7 @@ export function ImportScreen() {
       if (result.error === ERROR_CODES.INVALID_MNEMONIC) {
         setError('Invalid secret phrase. Please check your words and try again.');
       } else {
-        setError(`Error: ${result.error}`);
+        setError(formatWalletError(result.error));
       }
     } else {
       // Successfully imported - mark onboarding complete (user already has their seed)

@@ -6,7 +6,8 @@
 import { useState } from 'react';
 import { useStore } from '../../store';
 import { send } from '../../utils/messaging';
-import { INTERNAL_METHODS, ERROR_CODES } from '../../../shared/constants';
+import { INTERNAL_METHODS } from '../../../shared/constants';
+import { formatWalletError } from '../../utils/formatWalletError';
 import { ScreenContainer } from '../../components/ScreenContainer';
 import { Alert } from '../../components/Alert';
 import { PasswordInput } from '../../components/PasswordInput';
@@ -32,11 +33,7 @@ export function ResumeBackupScreen() {
     }>(INTERNAL_METHODS.GET_MNEMONIC, [password]);
 
     if (result?.error) {
-      if (result.error === ERROR_CODES.BAD_PASSWORD) {
-        setError('Incorrect password');
-      } else {
-        setError(`Error: ${result.error}`);
-      }
+      setError(formatWalletError(result.error));
       setPassword(''); // Clear password on error
     } else {
       // Store mnemonic in Zustand for backup flow

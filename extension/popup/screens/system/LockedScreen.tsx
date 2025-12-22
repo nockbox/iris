@@ -3,9 +3,10 @@
  */
 
 import { useState } from 'react';
-import { INTERNAL_METHODS, ERROR_CODES } from '../../../shared/constants';
+import { INTERNAL_METHODS } from '../../../shared/constants';
 import { useStore } from '../../store';
 import { send } from '../../utils/messaging';
+import { formatWalletError } from '../../utils/formatWalletError';
 import { Alert } from '../../components/Alert';
 import { ConfirmModal } from '../../components/ConfirmModal';
 import { EyeIcon } from '../../components/icons/EyeIcon';
@@ -51,9 +52,7 @@ export function LockedScreen() {
     }>(INTERNAL_METHODS.UNLOCK, [password]);
 
     if (result?.error) {
-      setError(
-        result.error === ERROR_CODES.BAD_PASSWORD ? 'Incorrect password' : `Error: ${result.error}`
-      );
+      setError(formatWalletError(result.error));
       setPassword(''); // Clear password on error
     } else {
       setPassword('');

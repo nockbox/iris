@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useStore } from '../store';
 import { send } from '../utils/messaging';
-import { INTERNAL_METHODS, ERROR_CODES } from '../../shared/constants';
+import { INTERNAL_METHODS } from '../../shared/constants';
 import IrisLogo96 from '../assets/iris-logo-96.svg';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { EyeIcon } from '../components/icons/EyeIcon';
 import { EyeOffIcon } from '../components/icons/EyeOffIcon';
+import { formatWalletError } from '../utils/formatWalletError';
 
 export function KeySettingsPasswordScreen() {
   const { navigate, setOnboardingMnemonic } = useStore();
@@ -34,11 +35,7 @@ export function KeySettingsPasswordScreen() {
       );
 
       if (result?.error) {
-        setError(
-          result.error === ERROR_CODES.BAD_PASSWORD
-            ? 'Incorrect password'
-            : `Error: ${result.error}`
-        );
+        setError(formatWalletError(result.error));
         setPassword('');
       } else if (result?.mnemonic) {
         // Store mnemonic temporarily for viewing

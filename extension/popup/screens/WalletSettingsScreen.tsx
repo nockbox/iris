@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS } from '../../shared/constants';
+import { formatWalletError } from '../utils/formatWalletError';
 import { AccountIcon } from '../components/AccountIcon';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { CloseIcon } from '../components/icons/CloseIcon';
@@ -81,7 +82,7 @@ export function WalletSettingsScreen() {
 
       setIsEditingName(false);
     } else if (result?.error) {
-      alert(`Failed to rename account: ${result.error}`);
+      alert(`Failed to rename account: ${formatWalletError(result.error)}`);
       setIsEditingName(false);
     }
   }
@@ -145,7 +146,7 @@ export function WalletSettingsScreen() {
       if (result.error === 'CANNOT_HIDE_LAST_ACCOUNT') {
         setShowLastAccountError(true);
       } else {
-        alert(`Failed to hide account: ${result.error}`);
+        alert(`Failed to hide account: ${formatWalletError(result.error)}`);
       }
     }
   }

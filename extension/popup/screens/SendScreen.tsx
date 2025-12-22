@@ -3,6 +3,7 @@ import { useStore } from '../store';
 import { useTheme } from '../contexts/ThemeContext';
 import { truncateAddress } from '../utils/format';
 import { send } from '../utils/messaging';
+import { formatWalletError } from '../utils/formatWalletError';
 import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../shared/constants';
 import { formatNock, isDustAmount, MIN_SENDABLE_NOCK } from '../../shared/currency';
 import type { Account } from '../../shared/types';
@@ -124,7 +125,7 @@ export function SendScreen() {
 
       if (result?.error) {
         console.error('[SendScreen] Max estimation error:', result.error);
-        setError(result.error);
+        setError(formatWalletError(result.error));
         setErrorType('general');
         setIsSendingMax(false);
         return;
@@ -394,7 +395,7 @@ export function SendScreen() {
           setErrorType(null);
         } else if (result?.error) {
           console.error('[SendScreen] Fee estimation error from vault:', result.error);
-          setError(result.error);
+          setError(formatWalletError(result.error));
           setErrorType('general');
         } else {
           console.warn('[SendScreen] Fee estimation returned no fee or error:', result);

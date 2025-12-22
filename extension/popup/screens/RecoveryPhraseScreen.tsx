@@ -9,9 +9,10 @@ import { ScreenContainer } from '../components/ScreenContainer';
 import { Alert } from '../components/Alert';
 import { PasswordInput } from '../components/PasswordInput';
 import { send } from '../utils/messaging';
-import { INTERNAL_METHODS, ERROR_CODES } from '../../shared/constants';
+import { INTERNAL_METHODS } from '../../shared/constants';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { EyeIcon } from '../components/icons/EyeIcon';
+import { formatWalletError } from '../utils/formatWalletError';
 
 export function RecoveryPhraseScreen() {
   const { navigate } = useStore();
@@ -34,11 +35,7 @@ export function RecoveryPhraseScreen() {
     );
 
     if (result?.error) {
-      if (result.error === ERROR_CODES.BAD_PASSWORD) {
-        setError('Incorrect password');
-      } else {
-        setError(`Error: ${result.error}`);
-      }
+      setError(formatWalletError(result.error));
       setPassword('');
     } else {
       setMnemonic(result.mnemonic || '');

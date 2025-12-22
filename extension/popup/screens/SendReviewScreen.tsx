@@ -4,6 +4,7 @@ import { truncateAddress } from '../utils/format';
 import { AccountIcon } from '../components/AccountIcon';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS } from '../../shared/constants';
+import { formatWalletError } from '../utils/formatWalletError';
 import { nockToNick, formatNock, formatNick } from '../../shared/currency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
@@ -68,7 +69,7 @@ export function SendReviewScreen() {
       ]);
 
       if (result?.error) {
-        setError(result.error);
+        setError(formatWalletError(result.error));
         setIsSending(false);
         return;
       }

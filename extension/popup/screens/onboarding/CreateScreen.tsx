@@ -7,6 +7,7 @@ import { INTERNAL_METHODS, UI_CONSTANTS } from '../../../shared/constants';
 import { setOnboardingInProgress } from '../../../shared/onboarding';
 import { useStore } from '../../store';
 import { send } from '../../utils/messaging';
+import { formatWalletError } from '../../utils/formatWalletError';
 import { Alert } from '../../components/Alert';
 import lockIcon from '../../assets/lock-icon.svg';
 import { EyeIcon } from '../../components/icons/EyeIcon';
@@ -49,7 +50,7 @@ export function CreateScreen() {
     }>(INTERNAL_METHODS.SETUP, [password]);
 
     if (result?.error) {
-      setError(`Error: ${result.error}`);
+      setError(formatWalletError(result.error));
     } else {
       // Mark onboarding as in-progress (backup not yet complete)
       await setOnboardingInProgress();

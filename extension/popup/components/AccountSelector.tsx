@@ -10,6 +10,7 @@ import { useAutoFocus } from '../hooks/useAutoFocus';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { INTERNAL_METHODS } from '../../shared/constants';
 import { Account } from '../../shared/types';
+import { formatWalletError } from '../utils/formatWalletError';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { PlusIcon } from './icons/PlusIcon';
 import { UploadIcon } from './icons/UploadIcon';
@@ -70,7 +71,7 @@ export function AccountSelector() {
       };
       syncWallet(updatedWallet);
     } else if (result?.error) {
-      alert(`Failed to create account: ${result.error}`);
+      alert(`Failed to create account: ${formatWalletError(result.error)}`);
     }
 
     setIsOpen(false);
@@ -125,7 +126,7 @@ export function AccountSelector() {
         currentAccount: updatedCurrentAccount,
       });
     } else if (result?.error) {
-      alert(`Failed to rename account: ${result.error}`);
+      alert(`Failed to rename account: ${formatWalletError(result.error)}`);
     }
 
     cancelEditing();

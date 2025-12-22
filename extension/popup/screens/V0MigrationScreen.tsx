@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { send } from '../utils/messaging';
-import { INTERNAL_METHODS, ERROR_CODES } from '../../shared/constants';
+import { INTERNAL_METHODS } from '../../shared/constants';
 import IrisLogo96 from '../assets/iris-logo-96.svg';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { validateMnemonic } from '../../shared/wallet-crypto';
+import { formatWalletError } from '../utils/formatWalletError';
 
 export function V0MigrationScreen() {
   const { navigate } = useStore();
@@ -53,14 +54,13 @@ export function V0MigrationScreen() {
         return;
       }
 
-      const res = await send<{ ok?: boolean; error?: string }>(INTERNAL_METHODS.SET_V0_SEEDPHRASE, [
-        normalized,
-        passphrase || '',
-      ]);
+      const res = await send<{ ok?: boolean; error?: unknown }>(
+        INTERNAL_METHODS.SET_V0_SEEDPHRASE,
+        [normalized, passphrase || '']
+      );
 
       if ((res as any)?.error) {
-        const code = (res as any).error;
-        setError(code === ERROR_CODES.BAD_PASSWORD ? 'Incorrect password' : `Error: ${code}`);
+        setError(formatWalletError((res as any).error));
         return;
       }
 
@@ -81,14 +81,13 @@ export function V0MigrationScreen() {
     setError('');
     setStatus('');
     try {
-      const res = await send<{ ok?: boolean; error?: string }>(
+      const res = await send<{ ok?: boolean; error?: unknown }>(
         INTERNAL_METHODS.CLEAR_V0_SEEDPHRASE,
         []
       );
 
       if ((res as any)?.error) {
-        const code = (res as any).error;
-        setError(code === ERROR_CODES.BAD_PASSWORD ? 'Incorrect password' : `Error: ${code}`);
+        setError(formatWalletError((res as any).error));
         return;
       }
 
