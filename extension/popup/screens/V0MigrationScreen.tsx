@@ -36,14 +36,30 @@ export function V0MigrationScreen() {
           INTERNAL_METHODS.HAS_V0_SEEDPHRASE,
           []
         );
-        if (res?.ok) setHasStored(Boolean(res.has));
+        if (res?.ok) {
+          setHasStored(Boolean(res.has));
+        } else if ((res as any)?.error) {
+          setError(formatWalletError((res as any).error));
+        } else {
+          setError('Failed to check v0 seedphrase status');
+        }
       } catch {
-        // ignore
+        setError('Failed to check v0 seedphrase status');
       }
     })();
   }, []);
 
   async function handleSave() {
+    // Prevent overwriting while the status is still unknown or already stored.
+    if (hasStored !== false) {
+      if (hasStored === null) {
+        setError('Still checking whether a v0 seedphrase is already stored. Please wait.');
+      } else {
+        setError('A v0 seedphrase is already stored. Remove it to enter a new one.');
+      }
+      return;
+    }
+
     setIsLoading(true);
     setError('');
     setStatus('');
@@ -147,7 +163,7 @@ export function V0MigrationScreen() {
         </div>
 
         <div className="flex flex-col gap-3">
-          {hasStored ? (
+          {hasStored === true ? (
             <div
               className="p-3 rounded-lg text-xs"
               style={{
@@ -157,7 +173,7 @@ export function V0MigrationScreen() {
             >
               A v0 seedphrase is already stored. Remove it to enter a new one.
             </div>
-          ) : (
+          ) : hasStored === false ? (
             <>
               <label className="text-[13px] leading-[18px] tracking-[0.26px] font-medium">
                 v0 seedphrase
@@ -175,7 +191,7 @@ export function V0MigrationScreen() {
                   setError('');
                   setStatus('');
                 }}
-                disabled={isLoading}
+                disabled={isLoading || hasStored !== false}
               />
 
               <label className="text-[13px] leading-[18px] tracking-[0.26px] font-medium">
@@ -194,9 +210,19 @@ export function V0MigrationScreen() {
                   setError('');
                   setStatus('');
                 }}
-                disabled={isLoading}
+                disabled={isLoading || hasStored !== false}
               />
             </>
+          ) : (
+            <div
+              className="p-3 rounded-lg text-xs"
+              style={{
+                backgroundColor: 'var(--color-surface-800)',
+                color: 'var(--color-text-muted)',
+              }}
+            >
+              Checking if a v0 seedphrase is already stored…
+            </div>
           )}
 
           {error && (
@@ -210,7 +236,7 @@ export function V0MigrationScreen() {
             </p>
           )}
 
-          {!hasStored && (
+          {hasStored === false && (
             <button
               onClick={handleSave}
               disabled={isLoading || !canSave}

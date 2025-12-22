@@ -1486,7 +1486,7 @@ export class Vault {
     const masterKey = wasm.deriveMasterKey(seed);
     let key: any = masterKey;
     if (params.derivation === 'child0') key = masterKey.deriveChild(0);
-    if (params.derivation === 'hard0') key = masterKey.deriveChild(1 << 31);
+    if (params.derivation === 'hard0') key = masterKey.deriveChild(0x80000000);
 
     if (!key.privateKey) {
       if (key !== masterKey) key.free();
