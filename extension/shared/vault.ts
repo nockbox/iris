@@ -419,6 +419,8 @@ export class Vault {
     const accounts = payload.accounts;
 
     this.mnemonic = payload.mnemonic;
+    this.v0Seedphrase = payload.v0Migration?.seedphrase ?? null;
+    this.v0Passphrase = payload.v0Migration?.passphrase ?? null;
     this.encryptionKey = key;
 
     this.state = {
@@ -514,6 +516,8 @@ export class Vault {
       enc: null,
     };
     this.mnemonic = null;
+    this.v0Seedphrase = null;
+    this.v0Passphrase = null;
     this.encryptionKey = null; // Clear encryption key as well
 
     return { ok: true };
