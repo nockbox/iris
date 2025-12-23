@@ -14,8 +14,12 @@ export function WalletPermissionsScreen() {
   }, []);
 
   async function loadApprovedOrigins() {
-    const stored = await chrome.storage.local.get([STORAGE_KEYS.APPROVED_ORIGINS]);
-    const origins = stored[STORAGE_KEYS.APPROVED_ORIGINS] || [];
+    const stored = (await chrome.storage.local.get([STORAGE_KEYS.APPROVED_ORIGINS])) as Record<
+      string,
+      unknown
+    >;
+    const raw = stored[STORAGE_KEYS.APPROVED_ORIGINS];
+    const origins = Array.isArray(raw) ? raw.filter((x): x is string => typeof x === 'string') : [];
     setApprovedOrigins(origins);
   }
 

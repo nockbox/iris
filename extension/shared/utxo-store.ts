@@ -20,6 +20,10 @@ import type {
 } from './types';
 import { base58 } from '@scure/base';
 
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null;
+}
+
 // ============================================================================
 // Per-Account Mutex - Prevents race conditions on rapid sends
 // ============================================================================
@@ -86,8 +90,12 @@ function uint8ArrayToBase58(bytes: Uint8Array): string {
  * Get the UTXO store from chrome storage
  */
 async function getUTXOStore(): Promise<UTXOStore> {
-  const result = await chrome.storage.local.get([STORAGE_KEYS.UTXO_STORE]);
-  return result[STORAGE_KEYS.UTXO_STORE] || {};
+  const result = (await chrome.storage.local.get([STORAGE_KEYS.UTXO_STORE])) as Record<
+    string,
+    unknown
+  >;
+  const raw = result[STORAGE_KEYS.UTXO_STORE];
+  return (isRecord(raw) ? raw : {}) as UTXOStore;
 }
 
 /**
@@ -368,8 +376,12 @@ export function fetchedToStoredNote(
  * Get sync state for all accounts
  */
 async function getSyncStateStore(): Promise<SyncStateStore> {
-  const result = await chrome.storage.local.get([STORAGE_KEYS.ACCOUNT_SYNC_STATE]);
-  return result[STORAGE_KEYS.ACCOUNT_SYNC_STATE] || {};
+  const result = (await chrome.storage.local.get([STORAGE_KEYS.ACCOUNT_SYNC_STATE])) as Record<
+    string,
+    unknown
+  >;
+  const raw = result[STORAGE_KEYS.ACCOUNT_SYNC_STATE];
+  return (isRecord(raw) ? raw : {}) as SyncStateStore;
 }
 
 /**
@@ -415,8 +427,12 @@ export async function updateAccountSyncState(
  * Get wallet transaction store
  */
 async function getWalletTxStore(): Promise<WalletTxStore> {
-  const result = await chrome.storage.local.get([STORAGE_KEYS.WALLET_TX_STORE]);
-  return result[STORAGE_KEYS.WALLET_TX_STORE] || {};
+  const result = (await chrome.storage.local.get([STORAGE_KEYS.WALLET_TX_STORE])) as Record<
+    string,
+    unknown
+  >;
+  const raw = result[STORAGE_KEYS.WALLET_TX_STORE];
+  return (isRecord(raw) ? raw : {}) as WalletTxStore;
 }
 
 /**

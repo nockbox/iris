@@ -6,6 +6,10 @@
 
 import { STORAGE_KEYS } from './constants';
 
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null;
+}
+
 /**
  * Onboarding state stored in chrome.storage.local
  */
@@ -44,8 +48,17 @@ export async function markOnboardingComplete(): Promise<void> {
  * Returns null if no onboarding state exists (fresh install or pre-migration)
  */
 export async function getOnboardingState(): Promise<OnboardingState | null> {
-  const result = await chrome.storage.local.get([STORAGE_KEYS.ONBOARDING_STATE]);
-  return result[STORAGE_KEYS.ONBOARDING_STATE] || null;
+  const result = (await chrome.storage.local.get([STORAGE_KEYS.ONBOARDING_STATE])) as Record<
+    string,
+    unknown
+  >;
+  const raw = result[STORAGE_KEYS.ONBOARDING_STATE];
+  if (!isRecord(raw)) return null;
+  if (typeof raw.completed !== 'boolean') return null;
+  const step = raw.step;
+  if (step === 'backup' || step === 'verify') return { completed: raw.completed, step };
+  if (step === undefined) return { completed: raw.completed };
+  return null;
 }
 
 /**

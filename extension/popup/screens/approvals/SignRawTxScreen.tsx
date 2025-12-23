@@ -8,6 +8,7 @@ import { AccountIcon } from '../../components/AccountIcon';
 import { SiteIcon } from '../../components/SiteIcon';
 import { truncateAddress } from '../../utils/format';
 import { nickToNock, formatNock } from '../../../shared/currency';
+import { extractMemo } from '../../utils/memo';
 
 interface NoteItemProps {
   note: any;
@@ -90,7 +91,7 @@ export function SignRawTxScreen() {
     return null;
   }
 
-  const { id, origin, rawTx, notes, spendConditions, outputs } = pendingSignRawTxRequest;
+  const { id, origin, rawTx, notes, outputs } = pendingSignRawTxRequest;
 
   useAutoRejectOnClose(id, INTERNAL_METHODS.REJECT_SIGN_RAW_TX);
 
@@ -123,6 +124,7 @@ export function SignRawTxScreen() {
 
   const totalFeeNocks = nickToNock(totalFeeNicks);
   const formattedFee = formatNock(totalFeeNocks);
+  const memo = extractMemo({ rawTx, outputs });
 
   const bg = 'var(--color-bg)';
   const surface = 'var(--color-surface-800)';
@@ -207,6 +209,23 @@ export function SignRawTxScreen() {
                       surface={surface}
                     />
                   ))}
+                </div>
+              </div>
+            )}
+
+            {/* Memo (optional) */}
+            {memo && (
+              <div className="mb-3">
+                <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+                  Memo
+                </label>
+                <div className="rounded-lg p-3" style={{ backgroundColor: surface }}>
+                  <p
+                    className="text-sm whitespace-pre-wrap break-words"
+                    style={{ color: textPrimary }}
+                  >
+                    {memo}
+                  </p>
                 </div>
               </div>
             )}
