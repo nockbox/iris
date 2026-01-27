@@ -355,7 +355,7 @@ export class Vault {
   > {
     const stored = await chrome.storage.local.get([
       STORAGE_KEYS.ENCRYPTED_VAULT,
-      STORAGE_KEYS.ENCRYPTED_NOTES,
+      STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA,
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
       STORAGE_KEYS.UTXO_STORE, // For legacy migration check
       STORAGE_KEYS.WALLET_TX_STORE, // For legacy migration check
@@ -363,7 +363,7 @@ export class Vault {
     ]);
     // Change to let to allow reassignment if migrating
     let enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
-    const encNotes = stored[STORAGE_KEYS.ENCRYPTED_NOTES] as EncryptedAccountDataBlob | undefined;
+    const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as EncryptedAccountDataBlob | undefined;
     const currentAccountIndex =
       (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
 
@@ -402,15 +402,15 @@ export class Vault {
       let cachedBalances: Record<string, number> = {};
       let loadedFromEncrypted = false;
 
-      if (encNotes) {
-        const notesPt = await decryptGCM(
+      if (encAccountData) {
+        const accountDataPt = await decryptGCM(
           key,
-          new Uint8Array(encNotes.cipher.iv),
-          new Uint8Array(encNotes.cipher.ct)
+          new Uint8Array(encAccountData.cipher.iv),
+          new Uint8Array(encAccountData.cipher.ct)
         ).catch(() => null);
 
-        if (notesPt) {
-          const accountData = JSON.parse(notesPt) as EncryptedAccountData;
+        if (accountDataPt) {
+          const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
           utxoStore = accountData.utxoStore || {};
           walletTxStore = accountData.walletTxStore || {};
           cachedBalances = accountData.cachedBalances || {};
@@ -752,7 +752,7 @@ export class Vault {
       },
     };
 
-    await chrome.storage.local.set({ [STORAGE_KEYS.ENCRYPTED_NOTES]: encData });
+    await chrome.storage.local.set({ [STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA]: encData });
   }
 
   // ============================================================================
