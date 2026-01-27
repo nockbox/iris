@@ -129,6 +129,12 @@ export const INTERNAL_METHODS = {
   /** Get wallet transactions for an account (from encrypted store) */
   GET_WALLET_TRANSACTIONS: 'wallet:getWalletTransactions',
 
+  /** Get cached balances for all accounts (from encrypted store) */
+  GET_CACHED_BALANCES: 'wallet:getCachedBalances',
+
+  /** Update cached balances (to encrypted store) */
+  SET_CACHED_BALANCES: 'wallet:setCachedBalances',
+
   /** Get balance summary for an account */
   GET_BALANCE_SUMMARY: 'wallet:getBalanceSummary',
 
