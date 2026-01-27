@@ -128,7 +128,11 @@ function selectNotesForAmount(notes: StoredNote[], targetAmount: number): Stored
 /**
  * Blob that stores encrypted note data
  */
-interface EncryptedNotesBlob {
+/**
+ * Encrypted account data blob format
+ * Stores the encrypted form of EncryptedAccountData (notes, transactions, balances)
+ */
+interface EncryptedAccountDataBlob {
   version: 1;
   cipher: {
     alg: 'AES-GCM';
@@ -359,7 +363,7 @@ export class Vault {
     ]);
     // Change to let to allow reassignment if migrating
     let enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
-    const encNotes = stored[STORAGE_KEYS.ENCRYPTED_NOTES] as EncryptedNotesBlob | undefined;
+    const encNotes = stored[STORAGE_KEYS.ENCRYPTED_NOTES] as EncryptedAccountDataBlob | undefined;
     const currentAccountIndex =
       (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
 
@@ -679,7 +683,7 @@ export class Vault {
     const json = JSON.stringify(payload);
     const { iv, ct } = await encryptGCM(this.encryptionKey, new TextEncoder().encode(json));
 
-    const encData: EncryptedNotesBlob = {
+    const encData: EncryptedAccountDataBlob = {
       version: 1,
       cipher: {
         alg: 'AES-GCM',
