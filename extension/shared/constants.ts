@@ -204,8 +204,8 @@ export const STORAGE_KEYS = {
   /** Encrypted mnemonic data (iv, ct, salt) */
   ENCRYPTED_VAULT: 'enc',
 
-  /** Encrypted notes/UTXOs */
-  ENCRYPTED_NOTES: 'encNotes',
+  /** Encrypted account data (notes, transactions, balances) */
+  ENCRYPTED_ACCOUNT_DATA: 'encAccountData',
 
   /** Current active account index */
   CURRENT_ACCOUNT_INDEX: 'currentAccountIndex',
@@ -222,13 +222,19 @@ export const STORAGE_KEYS = {
   /** Array of approved origins (websites that can access wallet) */
   APPROVED_ORIGINS: 'approvedOrigins',
 
-  /** Cached balances per account address (persisted for offline access) */
+  /**
+   * @deprecated Cached balances per account address (persisted for offline access)
+   */
   CACHED_BALANCES: 'cachedBalances',
 
-  /** UTXO store per account - tracks note state (available, in_flight, spent) */
+  /**
+   * @deprecated UTXO store per account - tracks note state (available, in_flight, spent)
+   */
   UTXO_STORE: 'utxoStore',
 
-  /** Wallet transactions per account - separate from UTXO lifecycle */
+  /**
+   * @deprecated Wallet transactions per account - separate from UTXO lifecycle
+   */
   WALLET_TX_STORE: 'walletTxStore',
 
   /** Per-account sync state (last synced block height) */
