@@ -357,10 +357,10 @@ export const useStore = create<AppStore>((set, get) => ({
 
       // Sync UTXOs from chain for all accounts (runs in background with encrypted Vault)
       try {
-        const syncResult = await send<{ ok: boolean; results?: Record<string, { success: boolean; error?: string }> }>(
-          INTERNAL_METHODS.SYNC_UTXOS,
-          []
-        );
+        const syncResult = await send<{
+          ok: boolean;
+          results?: Record<string, { success: boolean; error?: string }>;
+        }>(INTERNAL_METHODS.SYNC_UTXOS, []);
         if (!syncResult.ok) {
           console.warn('[Store] UTXO sync failed:', syncResult);
         }
@@ -455,10 +455,11 @@ export const useStore = create<AppStore>((set, get) => ({
       const fetchingForAddress = currentAccount.address;
 
       const { send } = await import('./utils/messaging');
-      const response = await send<{ ok?: boolean; transactions?: WalletTransaction[]; error?: string }>(
-        'wallet:getWalletTransactions',
-        [fetchingForAddress]
-      );
+      const response = await send<{
+        ok?: boolean;
+        transactions?: WalletTransaction[];
+        error?: string;
+      }>('wallet:getWalletTransactions', [fetchingForAddress]);
 
       if (response?.error) {
         console.error('Failed to fetch wallet transactions:', response.error);

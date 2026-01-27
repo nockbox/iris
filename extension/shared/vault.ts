@@ -181,7 +181,6 @@ interface VaultPayload {
   accounts: Account[];
 }
 
-
 interface VaultState {
   locked: boolean;
   accounts: Account[];
@@ -363,7 +362,9 @@ export class Vault {
     ]);
     // Change to let to allow reassignment if migrating
     let enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
-    const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as EncryptedAccountDataBlob | undefined;
+    const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as
+      | EncryptedAccountDataBlob
+      | undefined;
     const currentAccountIndex =
       (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
 
@@ -422,8 +423,12 @@ export class Vault {
       // Migration: if no encrypted blob, check for legacy unencrypted stores
       if (!loadedFromEncrypted) {
         const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
-        const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as WalletTxStore | undefined;
-        const legacyCachedBalances = stored[STORAGE_KEYS.CACHED_BALANCES] as Record<string, number> | undefined;
+        const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as
+          | WalletTxStore
+          | undefined;
+        const legacyCachedBalances = stored[STORAGE_KEYS.CACHED_BALANCES] as
+          | Record<string, number>
+          | undefined;
 
         const hasLegacyData =
           (legacyUtxoStore && Object.keys(legacyUtxoStore).length > 0) ||
@@ -708,9 +713,7 @@ export class Vault {
       this.utxoStore[accountAddress] = { notes: [], version: 0 };
     }
 
-    const existingMap = new Map(
-      this.utxoStore[accountAddress].notes.map(n => [n.noteId, n])
-    );
+    const existingMap = new Map(this.utxoStore[accountAddress].notes.map(n => [n.noteId, n]));
 
     for (const note of newNotes) {
       existingMap.set(note.noteId, note);
@@ -805,7 +808,10 @@ export class Vault {
    * Automatically persists to encrypted storage
    * @returns Number of notes removed
    */
-  async removeSpentNotes(accountAddress: string, maxAgeMs: number = 60 * 60 * 1000): Promise<number> {
+  async removeSpentNotes(
+    accountAddress: string,
+    maxAgeMs: number = 60 * 60 * 1000
+  ): Promise<number> {
     if (!this.utxoStore[accountAddress]) return 0;
 
     const cutoff = Date.now() - maxAgeMs;
@@ -1069,7 +1075,9 @@ export class Vault {
 
       // 5b. Check for pending transactions whose inputs are ALREADY spent
       let confirmedFromPreviousSpent = 0;
-      const stillPendingTxs = pendingTxs.filter(tx => !areTransactionInputsSpent(tx, diff.nowSpent));
+      const stillPendingTxs = pendingTxs.filter(
+        tx => !areTransactionInputsSpent(tx, diff.nowSpent)
+      );
 
       if (stillPendingTxs.length > 0) {
         const currentNotes = this.getAccountNotes(accountAddress);
