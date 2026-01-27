@@ -122,6 +122,18 @@ export const INTERNAL_METHODS = {
 
   /** Get pending sign raw transaction request */
   GET_PENDING_RAW_TX_REQUEST: 'wallet:getPendingRawTxRequest',
+
+  /** Sync UTXOs for all accounts (called from popup, runs in background) */
+  SYNC_UTXOS: 'wallet:syncUtxos',
+
+  /** Get balance summary for an account */
+  GET_BALANCE_SUMMARY: 'wallet:getBalanceSummary',
+
+  /** Initialize UTXOs for an account (first sync after creation) */
+  INITIALIZE_ACCOUNT_UTXOS: 'wallet:initializeAccountUtxos',
+
+  /** Force resync an account's UTXOs */
+  FORCE_RESYNC_ACCOUNT: 'wallet:forceResyncAccount',
 } as const;
 
 // Re-export PROVIDER_METHODS for other files
@@ -182,6 +194,9 @@ export const ERROR_CODES = {
 export const STORAGE_KEYS = {
   /** Encrypted mnemonic data (iv, ct, salt) */
   ENCRYPTED_VAULT: 'enc',
+
+  /** Encrypted notes/UTXOs */
+  ENCRYPTED_NOTES: 'encNotes',
 
   /** Current active account index */
   CURRENT_ACCOUNT_INDEX: 'currentAccountIndex',

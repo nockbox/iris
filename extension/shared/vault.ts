@@ -22,19 +22,28 @@ import { buildMultiNotePayment, type Note } from './transaction-builder';
 import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
-import type { Note as BalanceNote } from './types';
+import type { Note as BalanceNote, UTXOStore } from './types';
 import { base58 } from '@scure/base';
 import { initWasmModules } from './wasm-utils';
-import { getAccountBalanceSummary } from './utxo-sync';
 import {
-  getAvailableNotes,
-  markNotesInFlight,
-  releaseInFlightNotes,
   withAccountLock,
   addWalletTransaction,
   updateWalletTransaction,
+  fetchedToStoredNote,
+  noteToStoredNote,
+  generateNoteId,
+  getPendingOutgoingTransactions,
+  getAllOutgoingTransactions,
+  getWalletTransactions,
 } from './utxo-store';
-import type { StoredNote, WalletTransaction } from './types';
+import {
+  computeUTXODiff,
+  classifyNewUTXO,
+  findExpiredTransactions,
+  areTransactionInputsSpent,
+  matchChangeOutputs,
+} from './utxo-diff';
+import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
 
 /**
  * Convert a balance query note to transaction builder note format
@@ -122,6 +131,25 @@ function selectNotesForAmount(notes: StoredNote[], targetAmount: number): Stored
 }
 
 /**
+ * Blob that stores encrypted note data
+ */
+interface EncryptedNotesBlob {
+  version: 1;
+  cipher: {
+    alg: 'AES-GCM';
+    iv: number[];
+    ct: number[];
+  };
+}
+
+/**
+ * Encrypted notes payload 
+ */
+interface NotesPayload {
+  utxoStore: UTXOStore;
+}
+
+/**
  * Encrypted vault format
  * Encrypts both mnemonic AND accounts for better privacy
  * Prevents address enumeration from disk/backup without password
@@ -142,13 +170,14 @@ interface EncryptedVault {
 }
 
 /**
- * The decrypted vault payload
- * Everything sensitive lives inside the encrypted vault
+ * The decrypted vault payload (mnemonic + accounts)
+ * This blob rarely changes (only on account creation/modification)
  */
 interface VaultPayload {
   mnemonic: string;
   accounts: Account[];
 }
+
 
 interface VaultState {
   locked: boolean;
@@ -170,6 +199,9 @@ export class Vault {
 
   /** Derived encryption key (only stored in memory while unlocked, cleared on lock) */
   private encryptionKey: CryptoKey | null = null;
+
+  /** Decrypted UTXO store (only stored in memory while unlocked)*/
+  private utxoStore: UTXOStore = {};
 
   /**
    * Check if a vault exists in storage (without decrypting)
@@ -258,7 +290,7 @@ export class Vault {
     const kdfSalt = rand(16);
     const { key } = await deriveKeyPBKDF2(password, kdfSalt);
 
-    // Encrypt both mnemonic AND accounts together
+    // Encrypt mnemonic + accounts (notes are in a separate blob)
     const vaultPayload: VaultPayload = {
       mnemonic: words,
       accounts: [firstAccount],
@@ -314,9 +346,13 @@ export class Vault {
   > {
     const stored = await chrome.storage.local.get([
       STORAGE_KEYS.ENCRYPTED_VAULT,
+      STORAGE_KEYS.ENCRYPTED_NOTES,
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
+      STORAGE_KEYS.UTXO_STORE, // For legacy migration check
     ]);
-    const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
+    // Change to let to allow reassignment if migrating
+    let enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
+    const encNotes = stored[STORAGE_KEYS.ENCRYPTED_NOTES] as EncryptedNotesBlob | undefined;
     const currentAccountIndex =
       (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
 
@@ -344,14 +380,46 @@ export class Vault {
         return { error: ERROR_CODES.BAD_PASSWORD };
       }
 
-      // Parse vault payload (mnemonic + accounts)
+      // Parse vault payload
       const payload = JSON.parse(pt) as VaultPayload;
       const mnemonic = payload.mnemonic;
       const accounts = payload.accounts;
 
+      // Load UTXO store from separate encrypted blob, with migration from legacy unencrypted store
+      let utxoStore: UTXOStore = {};
+
+      if (encNotes) {
+        // Normal case: separate encrypted notes blob exists
+        const notesPt = await decryptGCM(
+          key,
+          new Uint8Array(encNotes.cipher.iv),
+          new Uint8Array(encNotes.cipher.ct)
+        ).catch(() => null);
+
+        if (notesPt) {
+          const notesPayload = JSON.parse(notesPt) as NotesPayload;
+          utxoStore = notesPayload.utxoStore || {};
+        }
+      } else {
+        // Migration: legacy unencrypted UTXO_STORE
+        const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
+        if (legacyUtxoStore && Object.keys(legacyUtxoStore).length > 0) {
+          console.log('[Vault] Migrating legacy unencrypted UTXO store to encrypted blob');
+          utxoStore = legacyUtxoStore;
+        }
+      }
+
       // Store decrypted data in memory (only after successful decrypt)
       this.mnemonic = mnemonic;
-      this.encryptionKey = key; // Cache key for account operations
+      this.encryptionKey = key;
+      this.utxoStore = utxoStore;
+
+      // Migrate legacy unencrypted store if it existed
+      if (!encNotes && Object.keys(utxoStore).length > 0) {
+        await this.saveNotesPayload();
+        await chrome.storage.local.remove(STORAGE_KEYS.UTXO_STORE);
+        console.log('[Vault] Migration to encrypted notes blob complete');
+      }
 
       this.state = {
         locked: false,
@@ -419,6 +487,7 @@ export class Vault {
     this.state.accounts = []; // Clear accounts to enforce "no addresses while locked"
     this.mnemonic = null;
     this.encryptionKey = null;
+    this.utxoStore = {};
     return { ok: true };
   }
 
@@ -438,6 +507,7 @@ export class Vault {
     };
     this.mnemonic = null;
     this.encryptionKey = null; // Clear encryption key as well
+    this.utxoStore = {};
 
     return { ok: true };
   }
@@ -502,7 +572,532 @@ export class Vault {
     utxoCount: number;
     availableUtxoCount: number;
   }> {
-    return getAccountBalanceSummary(accountAddress);
+    return this.getAccountBalanceSummary(accountAddress);
+  }
+
+  // ============================================================================
+  // UTXO Store Getters (read from in-memory decrypted store)
+  // ============================================================================
+
+  /**
+   * Get the entire UTXO store (in-memory)
+   * Requires wallet to be unlocked
+   */
+  getUTXOStore(): UTXOStore {
+    return this.utxoStore;
+  }
+
+  /**
+   * Get all notes for an account (from in-memory store)
+   */
+  getAccountNotes(accountAddress: string): StoredNote[] {
+    return this.utxoStore[accountAddress]?.notes || [];
+  }
+
+  /**
+   * Get only available (spendable) notes for an account
+   */
+  getAvailableNotes(accountAddress: string): StoredNote[] {
+    return this.getAccountNotes(accountAddress).filter(n => n.state === 'available');
+  }
+
+  /**
+   * Get spendable balance for an account (sum of available notes)
+   */
+  getSpendableBalance(accountAddress: string): number {
+    return this.getAvailableNotes(accountAddress).reduce((sum, n) => sum + n.assets, 0);
+  }
+
+  /**
+   * Get pending outgoing balance (sum of in_flight notes)
+   */
+  getPendingOutgoingBalance(accountAddress: string): number {
+    return this.getAccountNotes(accountAddress)
+      .filter(n => n.state === 'in_flight')
+      .reduce((sum, n) => sum + n.assets, 0);
+  }
+
+  // ============================================================================
+  // Encrypted Storage Operations
+  // ============================================================================
+
+  /**
+   * Save the notes payload (utxoStore) to encrypted storage.
+   * This blob changes frequently - on every transaction and sync.
+   */
+  async saveNotesPayload(): Promise<void> {
+    if (!this.encryptionKey) {
+      throw new Error('Cannot save notes: vault is locked or not initialized');
+    }
+
+    const payload: NotesPayload = {
+      utxoStore: this.utxoStore,
+    };
+
+    const json = JSON.stringify(payload);
+    const { iv, ct } = await encryptGCM(this.encryptionKey, new TextEncoder().encode(json));
+
+    const encData: EncryptedNotesBlob = {
+      version: 1,
+      cipher: {
+        alg: 'AES-GCM',
+        iv: Array.from(iv),
+        ct: Array.from(ct),
+      },
+    };
+
+    await chrome.storage.local.set({ [STORAGE_KEYS.ENCRYPTED_NOTES]: encData });
+  }
+
+  // ============================================================================
+  // UTXO Store Setters (auto-persist to encrypted storage)
+  // ============================================================================
+
+  /**
+   * Save/merge notes for an account
+   * Automatically persists to encrypted storage
+   */
+  async saveNotes(accountAddress: string, newNotes: StoredNote[]): Promise<void> {
+    if (!this.utxoStore[accountAddress]) {
+      this.utxoStore[accountAddress] = { notes: [], version: 0 };
+    }
+
+    const existingMap = new Map(
+      this.utxoStore[accountAddress].notes.map(n => [n.noteId, n])
+    );
+
+    for (const note of newNotes) {
+      existingMap.set(note.noteId, note);
+    }
+
+    this.utxoStore[accountAddress].notes = Array.from(existingMap.values());
+    this.utxoStore[accountAddress].version += 1;
+
+    await this.saveNotesPayload();
+  }
+
+  /**
+   * Mark notes as in_flight (reserved for pending transaction)
+   * Automatically persists to encrypted storage
+   */
+  async markNotesInFlight(
+    accountAddress: string,
+    noteIds: string[],
+    walletTxId: string
+  ): Promise<void> {
+    if (!this.utxoStore[accountAddress]) {
+      throw new Error(`No UTXO store for account ${accountAddress}`);
+    }
+
+    const noteIdSet = new Set(noteIds);
+    let lockedCount = 0;
+
+    for (const note of this.utxoStore[accountAddress].notes) {
+      if (noteIdSet.has(note.noteId)) {
+        if (note.state !== 'available') {
+          throw new Error(`Cannot lock note ${note.noteId}: state is ${note.state}`);
+        }
+        note.state = 'in_flight';
+        note.pendingTxId = walletTxId;
+        lockedCount++;
+      }
+    }
+
+    if (lockedCount !== noteIds.length) {
+      throw new Error(`Failed to lock all notes: expected ${noteIds.length}, found ${lockedCount}`);
+    }
+
+    this.utxoStore[accountAddress].version += 1;
+
+    await this.saveNotesPayload();
+  }
+
+  /**
+   * Mark notes as spent (transaction confirmed)
+   * Automatically persists to encrypted storage
+   */
+  async markNotesSpent(accountAddress: string, noteIds: string[]): Promise<void> {
+    if (!this.utxoStore[accountAddress]) return;
+
+    const noteIdSet = new Set(noteIds);
+
+    for (const note of this.utxoStore[accountAddress].notes) {
+      if (noteIdSet.has(note.noteId)) {
+        note.state = 'spent';
+      }
+    }
+
+    this.utxoStore[accountAddress].version += 1;
+
+    await this.saveNotesPayload();
+  }
+
+  /**
+   * Release in_flight notes back to available (on tx failure)
+   * Automatically persists to encrypted storage
+   */
+  async releaseInFlightNotes(accountAddress: string, noteIds: string[]): Promise<void> {
+    if (!this.utxoStore[accountAddress]) return;
+
+    const noteIdSet = new Set(noteIds);
+
+    for (const note of this.utxoStore[accountAddress].notes) {
+      if (noteIdSet.has(note.noteId) && note.state === 'in_flight') {
+        note.state = 'available';
+        delete note.pendingTxId;
+      }
+    }
+
+    this.utxoStore[accountAddress].version += 1;
+
+    await this.saveNotesPayload();
+  }
+
+  /**
+   * Remove spent notes (cleanup to prevent storage bloat)
+   * Only removes spent notes older than maxAgeMs (default: 1 hour)
+   * Automatically persists to encrypted storage
+   * @returns Number of notes removed
+   */
+  async removeSpentNotes(accountAddress: string, maxAgeMs: number = 60 * 60 * 1000): Promise<number> {
+    if (!this.utxoStore[accountAddress]) return 0;
+
+    const cutoff = Date.now() - maxAgeMs;
+    const before = this.utxoStore[accountAddress].notes.length;
+
+    this.utxoStore[accountAddress].notes = this.utxoStore[accountAddress].notes.filter(
+      n => n.state !== 'spent' || (n.discoveredAt && n.discoveredAt > cutoff)
+    );
+
+    const removed = before - this.utxoStore[accountAddress].notes.length;
+    if (removed > 0) {
+      this.utxoStore[accountAddress].version += 1;
+      await this.saveNotesPayload();
+    }
+
+    return removed;
+  }
+
+  /**
+   * Replace all notes for an account (full replacement, not merge)
+   * Used for force resync operations
+   * Automatically persists to encrypted storage
+   */
+  async replaceAccountNotes(accountAddress: string, notes: StoredNote[]): Promise<void> {
+    if (!this.utxoStore[accountAddress]) {
+      this.utxoStore[accountAddress] = { notes: [], version: 0 };
+    }
+
+    this.utxoStore[accountAddress].notes = notes;
+    this.utxoStore[accountAddress].version += 1;
+
+    await this.saveNotesPayload();
+  }
+
+  // =============================================
+  // UTXO Sync Methods
+  // =============================================
+
+  /** Transaction expiry timeout: 6 hours */
+  private static readonly TX_EXPIRY_MS = 6 * 60 * 60 * 1000;
+
+  /**
+   * Convert a balance query note to FetchedUTXO format for diff computation
+   */
+  private noteToFetchedUTXO(note: BalanceNote): FetchedUTXO {
+    const nameFirst = note.nameFirstBase58 || base58.encode(note.nameFirst);
+    const nameLast = note.nameLastBase58 || base58.encode(note.nameLast);
+    const sourceHash = note.sourceHash?.length > 0 ? base58.encode(note.sourceHash) : '';
+
+    return {
+      noteId: generateNoteId(nameFirst, nameLast),
+      sourceHash,
+      originPage: Number(note.originPage),
+      assets: note.assets,
+      nameFirst,
+      nameLast,
+      noteDataHashBase58: note.noteDataHashBase58 || '',
+      protoNote: note.protoNote,
+    };
+  }
+
+  /**
+   * Sync UTXOs for a single account with chain state
+   * This uses the encrypted in-memory UTXO store
+   *
+   * @param accountAddress - Account to sync
+   * @returns Summary of what changed
+   */
+  async syncAccountUTXOs(accountAddress: string): Promise<{
+    newIncoming: number;
+    newChange: number;
+    spent: number;
+    confirmed: number;
+    expired: number;
+  }> {
+    if (this.state.locked) {
+      throw new Error('Vault is locked');
+    }
+
+    const rpcClient = createBrowserClient();
+
+    return withAccountLock(accountAddress, async () => {
+      // 1. Fetch current UTXOs from chain
+      const balanceResult = await queryV1Balance(accountAddress, rpcClient);
+      const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+      const fetchedUTXOs = chainNotes.map(n => this.noteToFetchedUTXO(n));
+
+      // 2. Get local state (from in-memory encrypted store)
+      const localNotes = this.getAccountNotes(accountAddress);
+      const pendingTxs = await getPendingOutgoingTransactions(accountAddress);
+      const allOutgoingTxs = await getAllOutgoingTransactions(accountAddress);
+
+      // 3. Compute diff (pass all outgoing txs for change detection)
+      const diff = computeUTXODiff(localNotes, fetchedUTXOs, pendingTxs, allOutgoingTxs);
+
+      // 4. Process spent notes
+      if (diff.nowSpent.length > 0) {
+        const spentNoteIds = diff.nowSpent.map(n => n.noteId);
+        await this.markNotesSpent(accountAddress, spentNoteIds);
+
+        // Check if any pending transactions are now confirmed
+        for (const tx of pendingTxs) {
+          if (areTransactionInputsSpent(tx, diff.nowSpent)) {
+            // Find change outputs for this transaction
+            const changeNoteIds = matchChangeOutputs(tx, diff.newUTXOs, diff.isChangeMap);
+
+            await updateWalletTransaction(accountAddress, tx.id, {
+              status: 'confirmed',
+              expectedChangeNoteIds: changeNoteIds,
+            });
+          }
+        }
+      }
+
+      // 5. Process new UTXOs
+      let newIncoming = 0;
+      let newChange = 0;
+      const newStoredNotes: StoredNote[] = [];
+
+      for (const newUTXO of diff.newUTXOs) {
+        const { isChange, walletTxId } = classifyNewUTXO(newUTXO, diff.isChangeMap);
+
+        const storedNote = fetchedToStoredNote(newUTXO, accountAddress, 'available', isChange);
+
+        if (isChange && walletTxId) {
+          storedNote.pendingTxId = walletTxId;
+          newChange++;
+        } else {
+          // Incoming transaction - create a WalletTransaction record
+          const incomingTxId = crypto.randomUUID();
+          const now = Date.now();
+
+          await addWalletTransaction({
+            id: incomingTxId,
+            txHash: newUTXO.sourceHash,
+            accountAddress,
+            direction: 'incoming',
+            createdAt: now,
+            updatedAt: now,
+            status: 'confirmed',
+            amount: newUTXO.assets,
+            receivedNoteIds: [newUTXO.noteId],
+          });
+
+          newIncoming++;
+        }
+
+        newStoredNotes.push(storedNote);
+      }
+
+      // Save new notes
+      if (newStoredNotes.length > 0) {
+        await this.saveNotes(accountAddress, newStoredNotes);
+      }
+
+      // 5b. Check for pending transactions whose inputs are ALREADY spent
+      let confirmedFromPreviousSpent = 0;
+      const stillPendingTxs = pendingTxs.filter(tx => !areTransactionInputsSpent(tx, diff.nowSpent));
+
+      if (stillPendingTxs.length > 0) {
+        const currentNotes = this.getAccountNotes(accountAddress);
+        const spentNoteIds = new Set(
+          currentNotes.filter(n => n.state === 'spent').map(n => n.noteId)
+        );
+
+        for (const tx of stillPendingTxs) {
+          if (!tx.inputNoteIds || tx.inputNoteIds.length === 0) continue;
+
+          const allInputsSpent = tx.inputNoteIds.every(noteId => spentNoteIds.has(noteId));
+
+          if (allInputsSpent) {
+            await updateWalletTransaction(accountAddress, tx.id, {
+              status: 'confirmed',
+            });
+            confirmedFromPreviousSpent++;
+          }
+        }
+      }
+
+      // 6. Handle expired transactions
+      const allTxs = await getWalletTransactions(accountAddress);
+      const expiredTxs = findExpiredTransactions(allTxs, Vault.TX_EXPIRY_MS);
+
+      for (const expiredTx of expiredTxs) {
+        if (expiredTx.inputNoteIds && expiredTx.inputNoteIds.length > 0) {
+          await this.releaseInFlightNotes(accountAddress, expiredTx.inputNoteIds);
+        }
+
+        await updateWalletTransaction(accountAddress, expiredTx.id, {
+          status: 'expired',
+        });
+      }
+
+      // 7. Cleanup old spent notes to prevent storage bloat
+      await this.removeSpentNotes(accountAddress);
+
+      const confirmedFromNewSpent = pendingTxs.filter(tx =>
+        areTransactionInputsSpent(tx, diff.nowSpent)
+      ).length;
+
+      return {
+        newIncoming,
+        newChange,
+        spent: diff.nowSpent.length,
+        confirmed: confirmedFromNewSpent + confirmedFromPreviousSpent,
+        expired: expiredTxs.length,
+      };
+    });
+  }
+
+  /**
+   * Get balance summary for an account from encrypted UTXO store
+   */
+  async getAccountBalanceSummary(accountAddress: string): Promise<{
+    available: number;
+    spendableNow: number;
+    pendingOut: number;
+    pendingChange: number;
+    total: number;
+    utxoCount: number;
+    availableUtxoCount: number;
+  }> {
+    const notes = this.getAccountNotes(accountAddress);
+    const pendingTxs = await getPendingOutgoingTransactions(accountAddress);
+
+    const availableNotes = notes.filter(n => n.state === 'available');
+    const pendingNotes = notes.filter(n => n.state === 'in_flight');
+
+    const availableFromNotes = availableNotes.reduce((sum, n) => sum + n.assets, 0);
+    const pendingOut = pendingNotes.reduce((sum, n) => sum + n.assets, 0);
+
+    const pendingChange = pendingTxs.reduce((sum, tx) => sum + (tx.expectedChange || 0), 0);
+
+    const available = availableFromNotes + pendingChange;
+    const spendableNow = availableFromNotes;
+
+    return {
+      available,
+      spendableNow,
+      pendingOut,
+      pendingChange,
+      total: availableFromNotes + pendingOut,
+      utxoCount: notes.filter(n => n.state !== 'spent').length,
+      availableUtxoCount: availableNotes.length,
+    };
+  }
+
+  /**
+   * Initialize UTXO store for a newly created/imported account
+   * Called on first unlock to bootstrap the local store
+   * NOTE: This method exists in the original implementation but is not actually used. Left for future use
+   *
+   * @param accountAddress - Account to initialize
+   */
+  async initializeAccountUTXOs(accountAddress: string): Promise<void> {
+    if (this.state.locked) {
+      throw new Error('Vault is locked');
+    }
+
+    const rpcClient = createBrowserClient();
+
+    return withAccountLock(accountAddress, async () => {
+      // Check if already initialized
+      const existingNotes = this.getAccountNotes(accountAddress);
+      if (existingNotes.length > 0) {
+        return;
+      }
+
+      // Fetch current UTXOs from chain
+      const balanceResult = await queryV1Balance(accountAddress, rpcClient);
+      const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+
+      // Convert to stored notes (all available, no incoming tx records on first init)
+      const storedNotes: StoredNote[] = chainNotes.map(note =>
+        noteToStoredNote(note, accountAddress, 'available')
+      );
+
+      // Save notes
+      if (storedNotes.length > 0) {
+        await this.saveNotes(accountAddress, storedNotes);
+      }
+    });
+  }
+
+  /**
+   * Force a full resync of an account's UTXOs
+   * Useful for recovery scenarios or user-initiated refresh
+   * NOTE: Method existed in previos UTXO store implementation but not used. Left for potential future use.
+   * @param accountAddress - Account to resync
+   */
+  async forceResyncAccount(accountAddress: string): Promise<void> {
+    if (this.state.locked) {
+      throw new Error('Vault is locked');
+    }
+
+    const rpcClient = createBrowserClient();
+
+    return withAccountLock(accountAddress, async () => {
+      // Fetch current UTXOs from chain
+      const balanceResult = await queryV1Balance(accountAddress, rpcClient);
+      const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+      const fetchedUTXOs = chainNotes.map(n => this.noteToFetchedUTXO(n));
+
+      // Get existing notes to preserve pending state
+      const existingNotes = this.getAccountNotes(accountAddress);
+
+      // Build map of note IDs that are currently in pending transactions
+      const pendingNoteIds = new Map<string, { state: StoredNote['state']; txId: string }>();
+      for (const note of existingNotes) {
+        if (note.state === 'in_flight' && note.pendingTxId) {
+          pendingNoteIds.set(note.noteId, {
+            state: note.state,
+            txId: note.pendingTxId,
+          });
+        }
+      }
+
+      // Rebuild stored notes from chain state
+      const newStoredNotes: StoredNote[] = [];
+
+      for (const fetched of fetchedUTXOs) {
+        const pending = pendingNoteIds.get(fetched.noteId);
+
+        if (pending) {
+          // Preserve pending state
+          const storedNote = fetchedToStoredNote(fetched, accountAddress, pending.state);
+          storedNote.pendingTxId = pending.txId;
+          newStoredNotes.push(storedNote);
+        } else {
+          // New or available
+          newStoredNotes.push(fetchedToStoredNote(fetched, accountAddress, 'available'));
+        }
+      }
+
+      // Replace all notes (but keep pending state)
+      // Note: Full replacement, not a merge - clears notes not on chain
+      await this.replaceAccountNotes(accountAddress, newStoredNotes);
+    });
   }
 
   /**
@@ -983,8 +1578,8 @@ export class Vault {
       }
 
       try {
-        // Get available (not in-flight) notes from UTXO store
-        const notes = await getAvailableNotes(currentAccount.address);
+        // Get available (not in-flight) notes from in-memory UTXO store
+        const notes = this.getAvailableNotes(currentAccount.address);
 
         if (notes.length === 0) {
           return { error: 'No spendable UTXOs available.' };
@@ -1203,8 +1798,8 @@ export class Vault {
         }
 
         try {
-          // 1. Get available notes from UTXO store (for state tracking)
-          const availableStoredNotes = await getAvailableNotes(currentAccount.address);
+          // 1. Get available notes from in-memory UTXO store (for state tracking)
+          const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
 
           if (availableStoredNotes.length === 0) {
             return { error: 'No available UTXOs.' };
@@ -1242,7 +1837,7 @@ export class Vault {
           const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
 
           // 4. Mark notes as in_flight BEFORE building transaction
-          await markNotesInFlight(currentAccount.address, selectedNoteIds, walletTxId);
+          await this.markNotesInFlight(currentAccount.address, selectedNoteIds, walletTxId);
 
           // 5. Create wallet transaction record (status: created)
           const walletTx: WalletTransaction = {
@@ -1310,9 +1905,10 @@ export class Vault {
         console.error('[Vault V2] Transaction failed:', error);
 
         // Release in_flight notes on failure
+        // Using in-memory method + immediate persist (restore spendability)
         if (selectedNoteIds.length > 0) {
           try {
-            await releaseInFlightNotes(currentAccount.address, selectedNoteIds);
+            await this.releaseInFlightNotes(currentAccount.address, selectedNoteIds);
             await updateWalletTransaction(currentAccount.address, walletTxId, {
               status: 'failed',
             });

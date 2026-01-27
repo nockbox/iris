@@ -349,21 +349,17 @@ export const useStore = create<AppStore>((set, get) => ({
         return;
       }
 
-      // Sync UTXOs from chain for all accounts (runs in popup context where WASM works)
+      // Sync UTXOs from chain for all accounts (runs in background with encrypted Vault)
       try {
-        const { syncAccountUTXOs } = await import('../shared/utxo-sync');
-        const { createBrowserClient } = await import('../shared/rpc-client-browser');
-        const rpcClient = createBrowserClient();
-
-        for (const account of accounts) {
-          try {
-            await syncAccountUTXOs(account.address, rpcClient);
-          } catch (syncErr) {
-            console.warn(`[Store] UTXO sync failed for ${account.name}:`, syncErr);
-          }
+        const syncResult = await send<{ ok: boolean; results?: Record<string, { success: boolean; error?: string }> }>(
+          INTERNAL_METHODS.SYNC_UTXOS,
+          []
+        );
+        if (!syncResult.ok) {
+          console.warn('[Store] UTXO sync failed:', syncResult);
         }
-      } catch (importErr) {
-        console.warn('[Store] Could not import sync modules:', importErr);
+      } catch (syncErr) {
+        console.warn('[Store] UTXO sync error:', syncErr);
       }
 
       // Fetch UTXO store balance for ALL accounts
