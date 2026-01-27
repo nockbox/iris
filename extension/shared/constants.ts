@@ -126,6 +126,9 @@ export const INTERNAL_METHODS = {
   /** Sync UTXOs for all accounts (called from popup, runs in background) */
   SYNC_UTXOS: 'wallet:syncUtxos',
 
+  /** Get wallet transactions for an account (from encrypted store) */
+  GET_WALLET_TRANSACTIONS: 'wallet:getWalletTransactions',
+
   /** Get balance summary for an account */
   GET_BALANCE_SUMMARY: 'wallet:getBalanceSummary',
 

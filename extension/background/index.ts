@@ -780,6 +780,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
+      case INTERNAL_METHODS.GET_WALLET_TRANSACTIONS:
+        // Get wallet transactions for an account from encrypted store
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+        const txAccountAddress = payload.params?.[0];
+        if (!txAccountAddress) {
+          sendResponse({ error: 'Account address required' });
+          return;
+        }
+        try {
+          const transactions = vault.getWalletTransactions(txAccountAddress);
+          sendResponse({ ok: true, transactions });
+        } catch (err) {
+          console.error('[Background] GET_WALLET_TRANSACTIONS error:', err);
+          sendResponse({ error: 'Failed to get wallet transactions' });
+        }
+        return;
+
       case INTERNAL_METHODS.INITIALIZE_ACCOUNT_UTXOS:
         // Initialize UTXOs for a specific account
         const initAddress = payload.params?.[0];
