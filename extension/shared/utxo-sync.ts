@@ -63,6 +63,7 @@ function noteToFetchedUTXO(note: Note): FetchedUTXO {
  * Sync UTXOs for a single account
  * This is the main sync function called by the background polling service
  *
+ * @deprecated Use `Vault.syncAccountUTXOs()` instead. This function uses unencrypted storage.
  * @param accountAddress - Account to sync
  * @param rpcClient - RPC client for chain queries
  * @returns Summary of what changed
@@ -214,6 +215,7 @@ export async function syncAccountUTXOs(
  * Initialize UTXO store for a newly created/imported account
  * Called on first unlock to bootstrap the local store
  *
+ * @deprecated Use `Vault.initializeAccountUTXOs()` instead. This function uses unencrypted storage.
  * @param accountAddress - Account to initialize
  * @param rpcClient - RPC client for chain queries
  */
@@ -251,6 +253,8 @@ export async function initializeAccountUTXOs(
  * Follows Bitcoin wallet convention: includes expected change from pending
  * transactions in the available balance. This makes the balance immediately
  * reflect (total - sent - fee) rather than (total - full_input_utxo).
+ *
+ * @deprecated Use `Vault.getAccountBalanceSummary()` instead. This function uses unencrypted storage.
  */
 export async function getAccountBalanceSummary(accountAddress: string): Promise<{
   available: number;
@@ -295,6 +299,8 @@ export async function getAccountBalanceSummary(accountAddress: string): Promise<
 /**
  * Force a full resync of an account's UTXOs
  * Useful for recovery scenarios or user-initiated refresh
+ *
+ * @deprecated Use `Vault.forceResyncAccount()` instead. This function uses unencrypted storage.
  */
 export async function forceResyncAccount(
   accountAddress: string,

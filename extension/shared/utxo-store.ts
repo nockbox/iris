@@ -29,6 +29,8 @@ const accountLocks = new Map<string, Promise<void>>();
 /**
  * Execute a function with exclusive access to an account's UTXO state
  * Prevents race conditions when building multiple transactions rapidly
+ *
+ * @deprecated This is now handled internally by Vault methods. No longer needed.
  */
 export async function withAccountLock<T>(accountAddress: string, fn: () => Promise<T>): Promise<T> {
   const prev = accountLocks.get(accountAddress) ?? Promise.resolve();
@@ -101,6 +103,8 @@ async function saveUTXOStore(store: UTXOStore): Promise<void> {
 
 /**
  * Get all notes for an account
+ *
+ * @deprecated Use `Vault.getAccountNotes()` instead. This function uses unencrypted storage.
  */
 export async function getAccountNotes(accountAddress: string): Promise<StoredNote[]> {
   const store = await getUTXOStore();
@@ -110,6 +114,8 @@ export async function getAccountNotes(accountAddress: string): Promise<StoredNot
 /**
  * Get only available (spendable) notes for an account
  * This is the ONLY function that should be used when selecting inputs for transactions
+ *
+ * @deprecated Use `Vault.getAvailableNotes()` instead. This function uses unencrypted storage.
  */
 export async function getAvailableNotes(accountAddress: string): Promise<StoredNote[]> {
   const notes = await getAccountNotes(accountAddress);
@@ -119,6 +125,8 @@ export async function getAvailableNotes(accountAddress: string): Promise<StoredN
 /**
  * Get spendable balance for an account (sum of available notes)
  * This is the source of truth for what the user can spend
+ *
+ * @deprecated Use `Vault.getAccountBalanceSummary()` instead. This function uses unencrypted storage.
  */
 export async function getSpendableBalance(accountAddress: string): Promise<number> {
   const available = await getAvailableNotes(accountAddress);
@@ -127,6 +135,8 @@ export async function getSpendableBalance(accountAddress: string): Promise<numbe
 
 /**
  * Get pending outgoing balance (sum of in_flight notes)
+ *
+ * @deprecated Use `Vault.getAccountBalanceSummary()` instead. This function uses unencrypted storage.
  */
 export async function getPendingOutgoingBalance(accountAddress: string): Promise<number> {
   const notes = await getAccountNotes(accountAddress);
@@ -135,6 +145,8 @@ export async function getPendingOutgoingBalance(accountAddress: string): Promise
 
 /**
  * Get total known balance (available + pending)
+ *
+ * @deprecated Use `Vault.getAccountBalanceSummary()` instead. This function uses unencrypted storage.
  */
 export async function getTotalKnownBalance(accountAddress: string): Promise<{
   available: number;
@@ -157,6 +169,8 @@ export async function getTotalKnownBalance(accountAddress: string): Promise<{
 /**
  * Save/update notes for an account
  * Merges with existing notes, updating state for known notes
+ *
+ * @deprecated Use `Vault.saveNotes()` instead. This function uses unencrypted storage.
  */
 export async function saveNotes(accountAddress: string, newNotes: StoredNote[]): Promise<void> {
   const store = await getUTXOStore();
@@ -182,6 +196,8 @@ export async function saveNotes(accountAddress: string, newNotes: StoredNote[]):
 /**
  * Mark notes as in_flight (reserved for a pending transaction)
  * Called at the START of transaction building to prevent double-spend
+ *
+ * @deprecated Use `Vault.markNotesInFlight()` instead. This function uses unencrypted storage.
  */
 export async function markNotesInFlight(
   accountAddress: string,
@@ -221,6 +237,8 @@ export async function markNotesInFlight(
 /**
  * Mark notes as spent (transaction confirmed)
  * Called when sync detects the notes are no longer on-chain
+ *
+ * @deprecated Use `Vault.markNotesSpent()` instead. This function uses unencrypted storage.
  */
 export async function markNotesSpent(accountAddress: string, noteIds: string[]): Promise<void> {
   const store = await getUTXOStore();
@@ -245,6 +263,8 @@ export async function markNotesSpent(accountAddress: string, noteIds: string[]):
 /**
  * Release in_flight notes back to available (if transaction fails or expires)
  * Called when transaction building or broadcast fails
+ *
+ * @deprecated Use `Vault.releaseInFlightNotes()` instead. This function uses unencrypted storage.
  */
 export async function releaseInFlightNotes(
   accountAddress: string,
@@ -274,6 +294,8 @@ export async function releaseInFlightNotes(
 /**
  * Remove spent notes from storage (cleanup)
  * Called periodically to prevent storage bloat
+ *
+ * @deprecated Use `Vault.removeSpentNotes()` instead. This function uses unencrypted storage.
  */
 export async function removeSpentNotes(accountAddress: string): Promise<number> {
   const store = await getUTXOStore();
@@ -296,6 +318,8 @@ export async function removeSpentNotes(accountAddress: string): Promise<number> 
 
 /**
  * Clear all notes for an account (for testing/reset)
+ *
+ * @deprecated Use `Vault.replaceAccountNotes()` with empty array instead. This function uses unencrypted storage.
  */
 export async function clearAccountNotes(accountAddress: string): Promise<void> {
   const store = await getUTXOStore();
@@ -337,6 +361,8 @@ export function noteToStoredNote(
 
 /**
  * Convert a FetchedUTXO to StoredNote
+ *
+ * @deprecated Still used internally but prefer Vault methods for note operations.
  */
 export function fetchedToStoredNote(
   fetched: FetchedUTXO,
@@ -383,6 +409,8 @@ async function saveSyncStateStore(store: SyncStateStore): Promise<void> {
 
 /**
  * Get sync state for an account
+ *
+ * @deprecated Sync state operations are no longer used. The Vault handles sync internally.
  */
 export async function getAccountSyncState(
   accountAddress: string
@@ -393,6 +421,8 @@ export async function getAccountSyncState(
 
 /**
  * Update sync state for an account
+ *
+ * @deprecated Sync state operations are no longer used. The Vault handles sync internally.
  */
 export async function updateAccountSyncState(
   accountAddress: string,
@@ -430,6 +460,8 @@ async function saveWalletTxStore(store: WalletTxStore): Promise<void> {
 
 /**
  * Get all wallet transactions for an account
+ *
+ * @deprecated Use `Vault.getWalletTransactions()` instead. This function uses unencrypted storage.
  */
 export async function getWalletTransactions(accountAddress: string): Promise<WalletTransaction[]> {
   const store = await getWalletTxStore();
@@ -438,6 +470,8 @@ export async function getWalletTransactions(accountAddress: string): Promise<Wal
 
 /**
  * Add a new wallet transaction
+ *
+ * @deprecated Use `Vault.addWalletTransaction()` instead. This function uses unencrypted storage.
  */
 export async function addWalletTransaction(tx: WalletTransaction): Promise<void> {
   const store = await getWalletTxStore();
@@ -466,6 +500,8 @@ export async function addWalletTransaction(tx: WalletTransaction): Promise<void>
 
 /**
  * Update a wallet transaction
+ *
+ * @deprecated Use `Vault.updateWalletTransaction()` instead. This function uses unencrypted storage.
  */
 export async function updateWalletTransaction(
   accountAddress: string,
@@ -495,6 +531,8 @@ export async function updateWalletTransaction(
 
 /**
  * Find a wallet transaction by its on-chain hash
+ *
+ * @deprecated Use `Vault.getWalletTransactions()` and filter instead. This function uses unencrypted storage.
  */
 export async function findWalletTxByHash(
   accountAddress: string,
@@ -506,6 +544,8 @@ export async function findWalletTxByHash(
 
 /**
  * Get pending outgoing transactions (for expiry checking)
+ *
+ * @deprecated Use `Vault.getPendingOutgoingTransactions()` instead. This function uses unencrypted storage.
  */
 export async function getPendingOutgoingTransactions(
   accountAddress: string
@@ -523,6 +563,8 @@ export async function getPendingOutgoingTransactions(
 /**
  * Get all outgoing transactions (pending + confirmed) for change detection
  * This is needed to identify change UTXOs even after a transaction is confirmed
+ *
+ * @deprecated Use `Vault.getAllOutgoingTransactions()` instead. This function uses unencrypted storage.
  */
 export async function getAllOutgoingTransactions(
   accountAddress: string
