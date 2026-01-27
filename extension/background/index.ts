@@ -864,6 +864,64 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
+      case INTERNAL_METHODS.SYNC_UTXOS:
+        // Sync UTXOs for all accounts - runs in background with encrypted Vault
+        try {
+          const accounts = vault.getAccounts();
+          const results: Record<string, { success: boolean; error?: string }> = {};
+
+          for (const account of accounts) {
+            try {
+              await vault.syncAccountUTXOs(account.address);
+              results[account.address] = { success: true };
+            } catch (syncErr) {
+              console.warn(`[Background] UTXO sync failed for ${account.name}:`, syncErr);
+              results[account.address] = {
+                success: false,
+                error: syncErr instanceof Error ? syncErr.message : String(syncErr),
+              };
+            }
+          }
+
+          sendResponse({ ok: true, results });
+        } catch (err) {
+          console.error('[Background] SYNC_UTXOS error:', err);
+          sendResponse({ error: 'Failed to sync UTXOs' });
+        }
+        return;
+
+      case INTERNAL_METHODS.INITIALIZE_ACCOUNT_UTXOS:
+        // Initialize UTXOs for a specific account
+        const initAddress = payload.params?.[0];
+        if (!initAddress) {
+          sendResponse({ error: 'Account address required' });
+          return;
+        }
+        try {
+          await vault.initializeAccountUTXOs(initAddress);
+          sendResponse({ ok: true });
+        } catch (err) {
+          console.error('[Background] Error initializing account UTXOs:', err);
+          sendResponse({ error: 'Failed to initialize account UTXOs' });
+        }
+        return;
+
+      case INTERNAL_METHODS.FORCE_RESYNC_ACCOUNT:
+        // Force resync a specific account's UTXOs
+        const resyncAddress = payload.params?.[0];
+        if (!resyncAddress) {
+          sendResponse({ error: 'Account address required' });
+          return;
+        }
+        try {
+          await vault.forceResyncAccount(resyncAddress);
+          sendResponse({ ok: true });
+        } catch (err) {
+          console.error('[Background] Error resyncing account:', err);
+          sendResponse({ error: 'Failed to resync account' });
+        }
+        return;
+
       case INTERNAL_METHODS.GET_CONNECTION_STATUS:
         sendResponse({ connected: isRpcConnected });
         return;
