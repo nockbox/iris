@@ -442,8 +442,7 @@ export const useStore = create<AppStore>((set, get) => ({
     }
   },
 
-  // Fetch wallet transactions from UTXO store
-  // Called directly from popup context (not via background) to avoid service worker limitations
+  // Fetch wallet transactions from encrypted store via background
   fetchWalletTransactions: async () => {
     try {
       const currentAccount = get().wallet.currentAccount;
@@ -452,9 +451,16 @@ export const useStore = create<AppStore>((set, get) => ({
       // Capture the address we're fetching for to detect account switches
       const fetchingForAddress = currentAccount.address;
 
-      // Import and call directly from popup context (avoids service worker document issue)
-      const { getWalletTransactions } = await import('../shared/utxo-store');
-      const transactions = await getWalletTransactions(fetchingForAddress);
+      const { send } = await import('./utils/messaging');
+      const response = await send<{ ok?: boolean; transactions?: WalletTransaction[]; error?: string }>(
+        'wallet:getWalletTransactions',
+        [fetchingForAddress]
+      );
+
+      if (response?.error) {
+        console.error('Failed to fetch wallet transactions:', response.error);
+        return;
+      }
 
       // Check if user switched accounts while we were fetching
       const accountAfterFetch = get().wallet.currentAccount;
@@ -462,7 +468,7 @@ export const useStore = create<AppStore>((set, get) => ({
         return;
       }
 
-      set({ walletTransactions: transactions });
+      set({ walletTransactions: response.transactions || [] });
     } catch (error) {
       console.error('Failed to fetch wallet transactions:', error);
     }

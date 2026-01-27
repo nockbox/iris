@@ -22,19 +22,14 @@ import { buildMultiNotePayment, type Note } from './transaction-builder';
 import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
-import type { Note as BalanceNote, UTXOStore } from './types';
+import type { Note as BalanceNote, UTXOStore, WalletTxStore } from './types';
 import { base58 } from '@scure/base';
 import { initWasmModules } from './wasm-utils';
 import {
   withAccountLock,
-  addWalletTransaction,
-  updateWalletTransaction,
   fetchedToStoredNote,
   noteToStoredNote,
   generateNoteId,
-  getPendingOutgoingTransactions,
-  getAllOutgoingTransactions,
-  getWalletTransactions,
 } from './utxo-store';
 import {
   computeUTXODiff,
@@ -143,10 +138,12 @@ interface EncryptedNotesBlob {
 }
 
 /**
- * Encrypted notes payload 
+ * Encrypted notes payload - includes both UTXOs and wallet transactions
+ * Saved atomically to prevent inconsistency between notes and transactions
  */
-interface NotesPayload {
+interface NotesAndTxPayload {
   utxoStore: UTXOStore;
+  walletTxStore: WalletTxStore;
 }
 
 /**
@@ -202,6 +199,9 @@ export class Vault {
 
   /** Decrypted UTXO store (only stored in memory while unlocked)*/
   private utxoStore: UTXOStore = {};
+
+  /** Decrypted wallet transactions (only stored in memory while unlocked) */
+  private walletTxStore: WalletTxStore = {};
 
   /**
    * Check if a vault exists in storage (without decrypting)
@@ -349,6 +349,7 @@ export class Vault {
       STORAGE_KEYS.ENCRYPTED_NOTES,
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
       STORAGE_KEYS.UTXO_STORE, // For legacy migration check
+      STORAGE_KEYS.WALLET_TX_STORE, // For legacy migration check
     ]);
     // Change to let to allow reassignment if migrating
     let enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
@@ -385,11 +386,12 @@ export class Vault {
       const mnemonic = payload.mnemonic;
       const accounts = payload.accounts;
 
-      // Load UTXO store from separate encrypted blob, with migration from legacy unencrypted store
+      // Load notes and transactions from separate encrypted blob
       let utxoStore: UTXOStore = {};
+      let walletTxStore: WalletTxStore = {};
+      let loadedFromEncrypted = false;
 
       if (encNotes) {
-        // Normal case: separate encrypted notes blob exists
         const notesPt = await decryptGCM(
           key,
           new Uint8Array(encNotes.cipher.iv),
@@ -397,28 +399,43 @@ export class Vault {
         ).catch(() => null);
 
         if (notesPt) {
-          const notesPayload = JSON.parse(notesPt) as NotesPayload;
+          const notesPayload = JSON.parse(notesPt) as NotesAndTxPayload;
           utxoStore = notesPayload.utxoStore || {};
-        }
-      } else {
-        // Migration: legacy unencrypted UTXO_STORE
-        const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
-        if (legacyUtxoStore && Object.keys(legacyUtxoStore).length > 0) {
-          console.log('[Vault] Migrating legacy unencrypted UTXO store to encrypted blob');
-          utxoStore = legacyUtxoStore;
+          walletTxStore = notesPayload.walletTxStore || {};
+          loadedFromEncrypted = true;
+          console.log('[Vault] Loaded notes from encrypted blob');
         }
       }
 
-      // Store decrypted data in memory (only after successful decrypt)
+      // Migration: if no encrypted blob, check for legacy unencrypted stores
+      if (!loadedFromEncrypted) {
+        const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
+        const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as WalletTxStore | undefined;
+        const hasLegacyData =
+          (legacyUtxoStore && Object.keys(legacyUtxoStore).length > 0) ||
+          (legacyWalletTxStore && Object.keys(legacyWalletTxStore).length > 0);
+
+        if (hasLegacyData) {
+          console.log('[Vault] Migrating legacy unencrypted stores to encrypted blob');
+          utxoStore = legacyUtxoStore || {};
+          walletTxStore = legacyWalletTxStore || {};
+        }
+      }
+
+      // Store decrypted data in memory
       this.mnemonic = mnemonic;
       this.encryptionKey = key;
       this.utxoStore = utxoStore;
+      this.walletTxStore = walletTxStore;
 
-      // Migrate legacy unencrypted store if it existed
-      if (!encNotes && Object.keys(utxoStore).length > 0) {
-        await this.saveNotesPayload();
-        await chrome.storage.local.remove(STORAGE_KEYS.UTXO_STORE);
-        console.log('[Vault] Migration to encrypted notes blob complete');
+      // Complete migration: encrypt and remove legacy stores
+      if (!loadedFromEncrypted) {
+        const hasData = Object.keys(utxoStore).length > 0 || Object.keys(walletTxStore).length > 0;
+        if (hasData) {
+          await this.saveNotesAndTxsPayload();
+          await chrome.storage.local.remove([STORAGE_KEYS.UTXO_STORE, STORAGE_KEYS.WALLET_TX_STORE]);
+          console.log('[Vault] Migration complete');
+        }
       }
 
       this.state = {
@@ -548,6 +565,7 @@ export class Vault {
     this.mnemonic = null;
     this.encryptionKey = null;
     this.utxoStore = {};
+    this.walletTxStore = {};
     return { ok: true };
   }
 
@@ -682,16 +700,18 @@ export class Vault {
   // ============================================================================
 
   /**
-   * Save the notes payload (utxoStore) to encrypted storage.
+   * Save the notes payload (utxoStore + walletTxStore) to encrypted storage.
    * This blob changes frequently - on every transaction and sync.
+   * Notes and transactions are saved atomically to prevent inconsistency.
    */
-  async saveNotesPayload(): Promise<void> {
+  async saveNotesAndTxsPayload(): Promise<void> {
     if (!this.encryptionKey) {
       throw new Error('Cannot save notes: vault is locked or not initialized');
     }
 
-    const payload: NotesPayload = {
+    const payload: NotesAndTxPayload = {
       utxoStore: this.utxoStore,
+      walletTxStore: this.walletTxStore,
     };
 
     const json = JSON.stringify(payload);
@@ -733,7 +753,7 @@ export class Vault {
     this.utxoStore[accountAddress].notes = Array.from(existingMap.values());
     this.utxoStore[accountAddress].version += 1;
 
-    await this.saveNotesPayload();
+    await this.saveNotesAndTxsPayload();
   }
 
   /**
@@ -769,7 +789,7 @@ export class Vault {
 
     this.utxoStore[accountAddress].version += 1;
 
-    await this.saveNotesPayload();
+    await this.saveNotesAndTxsPayload();
   }
 
   /**
@@ -789,7 +809,7 @@ export class Vault {
 
     this.utxoStore[accountAddress].version += 1;
 
-    await this.saveNotesPayload();
+    await this.saveNotesAndTxsPayload();
   }
 
   /**
@@ -810,7 +830,7 @@ export class Vault {
 
     this.utxoStore[accountAddress].version += 1;
 
-    await this.saveNotesPayload();
+    await this.saveNotesAndTxsPayload();
   }
 
   /**
@@ -832,7 +852,7 @@ export class Vault {
     const removed = before - this.utxoStore[accountAddress].notes.length;
     if (removed > 0) {
       this.utxoStore[accountAddress].version += 1;
-      await this.saveNotesPayload();
+      await this.saveNotesAndTxsPayload();
     }
 
     return removed;
@@ -851,7 +871,95 @@ export class Vault {
     this.utxoStore[accountAddress].notes = notes;
     this.utxoStore[accountAddress].version += 1;
 
-    await this.saveNotesPayload();
+    await this.saveNotesAndTxsPayload();
+  }
+
+  // ============================================================================
+  // Wallet Transaction Methods (auto-persist to encrypted storage)
+  // ============================================================================
+
+  /**
+   * Get all wallet transactions for an account
+   */
+  getWalletTransactions(accountAddress: string): WalletTransaction[] {
+    return this.walletTxStore[accountAddress] || [];
+  }
+
+  /**
+   * Add a new wallet transaction
+   * Automatically persists to encrypted storage
+   */
+  async addWalletTransaction(tx: WalletTransaction): Promise<void> {
+    if (!this.walletTxStore[tx.accountAddress]) {
+      this.walletTxStore[tx.accountAddress] = [];
+    }
+
+    // Check for duplicate
+    const exists = this.walletTxStore[tx.accountAddress].some(t => t.id === tx.id);
+    if (exists) {
+      console.warn(`[Vault] Transaction ${tx.id} already exists, skipping add`);
+      return;
+    }
+
+    // Add to beginning (most recent first)
+    this.walletTxStore[tx.accountAddress].unshift(tx);
+
+    // Limit to 200 transactions per account
+    if (this.walletTxStore[tx.accountAddress].length > 200) {
+      this.walletTxStore[tx.accountAddress] = this.walletTxStore[tx.accountAddress].slice(0, 200);
+    }
+
+    await this.saveNotesAndTxsPayload();
+  }
+
+  /**
+   * Update a wallet transaction
+   * Automatically persists to encrypted storage
+   */
+  async updateWalletTransaction(
+    accountAddress: string,
+    txId: string,
+    updates: Partial<WalletTransaction>
+  ): Promise<void> {
+    if (!this.walletTxStore[accountAddress]) {
+      return;
+    }
+
+    const txIndex = this.walletTxStore[accountAddress].findIndex(t => t.id === txId);
+    if (txIndex === -1) {
+      console.warn(`[Vault] Transaction ${txId} not found for update`);
+      return;
+    }
+
+    this.walletTxStore[accountAddress][txIndex] = {
+      ...this.walletTxStore[accountAddress][txIndex],
+      ...updates,
+      updatedAt: Date.now(),
+    };
+
+    await this.saveNotesAndTxsPayload();
+  }
+
+  /**
+   * Get pending outgoing transactions (for expiry checking)
+   */
+  getPendingOutgoingTransactions(accountAddress: string): WalletTransaction[] {
+    const transactions = this.getWalletTransactions(accountAddress);
+    return transactions.filter(
+      t =>
+        t.direction === 'outgoing' &&
+        (t.status === 'created' ||
+          t.status === 'broadcast_pending' ||
+          t.status === 'broadcasted_unconfirmed')
+    );
+  }
+
+  /**
+   * Get all outgoing transactions (pending + confirmed) for change detection
+   */
+  getAllOutgoingTransactions(accountAddress: string): WalletTransaction[] {
+    const transactions = this.getWalletTransactions(accountAddress);
+    return transactions.filter(t => t.direction === 'outgoing');
   }
 
   // =============================================
@@ -909,8 +1017,8 @@ export class Vault {
 
       // 2. Get local state (from in-memory encrypted store)
       const localNotes = this.getAccountNotes(accountAddress);
-      const pendingTxs = await getPendingOutgoingTransactions(accountAddress);
-      const allOutgoingTxs = await getAllOutgoingTransactions(accountAddress);
+      const pendingTxs = this.getPendingOutgoingTransactions(accountAddress);
+      const allOutgoingTxs = this.getAllOutgoingTransactions(accountAddress);
 
       // 3. Compute diff (pass all outgoing txs for change detection)
       const diff = computeUTXODiff(localNotes, fetchedUTXOs, pendingTxs, allOutgoingTxs);
@@ -926,7 +1034,7 @@ export class Vault {
             // Find change outputs for this transaction
             const changeNoteIds = matchChangeOutputs(tx, diff.newUTXOs, diff.isChangeMap);
 
-            await updateWalletTransaction(accountAddress, tx.id, {
+            await this.updateWalletTransaction(accountAddress, tx.id, {
               status: 'confirmed',
               expectedChangeNoteIds: changeNoteIds,
             });
@@ -952,7 +1060,7 @@ export class Vault {
           const incomingTxId = crypto.randomUUID();
           const now = Date.now();
 
-          await addWalletTransaction({
+          await this.addWalletTransaction({
             id: incomingTxId,
             txHash: newUTXO.sourceHash,
             accountAddress,
@@ -991,7 +1099,7 @@ export class Vault {
           const allInputsSpent = tx.inputNoteIds.every(noteId => spentNoteIds.has(noteId));
 
           if (allInputsSpent) {
-            await updateWalletTransaction(accountAddress, tx.id, {
+            await this.updateWalletTransaction(accountAddress, tx.id, {
               status: 'confirmed',
             });
             confirmedFromPreviousSpent++;
@@ -1000,7 +1108,7 @@ export class Vault {
       }
 
       // 6. Handle expired transactions
-      const allTxs = await getWalletTransactions(accountAddress);
+      const allTxs = this.getWalletTransactions(accountAddress);
       const expiredTxs = findExpiredTransactions(allTxs, Vault.TX_EXPIRY_MS);
 
       for (const expiredTx of expiredTxs) {
@@ -1008,7 +1116,7 @@ export class Vault {
           await this.releaseInFlightNotes(accountAddress, expiredTx.inputNoteIds);
         }
 
-        await updateWalletTransaction(accountAddress, expiredTx.id, {
+        await this.updateWalletTransaction(accountAddress, expiredTx.id, {
           status: 'expired',
         });
       }
@@ -1043,7 +1151,7 @@ export class Vault {
     availableUtxoCount: number;
   }> {
     const notes = this.getAccountNotes(accountAddress);
-    const pendingTxs = await getPendingOutgoingTransactions(accountAddress);
+    const pendingTxs = this.getPendingOutgoingTransactions(accountAddress);
 
     const availableNotes = notes.filter(n => n.state === 'available');
     const pendingNotes = notes.filter(n => n.state === 'in_flight');
@@ -1914,7 +2022,7 @@ export class Vault {
             fee: estimatedFee,
             expectedChange: expectedChange > 0 ? expectedChange : 0,
           };
-          await addWalletTransaction(walletTx);
+          await this.addWalletTransaction(walletTx);
 
           // 6. Convert stored notes to transaction builder format
           const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
@@ -1943,7 +2051,7 @@ export class Vault {
           walletTx.fee = constructedTx.feeUsed;
           walletTx.txHash = constructedTx.txId;
           walletTx.status = 'broadcasted_unconfirmed';
-          await updateWalletTransaction(currentAccount.address, walletTxId, {
+          await this.updateWalletTransaction(currentAccount.address, walletTxId, {
             fee: constructedTx.feeUsed,
             txHash: constructedTx.txId,
             status: 'broadcasted_unconfirmed',
@@ -1969,7 +2077,7 @@ export class Vault {
         if (selectedNoteIds.length > 0) {
           try {
             await this.releaseInFlightNotes(currentAccount.address, selectedNoteIds);
-            await updateWalletTransaction(currentAccount.address, walletTxId, {
+            await this.updateWalletTransaction(currentAccount.address, walletTxId, {
               status: 'failed',
             });
           } catch (releaseError) {
