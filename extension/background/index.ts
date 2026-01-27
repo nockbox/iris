@@ -800,6 +800,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
+      case INTERNAL_METHODS.GET_CACHED_BALANCES:
+        // Get cached balances from encrypted store
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+        try {
+          const balances = vault.getCachedBalances();
+          sendResponse({ ok: true, balances });
+        } catch (err) {
+          console.error('[Background] GET_CACHED_BALANCES error:', err);
+          sendResponse({ error: 'Failed to get cached balances' });
+        }
+        return;
+
+      case INTERNAL_METHODS.SET_CACHED_BALANCES:
+        // Update cached balances in encrypted store
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+        const balancesToSet = payload.params?.[0] as Record<string, number> | undefined;
+        if (!balancesToSet || typeof balancesToSet !== 'object') {
+          sendResponse({ error: 'Balances object required' });
+          return;
+        }
+        try {
+          await vault.setCachedBalances(balancesToSet);
+          sendResponse({ ok: true });
+        } catch (err) {
+          console.error('[Background] SET_CACHED_BALANCES error:', err);
+          sendResponse({ error: 'Failed to set cached balances' });
+        }
+        return;
+
       case INTERNAL_METHODS.INITIALIZE_ACCOUNT_UTXOS:
         // Initialize UTXOs for a specific account
         const initAddress = payload.params?.[0];

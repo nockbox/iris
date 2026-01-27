@@ -138,12 +138,14 @@ interface EncryptedNotesBlob {
 }
 
 /**
- * Encrypted notes payload - includes both UTXOs and wallet transactions
- * Saved atomically to prevent inconsistency between notes and transactions
+ * Encrypted account data - frequently changing data tied to accounts
+ * Stored separately from VaultPayload (mnemonic/accounts) for efficiency
+ * All fields saved atomically to prevent inconsistency
  */
-interface NotesAndTxPayload {
+interface EncryptedAccountData {
   utxoStore: UTXOStore;
   walletTxStore: WalletTxStore;
+  cachedBalances: Record<string, number>; // address -> balance in nicks
 }
 
 /**
@@ -202,6 +204,9 @@ export class Vault {
 
   /** Decrypted wallet transactions (only stored in memory while unlocked) */
   private walletTxStore: WalletTxStore = {};
+
+  /** Cached balances per account (only stored in memory while unlocked) */
+  private cachedBalances: Record<string, number> = {};
 
   /**
    * Check if a vault exists in storage (without decrypting)
@@ -350,6 +355,7 @@ export class Vault {
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
       STORAGE_KEYS.UTXO_STORE, // For legacy migration check
       STORAGE_KEYS.WALLET_TX_STORE, // For legacy migration check
+      STORAGE_KEYS.CACHED_BALANCES, // For legacy migration check
     ]);
     // Change to let to allow reassignment if migrating
     let enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
@@ -386,9 +392,10 @@ export class Vault {
       const mnemonic = payload.mnemonic;
       const accounts = payload.accounts;
 
-      // Load notes and transactions from separate encrypted blob
+      // Load account data from separate encrypted blob
       let utxoStore: UTXOStore = {};
       let walletTxStore: WalletTxStore = {};
+      let cachedBalances: Record<string, number> = {};
       let loadedFromEncrypted = false;
 
       if (encNotes) {
@@ -399,11 +406,12 @@ export class Vault {
         ).catch(() => null);
 
         if (notesPt) {
-          const notesPayload = JSON.parse(notesPt) as NotesAndTxPayload;
-          utxoStore = notesPayload.utxoStore || {};
-          walletTxStore = notesPayload.walletTxStore || {};
+          const accountData = JSON.parse(notesPt) as EncryptedAccountData;
+          utxoStore = accountData.utxoStore || {};
+          walletTxStore = accountData.walletTxStore || {};
+          cachedBalances = accountData.cachedBalances || {};
           loadedFromEncrypted = true;
-          console.log('[Vault] Loaded notes from encrypted blob');
+          console.log('[Vault] Loaded account data from encrypted blob');
         }
       }
 
@@ -411,14 +419,18 @@ export class Vault {
       if (!loadedFromEncrypted) {
         const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
         const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as WalletTxStore | undefined;
+        const legacyCachedBalances = stored[STORAGE_KEYS.CACHED_BALANCES] as Record<string, number> | undefined;
+
         const hasLegacyData =
           (legacyUtxoStore && Object.keys(legacyUtxoStore).length > 0) ||
-          (legacyWalletTxStore && Object.keys(legacyWalletTxStore).length > 0);
+          (legacyWalletTxStore && Object.keys(legacyWalletTxStore).length > 0) ||
+          (legacyCachedBalances && Object.keys(legacyCachedBalances).length > 0);
 
         if (hasLegacyData) {
           console.log('[Vault] Migrating legacy unencrypted stores to encrypted blob');
           utxoStore = legacyUtxoStore || {};
           walletTxStore = legacyWalletTxStore || {};
+          cachedBalances = legacyCachedBalances || {};
         }
       }
 
@@ -427,13 +439,21 @@ export class Vault {
       this.encryptionKey = key;
       this.utxoStore = utxoStore;
       this.walletTxStore = walletTxStore;
+      this.cachedBalances = cachedBalances;
 
       // Complete migration: encrypt and remove legacy stores
       if (!loadedFromEncrypted) {
-        const hasData = Object.keys(utxoStore).length > 0 || Object.keys(walletTxStore).length > 0;
+        const hasData =
+          Object.keys(utxoStore).length > 0 ||
+          Object.keys(walletTxStore).length > 0 ||
+          Object.keys(cachedBalances).length > 0;
         if (hasData) {
-          await this.saveNotesAndTxsPayload();
-          await chrome.storage.local.remove([STORAGE_KEYS.UTXO_STORE, STORAGE_KEYS.WALLET_TX_STORE]);
+          await this.saveAccountData();
+          await chrome.storage.local.remove([
+            STORAGE_KEYS.UTXO_STORE,
+            STORAGE_KEYS.WALLET_TX_STORE,
+            STORAGE_KEYS.CACHED_BALANCES,
+          ]);
           console.log('[Vault] Migration complete');
         }
       }
@@ -506,6 +526,7 @@ export class Vault {
     this.encryptionKey = null;
     this.utxoStore = {};
     this.walletTxStore = {};
+    this.cachedBalances = {};
     return { ok: true };
   }
 
@@ -640,18 +661,19 @@ export class Vault {
   // ============================================================================
 
   /**
-   * Save the notes payload (utxoStore + walletTxStore) to encrypted storage.
+   * Save account data (notes, transactions, balances) to encrypted storage.
    * This blob changes frequently - on every transaction and sync.
-   * Notes and transactions are saved atomically to prevent inconsistency.
+   * All data saved atomically to prevent inconsistency.
    */
-  async saveNotesAndTxsPayload(): Promise<void> {
+  async saveAccountData(): Promise<void> {
     if (!this.encryptionKey) {
-      throw new Error('Cannot save notes: vault is locked or not initialized');
+      throw new Error('Cannot save account data: vault is locked or not initialized');
     }
 
-    const payload: NotesAndTxPayload = {
+    const payload: EncryptedAccountData = {
       utxoStore: this.utxoStore,
       walletTxStore: this.walletTxStore,
+      cachedBalances: this.cachedBalances,
     };
 
     const json = JSON.stringify(payload);
@@ -693,7 +715,7 @@ export class Vault {
     this.utxoStore[accountAddress].notes = Array.from(existingMap.values());
     this.utxoStore[accountAddress].version += 1;
 
-    await this.saveNotesAndTxsPayload();
+    await this.saveAccountData();
   }
 
   /**
@@ -729,7 +751,7 @@ export class Vault {
 
     this.utxoStore[accountAddress].version += 1;
 
-    await this.saveNotesAndTxsPayload();
+    await this.saveAccountData();
   }
 
   /**
@@ -749,7 +771,7 @@ export class Vault {
 
     this.utxoStore[accountAddress].version += 1;
 
-    await this.saveNotesAndTxsPayload();
+    await this.saveAccountData();
   }
 
   /**
@@ -770,7 +792,7 @@ export class Vault {
 
     this.utxoStore[accountAddress].version += 1;
 
-    await this.saveNotesAndTxsPayload();
+    await this.saveAccountData();
   }
 
   /**
@@ -792,7 +814,7 @@ export class Vault {
     const removed = before - this.utxoStore[accountAddress].notes.length;
     if (removed > 0) {
       this.utxoStore[accountAddress].version += 1;
-      await this.saveNotesAndTxsPayload();
+      await this.saveAccountData();
     }
 
     return removed;
@@ -811,7 +833,7 @@ export class Vault {
     this.utxoStore[accountAddress].notes = notes;
     this.utxoStore[accountAddress].version += 1;
 
-    await this.saveNotesAndTxsPayload();
+    await this.saveAccountData();
   }
 
   // ============================================================================
@@ -849,7 +871,7 @@ export class Vault {
       this.walletTxStore[tx.accountAddress] = this.walletTxStore[tx.accountAddress].slice(0, 200);
     }
 
-    await this.saveNotesAndTxsPayload();
+    await this.saveAccountData();
   }
 
   /**
@@ -877,7 +899,7 @@ export class Vault {
       updatedAt: Date.now(),
     };
 
-    await this.saveNotesAndTxsPayload();
+    await this.saveAccountData();
   }
 
   /**
@@ -902,6 +924,24 @@ export class Vault {
     return transactions.filter(t => t.direction === 'outgoing');
   }
 
+  // ============================================================================
+  // Cached Balance Methods (auto-persist to encrypted storage)
+  // ============================================================================
+
+  /**
+   * Get cached balances for all accounts
+   */
+  getCachedBalances(): Record<string, number> {
+    return { ...this.cachedBalances };
+  }
+  /**
+   * Update cached balances (batch update)
+   * Automatically persists to encrypted storage
+   */
+  async setCachedBalances(balances: Record<string, number>): Promise<void> {
+    this.cachedBalances = { ...balances };
+    await this.saveAccountData();
+  }
   // =============================================
   // UTXO Sync Methods
   // =============================================

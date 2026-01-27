@@ -269,10 +269,16 @@ export const useStore = create<AppStore>((set, get) => ({
         currentAccount: Account | null;
       }>(INTERNAL_METHODS.GET_STATE);
 
-      // Load cached balances from storage (for offline access)
-      const { STORAGE_KEYS } = await import('../shared/constants');
-      const stored = await chrome.storage.local.get([STORAGE_KEYS.CACHED_BALANCES]);
-      const cachedBalances = (stored[STORAGE_KEYS.CACHED_BALANCES] || {}) as Record<string, number>;
+      // Load cached balances from encrypted storage (only if unlocked)
+      let cachedBalances: Record<string, number> = {};
+      if (!state.locked) {
+        const balanceResp = await send<{ ok?: boolean; balances?: Record<string, number> }>(
+          INTERNAL_METHODS.GET_CACHED_BALANCES
+        );
+        if (balanceResp?.ok && balanceResp.balances) {
+          cachedBalances = balanceResp.balances;
+        }
+      }
 
       // Initial wallet state with confirmed balances (available balance computed after TX fetch)
       const confirmedBalance = state.currentAccount
@@ -396,12 +402,9 @@ export const useStore = create<AppStore>((set, get) => ({
       const currentBalance = accountBalances[currentAccount.address] ?? 0;
       const currentSpendable = accountSpendableBalances[currentAccount.address] ?? 0;
 
-      // Persist balances to chrome.storage.local for offline access
+      // Persist balances to encrypted storage
       try {
-        const { STORAGE_KEYS } = await import('../shared/constants');
-        await chrome.storage.local.set({
-          [STORAGE_KEYS.CACHED_BALANCES]: accountBalances,
-        });
+        await send(INTERNAL_METHODS.SET_CACHED_BALANCES, [accountBalances]);
       } catch (cacheErr) {
         console.warn('[Store] Failed to cache balances:', cacheErr);
       }

@@ -60,10 +60,12 @@ export function LockedScreen() {
       const accounts = result.accounts || [];
       const currentAccount = result.currentAccount || accounts[0] || null;
 
-      // Load cached balances from storage
-      const { STORAGE_KEYS } = await import('../../../shared/constants');
-      const stored = await chrome.storage.local.get([STORAGE_KEYS.CACHED_BALANCES]);
-      const cachedBalances = (stored[STORAGE_KEYS.CACHED_BALANCES] || {}) as Record<string, number>;
+      // Load cached balances from encrypted storage (now unlocked)
+      const { INTERNAL_METHODS: IM } = await import('../../../shared/constants');
+      const balanceResp = await send<{ ok?: boolean; balances?: Record<string, number> }>(
+        IM.GET_CACHED_BALANCES
+      );
+      const cachedBalances = balanceResp?.balances || {};
       const cachedBalance = currentAccount ? (cachedBalances[currentAccount.address] ?? 0) : 0;
 
       syncWallet({
