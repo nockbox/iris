@@ -459,7 +459,7 @@ export const useStore = create<AppStore>((set, get) => ({
         ok?: boolean;
         transactions?: WalletTransaction[];
         error?: string;
-      }>('wallet:getWalletTransactions', [fetchingForAddress]);
+      }>(INTERNAL_METHODS.GET_WALLET_TRANSACTIONS, [fetchingForAddress]);
 
       if (response?.error) {
         console.error('Failed to fetch wallet transactions:', response.error);
