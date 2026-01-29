@@ -2,12 +2,7 @@
  * UTXO utils
  */
 
-import type {
-  StoredNote,
-  NoteState,
-  FetchedUTXO,
-  Note,
-} from './types';
+import type { StoredNote, NoteState, FetchedUTXO, Note } from './types';
 import { base58 } from '@scure/base';
 
 // ============================================================================
