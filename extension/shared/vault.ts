@@ -30,7 +30,7 @@ import {
   fetchedToStoredNote,
   noteToStoredNote,
   generateNoteId,
-} from './utxo-store';
+} from './utxo-utils';
 import {
   computeUTXODiff,
   classifyNewUTXO,
