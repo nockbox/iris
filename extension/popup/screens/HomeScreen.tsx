@@ -96,16 +96,22 @@ export function HomeScreen() {
     fetchWalletTransactions();
   }, [fetchWalletTransactions, wallet.currentAccount?.address]);
 
-  // Listen for storage changes to wallet transactions and auto-refresh UI
-  // This keeps the UI in sync when background sync updates transaction status
+  // Listen for encrypted account data changes and auto-refresh wallet transactions
+  // (wallet tx store is inside encrypted account data; WALLET_TX_STORE key is deprecated)
+  // Debounced to avoid rapid-fire refetches during sync bursts
   useEffect(() => {
+    let timeout: ReturnType<typeof setTimeout>;
     const listener = (changes: { [key: string]: chrome.storage.StorageChange }) => {
-      if (changes[STORAGE_KEYS.WALLET_TX_STORE]) {
-        fetchWalletTransactions();
+      if (changes[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA]) {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => fetchWalletTransactions(), 300);
       }
     };
     chrome.storage.onChanged.addListener(listener);
-    return () => chrome.storage.onChanged.removeListener(listener);
+    return () => {
+      chrome.storage.onChanged.removeListener(listener);
+      clearTimeout(timeout);
+    };
   }, [fetchWalletTransactions]);
 
   // Check RPC connection status on mount and after balance fetching completes
