@@ -22,6 +22,7 @@ import { buildMultiNotePayment, type Note } from './transaction-builder';
 import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
+import { getEffectiveRpcEndpoint } from './rpc-config';
 import type { Note as BalanceNote } from './types';
 import { base58 } from '@scure/base';
 import { initWasmModules } from './wasm-utils';
@@ -873,8 +874,8 @@ export class Vault {
     }
 
     try {
-      // Create RPC client
-      const rpcClient = createBrowserClient();
+      const endpoint = await getEffectiveRpcEndpoint();
+      const rpcClient = createBrowserClient(endpoint);
       const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
       if (balanceResult.utxoCount === 0) {
@@ -952,7 +953,8 @@ export class Vault {
       }
 
       try {
-        const rpcClient = createBrowserClient();
+        const endpoint = await getEffectiveRpcEndpoint();
+        const rpcClient = createBrowserClient(endpoint);
         const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
         if (balanceResult.utxoCount === 0) {
@@ -1153,8 +1155,8 @@ export class Vault {
       }
 
       try {
-        // Create RPC client
-        const rpcClient = createBrowserClient();
+        const endpoint = await getEffectiveRpcEndpoint();
+        const rpcClient = createBrowserClient(endpoint);
         const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
         if (balanceResult.utxoCount === 0) {
@@ -1325,7 +1327,8 @@ export class Vault {
           const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
           const txBuilderNotes = sortedStoredNotes.map(convertStoredNoteForTxBuilder);
 
-          const rpcClient = createBrowserClient();
+          const endpoint = await getEffectiveRpcEndpoint();
+          const rpcClient = createBrowserClient(endpoint);
 
           // For sendMax: set refundPKH = recipient so all funds go to recipient (sweep)
           const refundAddress = sendMax ? to : undefined;

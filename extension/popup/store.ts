@@ -37,6 +37,7 @@ export type Screen =
   | 'theme-settings'
   | 'lock-time'
   | 'key-settings'
+  | 'rpc-settings'
   | 'view-secret-phrase'
   | 'wallet-permissions'
   | 'wallet-settings'
@@ -353,7 +354,9 @@ export const useStore = create<AppStore>((set, get) => ({
       try {
         const { syncAccountUTXOs } = await import('../shared/utxo-sync');
         const { createBrowserClient } = await import('../shared/rpc-client-browser');
-        const rpcClient = createBrowserClient();
+        const { getEffectiveRpcEndpoint } = await import('../shared/rpc-config');
+        const endpoint = await getEffectiveRpcEndpoint();
+        const rpcClient = createBrowserClient(endpoint);
 
         for (const account of accounts) {
           try {
