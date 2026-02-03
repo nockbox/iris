@@ -37,6 +37,7 @@ export type Screen =
   | 'theme-settings'
   | 'lock-time'
   | 'key-settings'
+  | 'rpc-settings'
   | 'view-secret-phrase'
   | 'wallet-permissions'
   | 'wallet-settings'

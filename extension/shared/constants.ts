@@ -248,6 +248,9 @@ export const STORAGE_KEYS = {
 
   /** Whether the user manually locked the wallet (survives SW restarts) */
   MANUALLY_LOCKED: 'manuallyLocked',
+
+  /** User RPC/network config (endpoint, chainId, etc.); falls back to defaults if unset */
+  RPC_CONFIG: 'rpcConfig',
 } as const;
 
 /**
@@ -285,6 +288,9 @@ export const AUTOLOCK_MINUTES = 0;
 
 /** Default RPC endpoint URL */
 export const RPC_ENDPOINT = 'https://rpc.nockbox.org';
+
+/** Default Chain ID */
+export const CHAIN_ID = 'nockchain-1';
 
 /**
  * Nockchain Currency Conversion
