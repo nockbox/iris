@@ -137,6 +137,11 @@ interface AppStore {
   priceChange24h: number;
   isPriceFetching: boolean;
 
+  // RPC display config (currency symbol, block explorer URL - from RPC settings)
+  currencySymbol: string;
+  blockExplorerUrl: string;
+  refreshRpcDisplayConfig: () => Promise<void>;
+
   // Initialize app - checks vault status and navigates appropriately
   initialize: () => Promise<void>;
 
@@ -184,6 +189,19 @@ export const useStore = create<AppStore>((set, get) => ({
   priceUsd: 0,
   priceChange24h: 0,
   isPriceFetching: false,
+
+  currencySymbol: 'NOCK',
+  blockExplorerUrl: 'https://nockscan.net',
+
+  refreshRpcDisplayConfig: async () => {
+    try {
+      const { getEffectiveRpcConfig } = await import('../shared/rpc-config');
+      const config = await getEffectiveRpcConfig();
+      set({ currencySymbol: config.currencySymbol, blockExplorerUrl: config.blockExplorerUrl });
+    } catch {
+      // Keep defaults on error
+    }
+  },
 
   // Navigate to a new screen
   navigate: (screen: Screen) => {
@@ -323,6 +341,8 @@ export const useStore = create<AppStore>((set, get) => ({
         currentScreen: initialScreen,
         isInitialized: true,
       });
+
+      await get().refreshRpcDisplayConfig();
 
       // Fetch balance if wallet is unlocked
       if (!walletState.locked && walletState.address) {

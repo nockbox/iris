@@ -11,7 +11,7 @@ import {
 } from '../../shared/rpc-config';
 
 export function RpcSettingsScreen() {
-  const { navigate } = useStore();
+  const { navigate, refreshRpcDisplayConfig } = useStore();
   const menuRef = useRef<HTMLDivElement>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [networkName, setNetworkName] = useState(defaultRpcConfig.networkName);
@@ -20,6 +20,7 @@ export function RpcSettingsScreen() {
   const [currencySymbol, setCurrencySymbol] = useState(defaultRpcConfig.currencySymbol);
   const [blockExplorerUrl, setBlockExplorerUrl] = useState(defaultRpcConfig.blockExplorerUrl);
   const [isLoading, setIsLoading] = useState(true);
+  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   useClickOutside(menuRef, () => setMenuOpen(false), menuOpen);
 
@@ -39,13 +40,21 @@ export function RpcSettingsScreen() {
   }
 
   async function handleSave() {
-    await saveRpcConfig({
-      networkName,
-      rpcUrl: rpcUrl.trim(),
-      chainId: chainId.trim(),
-      currencySymbol: currencySymbol.trim(),
-      blockExplorerUrl: blockExplorerUrl.trim(),
-    });
+    setSaveStatus('saving');
+    try {
+      await saveRpcConfig({
+        networkName,
+        rpcUrl: rpcUrl.trim(),
+        chainId: chainId.trim(),
+        currencySymbol: currencySymbol.trim(),
+        blockExplorerUrl: blockExplorerUrl.trim(),
+      });
+      await refreshRpcDisplayConfig();
+      setSaveStatus('saved');
+      setTimeout(() => setSaveStatus('idle'), 2000);
+    } catch {
+      setSaveStatus('idle');
+    }
   }
 
   async function handleResetToDefault() {
@@ -232,10 +241,15 @@ export function RpcSettingsScreen() {
         <button
           type="button"
           onClick={handleSave}
-          className="w-full h-12 rounded-lg text-sm font-medium leading-[18px] tracking-[0.14px] transition-opacity hover:opacity-90 active:opacity-80"
+          disabled={saveStatus === 'saving'}
+          className="w-full h-12 rounded-lg text-sm font-medium leading-[18px] tracking-[0.14px] transition-opacity hover:opacity-90 active:opacity-80 disabled:opacity-70 disabled:cursor-not-allowed"
           style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
         >
-          Save
+          {saveStatus === 'saving'
+            ? 'Saving...'
+            : saveStatus === 'saved'
+              ? 'Saved!'
+              : 'Save'}
         </button>
       </div>
     </div>
