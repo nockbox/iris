@@ -47,6 +47,7 @@ export function HomeScreen() {
     priceUsd,
     priceChange24h,
     isPriceFetching,
+    blockExplorerUrl,
   } = useStore();
   const { theme } = useTheme();
 
@@ -533,7 +534,10 @@ export function HomeScreen() {
                 icon={ExplorerIcon}
                 label="View on explorer"
                 onClick={() =>
-                  window.open(`https://nockscan.net/address/${currentAccount?.address}`, '_blank')
+                  window.open(
+                    `${blockExplorerUrl.replace(/\/$/, '')}/address/${currentAccount?.address}`,
+                    '_blank'
+                  )
                 }
               />
               <DropdownItem
@@ -694,7 +698,7 @@ export function HomeScreen() {
                 Recent Transactions
               </h2>
               <a
-                href={`https://nockscan.net/address/${currentAccount?.address}`}
+                href={`${blockExplorerUrl.replace(/\/$/, '')}/address/${currentAccount?.address}`}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[12px] font-medium rounded-full pl-[12px] pr-[16px] py-[3px] flex items-center gap-[4px] transition-opacity"
