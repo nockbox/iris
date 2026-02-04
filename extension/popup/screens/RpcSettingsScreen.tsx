@@ -1,32 +1,37 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
+import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
 import RefreshIcon from '../assets/refresh-icon.svg';
 import {
   defaultRpcConfig,
   getEffectiveRpcConfig,
   saveRpcConfig,
   clearRpcConfig,
+  BLOCK_EXPLORER_OPTIONS,
 } from '../../shared/rpc-config';
 
 export function RpcSettingsScreen() {
   const { navigate, refreshRpcDisplayConfig } = useStore();
-  const menuRef = useRef<HTMLDivElement>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
   const [networkName, setNetworkName] = useState(defaultRpcConfig.networkName);
   const [rpcUrl, setRpcUrl] = useState(defaultRpcConfig.rpcUrl);
   const [blockExplorerUrl, setBlockExplorerUrl] = useState(defaultRpcConfig.blockExplorerUrl);
+  const [explorerOpen, setExplorerOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const explorerRef = useRef<HTMLDivElement>(null);
 
-  useClickOutside(menuRef, () => setMenuOpen(false), menuOpen);
+  useClickOutside(explorerRef, () => setExplorerOpen(false), explorerOpen);
 
   useEffect(() => {
     getEffectiveRpcConfig().then(config => {
       setNetworkName(config.networkName);
       setRpcUrl(config.rpcUrl);
-      setBlockExplorerUrl(config.blockExplorerUrl);
+      const explorerUrl = BLOCK_EXPLORER_OPTIONS.some(o => o.value === config.blockExplorerUrl)
+        ? config.blockExplorerUrl
+        : defaultRpcConfig.blockExplorerUrl;
+      setBlockExplorerUrl(explorerUrl);
       setIsLoading(false);
     });
   }, []);
@@ -41,7 +46,7 @@ export function RpcSettingsScreen() {
       await saveRpcConfig({
         networkName,
         rpcUrl: rpcUrl.trim(),
-        blockExplorerUrl: blockExplorerUrl.trim(),
+        blockExplorerUrl,
       });
       await refreshRpcDisplayConfig();
       setSaveStatus('saved');
@@ -56,9 +61,7 @@ export function RpcSettingsScreen() {
     setRpcUrl(defaultRpcConfig.rpcUrl);
     setBlockExplorerUrl(defaultRpcConfig.blockExplorerUrl);
     await clearRpcConfig();
-    setMenuOpen(false);
   }
-
 
   const inputClass =
     'w-full h-[52px] bg-transparent rounded-lg px-3 py-4 outline-none transition-colors text-sm leading-[18px] tracking-[0.14px] font-medium';
@@ -90,64 +93,10 @@ export function RpcSettingsScreen() {
         >
           <ChevronLeftIcon className="w-5 h-5" />
         </button>
-
         <h1 className="m-0 text-base font-medium leading-[22px] tracking-[0.16px]">
           RPC settings
         </h1>
-
-        <div ref={menuRef} className="relative shrink-0">
-          <button
-            type="button"
-            aria-label="More options"
-            aria-expanded={menuOpen}
-            aria-haspopup="true"
-            className="w-8 h-8 flex items-center justify-center rounded-lg transition-colors focus:outline-none focus-visible:ring-2"
-            style={{ color: 'var(--color-text-primary)' }}
-            onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--color-surface-800)')}
-            onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
-            onClick={() => setMenuOpen(open => !open)}
-          >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <circle cx="12" cy="6" r="1.5" />
-              <circle cx="12" cy="12" r="1.5" />
-              <circle cx="12" cy="18" r="1.5" />
-            </svg>
-          </button>
-
-          {menuOpen && (
-            <div
-              className="absolute right-0 top-full mt-1 min-w-[180px] rounded-lg z-50 border overflow-hidden"
-              style={{
-                backgroundColor: 'var(--color-bg)',
-                borderColor: 'var(--color-surface-700)',
-              }}
-              role="menu"
-            >
-              <button
-                type="button"
-                role="menuitem"
-                className="w-full flex items-center gap-2.5 px-3 py-2.5 rounded-lg text-left font-medium text-sm transition-colors focus:outline-none focus-visible:ring-2"
-                style={{ color: 'var(--color-text-primary)' }}
-                onMouseEnter={e => {
-                  e.currentTarget.style.backgroundColor = 'var(--color-surface-800)';
-                }}
-                onMouseLeave={e => {
-                  e.currentTarget.style.backgroundColor = 'transparent';
-                }}
-                onClick={handleResetToDefault}
-              >
-                <span
-                  className="w-7 h-7 rounded-md flex items-center justify-center shrink-0"
-                  style={{ backgroundColor: 'var(--color-surface-800)' }}
-                  aria-hidden
-                >
-                  <img src={RefreshIcon} alt="" className="w-4 h-4" />
-                </span>
-                Reset to default
-              </button>
-            </div>
-          )}
-        </div>
+        <div className="w-8 h-8" />
       </header>
 
       {/* Form */}
@@ -182,24 +131,76 @@ export function RpcSettingsScreen() {
           />
         </div>
 
-        <div className="flex flex-col gap-[6px]">
+        <div className="flex flex-col gap-[6px]" ref={explorerRef}>
           <label className={labelClass} style={labelStyle}>
-            Block explorer URL
+            Block explorer
           </label>
-          <input
-            type="text"
-            className={inputClass}
-            style={inputStyle}
-            value={blockExplorerUrl}
-            onChange={e => setBlockExplorerUrl(e.target.value)}
-            onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
-            onBlur={e => (e.currentTarget.style.borderColor = 'var(--color-surface-700)')}
-          />
+          <div className="relative">
+            <button
+              type="button"
+              onClick={() => setExplorerOpen(open => !open)}
+              aria-expanded={explorerOpen}
+              aria-haspopup="listbox"
+              aria-label="Block explorer"
+              className={inputClass + ' flex items-center justify-between cursor-pointer'}
+              style={inputStyle}
+            >
+              <span>
+                {BLOCK_EXPLORER_OPTIONS.find(o => o.value === blockExplorerUrl)?.label ??
+                  blockExplorerUrl}
+              </span>
+              <span
+                className="shrink-0 transition-transform"
+                style={{ transform: explorerOpen ? 'rotate(180deg)' : undefined }}
+              >
+                <ChevronDownIcon className="w-5 h-5" />
+              </span>
+            </button>
+            {explorerOpen && (
+              <div
+                className="absolute left-0 right-0 top-full mt-1 rounded-lg border overflow-hidden z-50"
+                style={{
+                  backgroundColor: 'var(--color-bg)',
+                  borderColor: 'var(--color-surface-700)',
+                }}
+                role="listbox"
+              >
+                {BLOCK_EXPLORER_OPTIONS.filter(opt => opt.value !== blockExplorerUrl).map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="option"
+                    className="w-full h-[52px] flex items-center px-3 text-left text-sm leading-[18px] tracking-[0.14px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset rounded-lg"
+                    style={{ color: 'var(--color-text-primary)' }}
+                    onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--color-surface-800)')}
+                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                    onClick={() => {
+                      setBlockExplorerUrl(opt.value);
+                      setExplorerOpen(false);
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Save button */}
-      <div className="p-4 pt-2 shrink-0">
+      {/* Reset + Save */}
+      <div className="p-4 pt-2 shrink-0 flex flex-col gap-3">
+        <button
+          type="button"
+          onClick={handleResetToDefault}
+          className="inline-flex items-center gap-2.5 px-3 py-2.5 rounded-lg font-medium text-sm transition-colors focus:outline-none focus-visible:ring-2 self-start"
+          style={{ color: 'var(--color-text-primary)' }}
+          onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--color-surface-800)')}
+          onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+        >
+          <img src={RefreshIcon} alt="" className="w-4 h-4" />
+          Reset to default
+        </button>
         <button
           type="button"
           onClick={handleSave}

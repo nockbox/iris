@@ -15,7 +15,14 @@ export interface RpcConfig {
 export type StoredRpcConfig = Partial<RpcConfig>;
 
 const DEFAULT_NETWORK_NAME = 'Nockchain Mainnet';
-const DEFAULT_BLOCK_EXPLORER_URL = 'https://nockscan.net';
+
+/** Allowed block explorer URLs (dropdown options) */
+export const BLOCK_EXPLORER_OPTIONS = [
+  { value: 'https://nockblocks.com/', label: 'NockBlocks' },
+  { value: 'https://nockscan.net/', label: 'NockScan' },
+] as const;
+
+const DEFAULT_BLOCK_EXPLORER_URL = 'https://nockscan.net/';
 
 /** Default RPC config (used when nothing is stored, and for "Reset to default") */
 export const defaultRpcConfig: RpcConfig = {
@@ -46,10 +53,16 @@ export async function getEffectiveRpcConfig(): Promise<RpcConfig> {
     return { ...defaultRpcConfig };
   }
 
+  const storedExplorer = stored.blockExplorerUrl?.trim();
+  const blockExplorerUrl =
+    storedExplorer && BLOCK_EXPLORER_OPTIONS.some(o => o.value === storedExplorer)
+      ? storedExplorer
+      : defaultRpcConfig.blockExplorerUrl;
+
   const merged: RpcConfig = {
     rpcUrl: stored.rpcUrl != null && stored.rpcUrl !== '' ? stored.rpcUrl : defaultRpcConfig.rpcUrl,
     networkName: stored.networkName ?? defaultRpcConfig.networkName,
-    blockExplorerUrl: stored.blockExplorerUrl ?? defaultRpcConfig.blockExplorerUrl,
+    blockExplorerUrl,
   };
   merged.rpcUrl = ensureHttps(merged.rpcUrl);
   return merged;
