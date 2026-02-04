@@ -93,9 +93,7 @@ export function RpcSettingsScreen() {
         >
           <ChevronLeftIcon className="w-5 h-5" />
         </button>
-        <h1 className="m-0 text-base font-medium leading-[22px] tracking-[0.16px]">
-          RPC settings
-        </h1>
+        <h1 className="m-0 text-base font-medium leading-[22px] tracking-[0.16px]">RPC settings</h1>
         <div className="w-8 h-8" />
       </header>
 
@@ -172,7 +170,9 @@ export function RpcSettingsScreen() {
                     role="option"
                     className="w-full h-[52px] flex items-center px-3 text-left text-sm leading-[18px] tracking-[0.14px] font-medium transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-inset rounded-lg"
                     style={{ color: 'var(--color-text-primary)' }}
-                    onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'var(--color-surface-800)')}
+                    onMouseEnter={e =>
+                      (e.currentTarget.style.backgroundColor = 'var(--color-surface-800)')
+                    }
                     onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
                     onClick={() => {
                       setBlockExplorerUrl(opt.value);
@@ -208,11 +208,7 @@ export function RpcSettingsScreen() {
           className="w-full h-12 rounded-lg text-sm font-medium leading-[18px] tracking-[0.14px] transition-opacity hover:opacity-90 active:opacity-80 disabled:opacity-70 disabled:cursor-not-allowed"
           style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
         >
-          {saveStatus === 'saving'
-            ? 'Saving...'
-            : saveStatus === 'saved'
-              ? 'Saved!'
-              : 'Save'}
+          {saveStatus === 'saving' ? 'Saving...' : saveStatus === 'saved' ? 'Saved!' : 'Save'}
         </button>
       </div>
     </div>

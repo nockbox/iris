@@ -1,7 +1,7 @@
 import { useStore } from '../store';
 import IrisLogo from '../assets/iris-logo.svg';
 import ThemeIcon from '../assets/theme-icon.svg';
-import RpcSettingsIcon from '../assets/rpc-settings-icon.svg'
+import RpcSettingsIcon from '../assets/rpc-settings-icon.svg';
 import KeyIcon from '../assets/key-icon.svg';
 import ClockIcon from '../assets/clock-icon.svg';
 import { CloseIcon } from '../components/icons/CloseIcon';
@@ -21,7 +21,7 @@ export function SettingsScreen() {
   function handleKeySettings() {
     navigate('key-settings');
   }
-  function handleRPCSettings(){
+  function handleRPCSettings() {
     navigate('rpc-settings');
   }
   function handleLockTime() {
