@@ -137,7 +137,7 @@ interface AppStore {
   priceChange24h: number;
   isPriceFetching: boolean;
 
-  // RPC display config (currency symbol, block explorer URL - from RPC settings)
+  // RPC display config (currency symbol hardcoded; block explorer URL from RPC settings)
   currencySymbol: string;
   blockExplorerUrl: string;
   refreshRpcDisplayConfig: () => Promise<void>;
@@ -197,7 +197,7 @@ export const useStore = create<AppStore>((set, get) => ({
     try {
       const { getEffectiveRpcConfig } = await import('../shared/rpc-config');
       const config = await getEffectiveRpcConfig();
-      set({ currencySymbol: config.currencySymbol, blockExplorerUrl: config.blockExplorerUrl });
+      set({ blockExplorerUrl: config.blockExplorerUrl });
     } catch {
       // Keep defaults on error
     }

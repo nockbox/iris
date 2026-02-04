@@ -16,8 +16,6 @@ export function RpcSettingsScreen() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [networkName, setNetworkName] = useState(defaultRpcConfig.networkName);
   const [rpcUrl, setRpcUrl] = useState(defaultRpcConfig.rpcUrl);
-  const [chainId, setChainId] = useState(defaultRpcConfig.chainId);
-  const [currencySymbol, setCurrencySymbol] = useState(defaultRpcConfig.currencySymbol);
   const [blockExplorerUrl, setBlockExplorerUrl] = useState(defaultRpcConfig.blockExplorerUrl);
   const [isLoading, setIsLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
@@ -28,8 +26,6 @@ export function RpcSettingsScreen() {
     getEffectiveRpcConfig().then(config => {
       setNetworkName(config.networkName);
       setRpcUrl(config.rpcUrl);
-      setChainId(config.chainId);
-      setCurrencySymbol(config.currencySymbol);
       setBlockExplorerUrl(config.blockExplorerUrl);
       setIsLoading(false);
     });
@@ -45,8 +41,6 @@ export function RpcSettingsScreen() {
       await saveRpcConfig({
         networkName,
         rpcUrl: rpcUrl.trim(),
-        chainId: chainId.trim(),
-        currencySymbol: currencySymbol.trim(),
         blockExplorerUrl: blockExplorerUrl.trim(),
       });
       await refreshRpcDisplayConfig();
@@ -60,8 +54,6 @@ export function RpcSettingsScreen() {
   async function handleResetToDefault() {
     setNetworkName(defaultRpcConfig.networkName);
     setRpcUrl(defaultRpcConfig.rpcUrl);
-    setChainId(defaultRpcConfig.chainId);
-    setCurrencySymbol(defaultRpcConfig.currencySymbol);
     setBlockExplorerUrl(defaultRpcConfig.blockExplorerUrl);
     await clearRpcConfig();
     setMenuOpen(false);
@@ -185,36 +177,6 @@ export function RpcSettingsScreen() {
             style={inputStyle}
             value={rpcUrl}
             onChange={e => setRpcUrl(e.target.value)}
-            onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
-            onBlur={e => (e.currentTarget.style.borderColor = 'var(--color-surface-700)')}
-          />
-        </div>
-
-        <div className="flex flex-col gap-[6px]">
-          <label className={labelClass} style={labelStyle}>
-            Chain ID
-          </label>
-          <input
-            type="text"
-            className={inputClass}
-            style={inputStyle}
-            value={chainId}
-            onChange={e => setChainId(e.target.value)}
-            onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
-            onBlur={e => (e.currentTarget.style.borderColor = 'var(--color-surface-700)')}
-          />
-        </div>
-
-        <div className="flex flex-col gap-[6px]">
-          <label className={labelClass} style={labelStyle}>
-            Currency symbol
-          </label>
-          <input
-            type="text"
-            className={inputClass}
-            style={inputStyle}
-            value={currencySymbol}
-            onChange={e => setCurrencySymbol(e.target.value)}
             onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
             onBlur={e => (e.currentTarget.style.borderColor = 'var(--color-surface-700)')}
           />

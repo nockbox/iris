@@ -219,7 +219,7 @@ export const STORAGE_KEYS = {
   /** Whether the user manually locked the wallet (survives SW restarts) */
   MANUALLY_LOCKED: 'manuallyLocked',
 
-  /** User RPC/network config (endpoint, chainId, etc.); falls back to defaults if unset */
+  /** User RPC/network config (endpoint, network name, block explorer); falls back to defaults if unset */
   RPC_CONFIG: 'rpcConfig',
 } as const;
 

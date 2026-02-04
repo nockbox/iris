@@ -3,13 +3,11 @@
  * Used by vault, popup (sync), background (dApp grpcEndpoint), and RpcSettingsScreen.
  */
 
-import { STORAGE_KEYS, RPC_ENDPOINT, CHAIN_ID } from './constants';
+import { STORAGE_KEYS, RPC_ENDPOINT } from './constants';
 
 export interface RpcConfig {
   rpcUrl: string;
-  chainId: string;
   networkName: string;
-  currencySymbol: string;
   blockExplorerUrl: string;
 }
 
@@ -17,15 +15,12 @@ export interface RpcConfig {
 export type StoredRpcConfig = Partial<RpcConfig>;
 
 const DEFAULT_NETWORK_NAME = 'Nockchain Mainnet';
-const DEFAULT_CURRENCY_SYMBOL = 'NOCK';
 const DEFAULT_BLOCK_EXPLORER_URL = 'https://nockscan.net';
 
 /** Default RPC config (used when nothing is stored, and for "Reset to default") */
 export const defaultRpcConfig: RpcConfig = {
   rpcUrl: RPC_ENDPOINT,
-  chainId: CHAIN_ID,
   networkName: DEFAULT_NETWORK_NAME,
-  currencySymbol: DEFAULT_CURRENCY_SYMBOL,
   blockExplorerUrl: DEFAULT_BLOCK_EXPLORER_URL,
 };
 
@@ -38,7 +33,7 @@ function ensureHttps(url: string): string {
 
 /**
  * Get the effective RPC config: stored values merged with defaults.
- * Used when loading the RPC settings form and when resolving endpoint/chainId for use.
+ * Used when loading the RPC settings form and when resolving endpoint for use.
  */
 export async function getEffectiveRpcConfig(): Promise<RpcConfig> {
   const stored = await new Promise<StoredRpcConfig | undefined>(resolve => {
@@ -53,9 +48,7 @@ export async function getEffectiveRpcConfig(): Promise<RpcConfig> {
 
   const merged: RpcConfig = {
     rpcUrl: stored.rpcUrl != null && stored.rpcUrl !== '' ? stored.rpcUrl : defaultRpcConfig.rpcUrl,
-    chainId: stored.chainId != null && stored.chainId !== '' ? stored.chainId : defaultRpcConfig.chainId,
     networkName: stored.networkName ?? defaultRpcConfig.networkName,
-    currencySymbol: stored.currencySymbol ?? defaultRpcConfig.currencySymbol,
     blockExplorerUrl: stored.blockExplorerUrl ?? defaultRpcConfig.blockExplorerUrl,
   };
   merged.rpcUrl = ensureHttps(merged.rpcUrl);
