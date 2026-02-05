@@ -257,7 +257,7 @@ export const MESSAGE_TARGETS = {
 export const AUTOLOCK_MINUTES = 0;
 
 /** Default RPC endpoint URL */
-export const RPC_ENDPOINT = 'https://rpc.nockbox.org';
+export const RPC_ENDPOINT = 'rpc.nockbox.org';
 
 /** Default Chain ID */
 export const CHAIN_ID = 'nockchain-1';
