@@ -37,6 +37,7 @@ export type Screen =
   | 'theme-settings'
   | 'lock-time'
   | 'key-settings'
+  | 'rpc-settings'
   | 'view-secret-phrase'
   | 'wallet-permissions'
   | 'wallet-settings'
@@ -136,6 +137,11 @@ interface AppStore {
   priceChange24h: number;
   isPriceFetching: boolean;
 
+  // RPC display config (currency symbol hardcoded; block explorer URL from RPC settings)
+  currencySymbol: string;
+  blockExplorerUrl: string;
+  refreshRpcDisplayConfig: () => Promise<void>;
+
   // Initialize app - checks vault status and navigates appropriately
   initialize: () => Promise<void>;
 
@@ -183,6 +189,19 @@ export const useStore = create<AppStore>((set, get) => ({
   priceUsd: 0,
   priceChange24h: 0,
   isPriceFetching: false,
+
+  currencySymbol: 'NOCK',
+  blockExplorerUrl: 'https://nockscan.net',
+
+  refreshRpcDisplayConfig: async () => {
+    try {
+      const { getEffectiveRpcConfig } = await import('../shared/rpc-config');
+      const config = await getEffectiveRpcConfig();
+      set({ blockExplorerUrl: config.blockExplorerUrl });
+    } catch {
+      // Keep defaults on error
+    }
+  },
 
   // Navigate to a new screen
   navigate: (screen: Screen) => {
@@ -323,6 +342,8 @@ export const useStore = create<AppStore>((set, get) => ({
         isInitialized: true,
       });
 
+      await get().refreshRpcDisplayConfig();
+
       // Fetch balance if wallet is unlocked
       if (!walletState.locked && walletState.address) {
         get().fetchBalance();
@@ -353,7 +374,9 @@ export const useStore = create<AppStore>((set, get) => ({
       try {
         const { syncAccountUTXOs } = await import('../shared/utxo-sync');
         const { createBrowserClient } = await import('../shared/rpc-client-browser');
-        const rpcClient = createBrowserClient();
+        const { getEffectiveRpcEndpoint } = await import('../shared/rpc-config');
+        const endpoint = await getEffectiveRpcEndpoint();
+        const rpcClient = createBrowserClient(endpoint);
 
         for (const account of accounts) {
           try {

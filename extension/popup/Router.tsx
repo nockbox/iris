@@ -29,6 +29,7 @@ import { SettingsScreen } from './screens/SettingsScreen';
 import { ThemeSettingsScreen } from './screens/ThemeSettingsScreen';
 import { LockTimeScreen } from './screens/LockTimeScreen';
 import { KeySettingsPasswordScreen } from './screens/KeySettingsPasswordScreen';
+import { RpcSettingsScreen } from './screens/RpcSettingsScreen';
 import { ViewSecretPhraseScreen } from './screens/ViewSecretPhraseScreen';
 import { WalletPermissionsScreen } from './screens/WalletPermissionsScreen';
 import { WalletSettingsScreen } from './screens/WalletSettingsScreen';
@@ -70,6 +71,8 @@ export function Router() {
       return <LockTimeScreen />;
     case 'key-settings':
       return <KeySettingsPasswordScreen />;
+    case 'rpc-settings':
+      return <RpcSettingsScreen />;
     case 'view-secret-phrase':
       return <ViewSecretPhraseScreen />;
     case 'wallet-permissions':
