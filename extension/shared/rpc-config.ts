@@ -16,13 +16,17 @@ export type StoredRpcConfig = Partial<RpcConfig>;
 
 const DEFAULT_NETWORK_NAME = 'Nockchain Mainnet';
 
+/** Block explorer URL constants (single source of truth) */
+export const NOCKSCAN_URL = 'https://nockscan.net/';
+export const NOCKBLOCKS_URL = 'https://nockblocks.com/';
+
 /** Allowed block explorer URLs (dropdown options) */
 export const BLOCK_EXPLORER_OPTIONS = [
-  { value: 'https://nockblocks.com/', label: 'NockBlocks' },
-  { value: 'https://nockscan.net/', label: 'NockScan' },
+  { value: NOCKSCAN_URL, label: 'NockScan' },
+  { value: NOCKBLOCKS_URL, label: 'NockBlocks' },
 ] as const;
 
-const DEFAULT_BLOCK_EXPLORER_URL = 'https://nockscan.net/';
+const DEFAULT_BLOCK_EXPLORER_URL = NOCKSCAN_URL;
 
 /** Default RPC config (used when nothing is stored, and for "Reset to default") */
 export const defaultRpcConfig: RpcConfig = {
@@ -33,9 +37,10 @@ export const defaultRpcConfig: RpcConfig = {
 
 function ensureHttps(url: string): string {
   const trimmed = url.trim();
-  if (!trimmed) return RPC_ENDPOINT;
-  if (/^https?:\/\//i.test(trimmed)) return trimmed;
-  return `https://${trimmed}`;
+  const toNormalize = trimmed || RPC_ENDPOINT.trim();
+  if (!toNormalize) return RPC_ENDPOINT;
+  if (/^https?:\/\//i.test(toNormalize)) return toNormalize;
+  return `https://${toNormalize}`;
 }
 
 /**
@@ -50,7 +55,10 @@ export async function getEffectiveRpcConfig(): Promise<RpcConfig> {
   });
 
   if (!stored || Object.keys(stored).length === 0) {
-    return { ...defaultRpcConfig };
+    return {
+      ...defaultRpcConfig,
+      rpcUrl: ensureHttps(defaultRpcConfig.rpcUrl),
+    };
   }
 
   const storedExplorer = stored.blockExplorerUrl?.trim();
