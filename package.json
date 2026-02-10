@@ -28,7 +28,7 @@
   "dependencies": {
     "@fontsource/inter": "^5.2.8",
     "@fontsource/lora": "^5.2.8",
-    "@nockbox/iris-sdk": "file:./sdk",
+    "@nockbox/iris-sdk": "file:sdk",
     "@scure/base": "^2.0.0",
     "@scure/bip39": "^2.0.1",
     "react": "^19.2.0",
