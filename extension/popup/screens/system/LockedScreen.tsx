@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { INTERNAL_METHODS, ERROR_CODES } from '../../../shared/constants';
+import type { Account, SeedAccount } from '../../../shared/types';
 import { useStore } from '../../store';
 import { send } from '../../utils/messaging';
 import { Alert } from '../../components/Alert';
@@ -45,8 +46,8 @@ export function LockedScreen() {
     const result = await send<{
       ok?: boolean;
       address?: string;
-      accounts?: Array<{ name: string; address: string; index: number }>;
-      currentAccount?: { name: string; address: string; index: number };
+      accounts?: Account[];
+      currentAccount?: Account;
       error?: string;
     }>(INTERNAL_METHODS.UNLOCK, [password]);
 
@@ -65,6 +66,9 @@ export function LockedScreen() {
       const balanceResp = await send<{ ok?: boolean; balances?: Record<string, number> }>(
         IM.GET_CACHED_BALANCES
       );
+      const seedSourceResp = await send<{
+        seedSources?: Array<Omit<SeedAccount, 'mnemonic'>>;
+      }>(IM.GET_SEED_SOURCES);
       const cachedBalances = balanceResp?.balances || {};
       const cachedBalance = currentAccount ? (cachedBalances[currentAccount.address] ?? 0) : 0;
 
@@ -74,6 +78,8 @@ export function LockedScreen() {
         address: result.address || null,
         accounts,
         currentAccount,
+        seedSources: seedSourceResp?.seedSources || [],
+        activeSeedSourceId: currentAccount?.seedAccountId || null,
         balance: cachedBalance,
         availableBalance: cachedBalance,
         accountBalances: cachedBalances,

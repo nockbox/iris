@@ -16,7 +16,15 @@ import { InfoIcon } from '../../components/icons/InfoIcon';
 import { importKeyfile, type Keyfile } from '../../../shared/keyfile';
 
 export function ImportScreen() {
-  const { navigate, syncWallet, onboardingMnemonic, setOnboardingMnemonic } = useStore();
+  const {
+    navigate,
+    syncWallet,
+    onboardingMnemonic,
+    setOnboardingMnemonic,
+    currentScreen,
+    createMnemonicSeedSource,
+  } = useStore();
+  const isAddSeedFlow = currentScreen === 'wallet-add-import';
 
   // Clear any stale mnemonic state on mount to ensure fresh start
   useEffect(() => {
@@ -85,11 +93,16 @@ export function ImportScreen() {
     }
   }
 
-  function handleContinue() {
+  async function handleContinue() {
     const mnemonic = words.join(' ').trim();
 
     if (words.some(w => !w)) {
       setError('Please enter all 24 words');
+      return;
+    }
+
+    if (isAddSeedFlow) {
+      await handleImport(mnemonic);
       return;
     }
 
@@ -98,33 +111,37 @@ export function ImportScreen() {
     setStep('password');
   }
 
-  async function handleImport() {
+  async function handleImport(mnemonicOverride?: string) {
     // Use stored mnemonic (set either by manual entry or keyfile import)
-    const mnemonic = onboardingMnemonic || words.join(' ').trim();
+    const mnemonic = mnemonicOverride || onboardingMnemonic || words.join(' ').trim();
 
-    // Validate password
-    if (!password) {
-      setError('Please enter a password');
-      return;
+    if (!isAddSeedFlow) {
+      // Validate password
+      if (!password) {
+        setError('Please enter a password');
+        return;
+      }
+
+      if (password.length < UI_CONSTANTS.MIN_PASSWORD_LENGTH) {
+        setError(`Password must be at least ${UI_CONSTANTS.MIN_PASSWORD_LENGTH} characters`);
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        setError('Passwords do not match');
+        return;
+      }
     }
 
-    if (password.length < UI_CONSTANTS.MIN_PASSWORD_LENGTH) {
-      setError(`Password must be at least ${UI_CONSTANTS.MIN_PASSWORD_LENGTH} characters`);
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-
-    // Import wallet (setup with existing mnemonic)
-    const result = await send<{
-      ok?: boolean;
-      address?: string;
-      mnemonic?: string;
-      error?: string;
-    }>(INTERNAL_METHODS.SETUP, [password, mnemonic]);
+    // Import wallet (onboarding) or add a new seed source (add-wallet flow)
+    const result = isAddSeedFlow
+      ? await createMnemonicSeedSource(mnemonic)
+      : await send<{
+          ok?: boolean;
+          address?: string;
+          mnemonic?: string;
+          error?: string;
+        }>(INTERNAL_METHODS.SETUP, [password, mnemonic]);
 
     if (result?.error) {
       if (result.error === ERROR_CODES.INVALID_MNEMONIC) {
@@ -133,28 +150,35 @@ export function ImportScreen() {
         setError(`Error: ${result.error}`);
       }
     } else {
-      // Successfully imported - mark onboarding complete (user already has their seed)
-      await markOnboardingComplete();
+      if (isAddSeedFlow) {
+        setOnboardingMnemonic(null);
+        navigate('home');
+      } else {
+        // Successfully imported - mark onboarding complete (user already has their seed)
+        await markOnboardingComplete();
 
-      const firstAccount = {
-        name: 'Wallet 1',
-        address: result.address || '',
-        index: 0,
-      };
-      syncWallet({
-        locked: false,
-        address: result.address || null,
-        accounts: [firstAccount],
-        currentAccount: firstAccount,
-        balance: 0,
-        availableBalance: 0,
-        spendableBalance: 0,
-        accountBalances: {},
-        accountSpendableBalances: {},
-        accountBalanceDetails: {},
-      });
-      setOnboardingMnemonic(null);
-      navigate('onboarding-import-success');
+        const firstAccount = {
+          name: 'Wallet 1',
+          address: result.address || '',
+          index: 0,
+        };
+        syncWallet({
+          locked: false,
+          address: result.address || null,
+          accounts: [firstAccount],
+          currentAccount: firstAccount,
+          seedSources: [],
+          activeSeedSourceId: null,
+          balance: 0,
+          availableBalance: 0,
+          spendableBalance: 0,
+          accountBalances: {},
+          accountSpendableBalances: {},
+          accountBalanceDetails: {},
+        });
+        setOnboardingMnemonic(null);
+        navigate('onboarding-import-success');
+      }
     }
   }
 
@@ -162,7 +186,7 @@ export function ImportScreen() {
     if (step === 'password') {
       setStep('mnemonic');
     } else {
-      navigate('onboarding-start');
+      navigate(isAddSeedFlow ? 'wallet-add-start' : 'onboarding-start');
     }
   }
 
@@ -191,11 +215,17 @@ export function ImportScreen() {
           return;
         }
 
-        // Skip word display - go directly to password setup
-        setOnboardingMnemonic(mnemonic);
-        setShowKeyfileImport(false);
-        setStep('password');
-        setError('');
+        if (isAddSeedFlow) {
+          setShowKeyfileImport(false);
+          setError('');
+          void handleImport(mnemonic);
+        } else {
+          // Skip word display - go directly to password setup
+          setOnboardingMnemonic(mnemonic);
+          setShowKeyfileImport(false);
+          setStep('password');
+          setError('');
+        }
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Invalid keyfile format');
       }
@@ -212,7 +242,7 @@ export function ImportScreen() {
   }
 
   // Password setup step
-  if (step === 'password') {
+  if (step === 'password' && !isAddSeedFlow) {
     return (
       <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)]">
         {/* Header with back button */}
@@ -408,7 +438,7 @@ export function ImportScreen() {
                 Back
               </button>
               <button
-                onClick={handleImport}
+                onClick={() => void handleImport()}
                 className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90"
                 style={{
                   fontFamily: 'var(--font-sans)',
