@@ -30,14 +30,29 @@ export const INTERNAL_METHODS = {
   /** Set auto-lock timeout in minutes */
   SET_AUTO_LOCK: 'wallet:setAutoLock',
 
-  /** Create a new account */
+  /** LEGACY: Create child account under currently selected seed source */
   CREATE_ACCOUNT: 'wallet:createAccount',
 
-  /** Switch to a different account */
+  /** Create a child account under a specific seed source */
+  CREATE_CHILD_ACCOUNT: 'wallet:createChildAccount',
+
+  /** Create/import mnemonic-based seed source */
+  CREATE_MNEMONIC_SEED_SOURCE: 'wallet:createMnemonicSeedSource',
+
+  /** Create external seed source (e.g. Ledger) */
+  CREATE_EXTERNAL_SEED_SOURCE: 'wallet:createExternalSeedSource',
+
+  /** LEGACY: Switch account by flat account-list index */
   SWITCH_ACCOUNT: 'wallet:switchAccount',
 
-  /** Get all accounts */
+  /** Switch to a top-level seed source (selects master account) */
+  SWITCH_SEED_SOURCE: 'wallet:switchSeedSource',
+
+  /** LEGACY: Get flattened account list (for compatibility with old UI flows) */
   GET_ACCOUNTS: 'wallet:getAccounts',
+
+  /** Get all top-level seed/external account sources */
+  GET_SEED_SOURCES: 'wallet:getSeedSources',
 
   /** Rename an account */
   RENAME_ACCOUNT: 'wallet:renameAccount',
@@ -259,7 +274,7 @@ export const SESSION_STORAGE_KEYS = {
 } as const;
 
 /** Current storage schema version - increment when making breaking changes */
-export const CURRENT_SCHEMA_VERSION = 1;
+export const CURRENT_SCHEMA_VERSION = 2;
 
 /**
  * Chrome Alarm Names - Named alarms for scheduled tasks
@@ -318,6 +333,10 @@ export const USER_ACTIVITY_METHODS = new Set([
   INTERNAL_METHODS.UNLOCK,
   INTERNAL_METHODS.SWITCH_ACCOUNT,
   INTERNAL_METHODS.CREATE_ACCOUNT,
+  INTERNAL_METHODS.CREATE_CHILD_ACCOUNT,
+  INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE,
+  INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE,
+  INTERNAL_METHODS.SWITCH_SEED_SOURCE,
   INTERNAL_METHODS.RENAME_ACCOUNT,
   INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING,
   INTERNAL_METHODS.HIDE_ACCOUNT,

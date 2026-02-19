@@ -14,6 +14,7 @@ import { SuccessScreen } from './screens/onboarding/SuccessScreen';
 import { ImportScreen } from './screens/onboarding/ImportScreen';
 import { ImportSuccessScreen } from './screens/onboarding/ImportSuccessScreen';
 import { ResumeBackupScreen } from './screens/onboarding/ResumeBackupScreen';
+import { AddWalletStartScreen } from './screens/AddWalletStartScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { SendScreen } from './screens/SendScreen';
 import { SendReviewScreen } from './screens/SendReviewScreen';
@@ -58,6 +59,16 @@ export function Router() {
       return <ImportSuccessScreen />;
     case 'onboarding-resume-backup':
       return <ResumeBackupScreen />;
+    case 'wallet-add-start':
+      return <AddWalletStartScreen />;
+    case 'wallet-add-create':
+      return <CreateScreen />;
+    case 'wallet-add-import':
+      return <ImportScreen />;
+    case 'wallet-add-backup':
+      return <BackupScreen />;
+    case 'wallet-add-verify':
+      return <VerifyScreen />;
 
     // Main app
     case 'home':

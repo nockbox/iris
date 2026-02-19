@@ -783,6 +783,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         });
         return;
 
+      case INTERNAL_METHODS.GET_SEED_SOURCES:
+        sendResponse({
+          seedSources: vault.getSeedSources(),
+        });
+        return;
+
       case INTERNAL_METHODS.SWITCH_ACCOUNT:
         const switchResult = await vault.switchAccount(payload.params?.[0]);
         sendResponse(switchResult);
@@ -830,6 +836,45 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // New account is automatically set as current
         if ('ok' in createResult && createResult.ok) {
           await emitWalletEvent('accountsChanged', [createResult.account.address]);
+        }
+        return;
+
+      case INTERNAL_METHODS.CREATE_CHILD_ACCOUNT:
+        // params: [seedAccountId, name?]
+        const createChildResult = await vault.createChildAccount(payload.params?.[0], payload.params?.[1]);
+        sendResponse(createChildResult);
+        if ('ok' in createChildResult && createChildResult.ok) {
+          await emitWalletEvent('accountsChanged', [createChildResult.account.address]);
+        }
+        return;
+
+      case INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE:
+        // params: [mnemonic?, name?]
+        const createSeedResult = await vault.createMnemonicSeedSource(
+          payload.params?.[0],
+          payload.params?.[1]
+        );
+        sendResponse(createSeedResult);
+        if ('ok' in createSeedResult && createSeedResult.ok) {
+          await emitWalletEvent('accountsChanged', [createSeedResult.account.address]);
+        }
+        return;
+
+      case INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE:
+        // params: [{ address, name?, provider?, sourceRef?, accountRef? }]
+        const createExternalResult = await vault.createExternalSeedSource(payload.params?.[0] || {});
+        sendResponse(createExternalResult);
+        if ('ok' in createExternalResult && createExternalResult.ok) {
+          await emitWalletEvent('accountsChanged', [createExternalResult.account.address]);
+        }
+        return;
+
+      case INTERNAL_METHODS.SWITCH_SEED_SOURCE:
+        // params: [seedAccountId]
+        const switchSeedResult = await vault.switchSeedSource(payload.params?.[0]);
+        sendResponse(switchSeedResult);
+        if ('ok' in switchSeedResult && switchSeedResult.ok) {
+          await emitWalletEvent('accountsChanged', [switchSeedResult.account.address]);
         }
         return;
 

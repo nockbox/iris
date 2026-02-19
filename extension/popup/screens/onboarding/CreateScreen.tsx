@@ -18,11 +18,24 @@ export function CreateScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
-  const { navigate, syncWallet, setOnboardingMnemonic } = useStore();
+  const { navigate, syncWallet, setOnboardingMnemonic, currentScreen, createMnemonicSeedSource } =
+    useStore();
+  const isAddSeedFlow = currentScreen === 'wallet-add-create';
 
   async function handleCreate() {
     // Clear previous errors
     setError('');
+
+    if (isAddSeedFlow) {
+      const result = await createMnemonicSeedSource(undefined);
+      if (result?.error) {
+        setError(`Error: ${result.error}`);
+        return;
+      }
+      setOnboardingMnemonic(result?.mnemonic || null);
+      navigate('wallet-add-backup');
+      return;
+    }
 
     // Validate password
     if (!password) {
@@ -67,6 +80,8 @@ export function CreateScreen() {
         address: result.address || null,
         accounts: [firstAccount],
         currentAccount: firstAccount,
+        seedSources: [],
+        activeSeedSourceId: null,
         balance: 0, // New wallet starts with 0 balance
         availableBalance: 0,
         spendableBalance: 0,
@@ -83,7 +98,7 @@ export function CreateScreen() {
       {/* Header with back button */}
       <div className="flex items-center justify-between h-16 px-4 py-3 border-b border-[var(--color-divider)]">
         <button
-          onClick={() => navigate('onboarding-start')}
+          onClick={() => navigate(isAddSeedFlow ? 'wallet-add-start' : 'onboarding-start')}
           className="p-2 -ml-2 hover:opacity-70 transition-opacity"
           aria-label="Go back"
         >
@@ -126,14 +141,24 @@ export function CreateScreen() {
                 letterSpacing: '-0.02em',
               }}
             >
-              First, let's secure your
-              <br />
-              wallet with a password
+              {isAddSeedFlow ? (
+                <>
+                  Create a new wallet
+                  <br />
+                  and seed phrase
+                </>
+              ) : (
+                <>
+                  First, let's secure your
+                  <br />
+                  wallet with a password
+                </>
+              )}
             </h1>
           </div>
 
-          {/* Password inputs */}
-          <div className="flex flex-col gap-6">
+          {/* Password inputs (onboarding only) */}
+          {!isAddSeedFlow && <div className="flex flex-col gap-6">
             {/* Create password */}
             <div className="flex flex-col gap-1.5">
               <label
@@ -225,7 +250,7 @@ export function CreateScreen() {
                 </button>
               </div>
             </div>
-          </div>
+          </div>}
 
           {/* Info box */}
           <div className="bg-[var(--color-surface-900)] rounded-lg p-3">
@@ -237,8 +262,9 @@ export function CreateScreen() {
                 letterSpacing: '0.02em',
               }}
             >
-              This password encrypts your wallet on this device. Choose something strong but
-              memorable. Your private keys never leave your browser.
+              {isAddSeedFlow
+                ? 'This will generate a fresh seed phrase and add it as a new wallet in this extension.'
+                : 'This password encrypts your wallet on this device. Choose something strong but memorable. Your private keys never leave your browser.'}
             </p>
           </div>
 
@@ -263,7 +289,7 @@ export function CreateScreen() {
               letterSpacing: '0.01em',
             }}
           >
-            Continue
+            {isAddSeedFlow ? 'Create wallet' : 'Continue'}
           </button>
         </div>
       </div>

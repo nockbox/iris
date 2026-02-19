@@ -8,6 +8,7 @@ import { hasIncompleteOnboarding } from '../shared/onboarding';
 import {
   Account,
   AccountBalance,
+  SeedAccount,
   TransactionDetails,
   SignRequest,
   SignRawTxRequest,
@@ -30,6 +31,11 @@ export type Screen =
   | 'onboarding-import'
   | 'onboarding-import-success'
   | 'onboarding-resume-backup'
+  | 'wallet-add-start'
+  | 'wallet-add-create'
+  | 'wallet-add-import'
+  | 'wallet-add-backup'
+  | 'wallet-add-verify'
 
   // Main app screens
   | 'home'
@@ -69,6 +75,8 @@ interface WalletState {
   address: string | null;
   accounts: Account[];
   currentAccount: Account | null;
+  seedSources: Array<Omit<SeedAccount, 'mnemonic'>>;
+  activeSeedSourceId: string | null;
   balance: number;
   availableBalance: number;
   spendableBalance: number; // Sum of UTXOs that are available (not in_flight) - can be spent NOW
@@ -92,6 +100,18 @@ interface AppStore {
   // Wallet state (synced from service worker)
   wallet: WalletState;
   syncWallet: (state: WalletState) => void;
+  refreshWalletAccounts: () => Promise<void>;
+  fetchSeedSources: () => Promise<void>;
+  createMnemonicSeedSource: (mnemonic?: string, name?: string) => Promise<any>;
+  createExternalSeedSource: (params: {
+    address: string;
+    name?: string;
+    provider?: 'ledger' | 'unknown';
+    sourceRef?: string;
+    accountRef?: string;
+  }) => Promise<any>;
+  switchSeedSource: (seedAccountId: string) => Promise<any>;
+  createChildAccount: (seedAccountId: string, name?: string) => Promise<any>;
 
   // Temporary onboarding state (cleared after completion)
   onboardingMnemonic: string | null;
@@ -124,6 +144,10 @@ interface AppStore {
   // Selected transaction for viewing details
   selectedTransaction: WalletTransaction | null;
   setSelectedTransaction: (transaction: WalletTransaction | null) => void;
+
+  // Account whose settings are being viewed (set when opening settings from dropdown; avoids waiting for account switch)
+  settingsAccountAddress: string | null;
+  setSettingsAccountAddress: (address: string | null) => void;
 
   // Balance fetching state
   isBalanceFetching: boolean;
@@ -162,6 +186,8 @@ export const useStore = create<AppStore>((set, get) => ({
     address: null,
     accounts: [],
     currentAccount: null,
+    seedSources: [],
+    activeSeedSourceId: null,
     balance: 0,
     availableBalance: 0,
     spendableBalance: 0,
@@ -178,6 +204,8 @@ export const useStore = create<AppStore>((set, get) => ({
   pendingTransactionRequest: null,
   walletTransactions: [],
   selectedTransaction: null,
+  settingsAccountAddress: null,
+  setSettingsAccountAddress: (address: string | null) => set({ settingsAccountAddress: address }),
   isBalanceFetching: false,
   isInitialized: false,
   priceUsd: 0,
@@ -208,6 +236,95 @@ export const useStore = create<AppStore>((set, get) => ({
   // Sync wallet state from background
   syncWallet: (state: WalletState) => {
     set({ wallet: state });
+  },
+
+  refreshWalletAccounts: async () => {
+    try {
+      const [accountsResult, seedSourcesResult] = await Promise.all([
+        send<{
+          accounts: Account[];
+          currentAccount: Account | null;
+        }>(INTERNAL_METHODS.GET_ACCOUNTS),
+        send<{
+          seedSources: Array<Omit<SeedAccount, 'mnemonic'>>;
+        }>(INTERNAL_METHODS.GET_SEED_SOURCES),
+      ]);
+
+      set({
+        wallet: {
+          ...get().wallet,
+          accounts: accountsResult.accounts || [],
+          currentAccount: accountsResult.currentAccount || null,
+          address: accountsResult.currentAccount?.address || null,
+          seedSources: seedSourcesResult.seedSources || [],
+          activeSeedSourceId: accountsResult.currentAccount?.seedAccountId || null,
+        },
+      });
+    } catch (error) {
+      console.error('[Store] Failed to refresh wallet accounts/seed sources:', error);
+    }
+  },
+
+  fetchSeedSources: async () => {
+    try {
+      const result = await send<{
+        seedSources: Array<Omit<SeedAccount, 'mnemonic'>>;
+      }>(INTERNAL_METHODS.GET_SEED_SOURCES);
+
+      set({
+        wallet: {
+          ...get().wallet,
+          seedSources: result.seedSources || [],
+          activeSeedSourceId: get().wallet.currentAccount?.seedAccountId || null,
+        },
+      });
+    } catch (error) {
+      console.error('[Store] Failed to fetch seed sources:', error);
+    }
+  },
+
+  createMnemonicSeedSource: async (mnemonic?: string, name?: string) => {
+    const result = await send<any>(INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE, [mnemonic, name]);
+    if (result?.ok) {
+      await get().refreshWalletAccounts();
+      // Non-blocking refresh: avoid delaying backup flow UX.
+      void get().fetchBalance();
+      void get().fetchWalletTransactions();
+    }
+    return result;
+  },
+
+  createExternalSeedSource: async params => {
+    const result = await send<any>(INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE, [params]);
+    if (result?.ok) {
+      await get().refreshWalletAccounts();
+      // Non-blocking refresh to keep wallet actions snappy.
+      void get().fetchBalance();
+      void get().fetchWalletTransactions();
+    }
+    return result;
+  },
+
+  switchSeedSource: async (seedAccountId: string) => {
+    const result = await send<any>(INTERNAL_METHODS.SWITCH_SEED_SOURCE, [seedAccountId]);
+    if (result?.ok) {
+      await get().refreshWalletAccounts();
+      // Non-blocking refresh to keep switching immediate.
+      void get().fetchBalance();
+      void get().fetchWalletTransactions();
+    }
+    return result;
+  },
+
+  createChildAccount: async (seedAccountId: string, name?: string) => {
+    const result = await send<any>(INTERNAL_METHODS.CREATE_CHILD_ACCOUNT, [seedAccountId, name]);
+    if (result?.ok) {
+      await get().refreshWalletAccounts();
+      // Non-blocking refresh to avoid blocking dropdown interactions.
+      void get().fetchBalance();
+      void get().fetchWalletTransactions();
+    }
+    return result;
   },
 
   // Set temporary mnemonic during onboarding
@@ -261,13 +378,18 @@ export const useStore = create<AppStore>((set, get) => ({
         hash.startsWith(APPROVAL_CONSTANTS.SIGN_MESSAGE_HASH_PREFIX);
 
       // Get current vault state from service worker
-      const state = await send<{
-        locked: boolean;
-        hasVault: boolean;
-        address: string;
-        accounts: Account[];
-        currentAccount: Account | null;
-      }>(INTERNAL_METHODS.GET_STATE);
+      const [state, seedSourcesResult] = await Promise.all([
+        send<{
+          locked: boolean;
+          hasVault: boolean;
+          address: string;
+          accounts: Account[];
+          currentAccount: Account | null;
+        }>(INTERNAL_METHODS.GET_STATE),
+        send<{
+          seedSources: Array<Omit<SeedAccount, 'mnemonic'>>;
+        }>(INTERNAL_METHODS.GET_SEED_SOURCES),
+      ]);
 
       // Load cached balances from encrypted storage (only if unlocked)
       let cachedBalances: Record<string, number> = {};
@@ -289,6 +411,8 @@ export const useStore = create<AppStore>((set, get) => ({
         address: state.address || null,
         accounts: state.accounts || [],
         currentAccount: state.currentAccount || null,
+        seedSources: seedSourcesResult.seedSources || [],
+        activeSeedSourceId: state.currentAccount?.seedAccountId || null,
         balance: confirmedBalance,
         availableBalance: confirmedBalance, // Will be recalculated after fetching transactions
         spendableBalance: confirmedBalance, // Will be recalculated after fetching transactions
