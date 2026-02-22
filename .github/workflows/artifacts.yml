@@ -18,8 +18,7 @@ jobs:
         with:
           node-version: 20
 
-      - run: npm ci && cd sdk && npm ci
-      - run: cd sdk && npm run build
+      - run: npm ci
       - run: npm run build
 
       - name: Zip dist contents
