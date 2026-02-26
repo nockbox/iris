@@ -51,6 +51,8 @@ export type Screen =
   | 'send-submitted'
   | 'sent'
   | 'receive'
+  | 'swap'
+  | 'swap-review'
   | 'tx-details'
 
   // Approval screens
@@ -101,6 +103,20 @@ interface AppStore {
   // Last transaction details (for showing confirmation screen)
   lastTransaction: TransactionDetails | null;
   setLastTransaction: (transaction: TransactionDetails | null) => void;
+
+  // Prepared bridge swap transaction between swap and review screens
+  pendingBridgeSwap: {
+    amountNock: number;
+    bridgeFeeLabel: string;
+    destinationAddress: string;
+  } | null;
+  setPendingBridgeSwap: (
+    value: {
+      amountNock: number;
+      bridgeFeeLabel: string;
+      destinationAddress: string;
+    } | null
+  ) => void;
 
   // Pending connect request (for showing approval screen)
   pendingConnectRequest: ConnectRequest | null;
@@ -178,6 +194,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   onboardingMnemonic: null,
   lastTransaction: null,
+  pendingBridgeSwap: null,
   pendingConnectRequest: null,
   pendingSignRequest: null,
   pendingSignRawTxRequest: null,
@@ -237,6 +254,10 @@ export const useStore = create<AppStore>((set, get) => ({
   // Set last transaction details
   setLastTransaction: (transaction: TransactionDetails | null) => {
     set({ lastTransaction: transaction });
+  },
+
+  setPendingBridgeSwap: value => {
+    set({ pendingBridgeSwap: value });
   },
 
   // Set pending connect request

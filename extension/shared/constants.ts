@@ -303,6 +303,15 @@ export const NOCK_TO_NICKS = 65_536;
  */
 export const DEFAULT_TRANSACTION_FEE = 3_407_872;
 
+/** Fee per word (8-byte unit) for transaction size calculation in nicks */
+export const DEFAULT_FEE_PER_WORD = 1 << 15; // 32,768 nicks = 0.5 NOCK per word
+
+/** Minimum bridge amount in NOCK (UI guardrail) */
+export const MIN_BRIDGE_AMOUNT_NOCK = 100_000;
+
+/** Bridge protocol fee display string (for review UI) */
+export const BRIDGE_PROTOCOL_FEE_DISPLAY = '0.5%';
+
 /**
  * User Activity Methods - Methods that count as user activity for auto-lock timer
  * Only these methods reset the lastActivity timestamp. Passive/polling methods
