@@ -50,6 +50,10 @@ export type Screen =
   | 'send-submitted'
   | 'sent'
   | 'receive'
+  | 'v0-migration-intro'
+  | 'v0-migration-setup'
+  | 'v0-migration-review'
+  | 'v0-migration-submitted'
   | 'tx-details'
 
   // Approval screens
@@ -100,6 +104,25 @@ interface AppStore {
   // Last transaction details (for showing confirmation screen)
   lastTransaction: TransactionDetails | null;
   setLastTransaction: (transaction: TransactionDetails | null) => void;
+
+  // UI-only draft state for transfering v0 funds flow
+  v0MigrationDraft: {
+    v0BalanceNock: number;
+    feeNock: number;
+    destinationWalletIndex: number | null;
+    seedWords: string[];
+    keyfileName?: string;
+  };
+  setV0MigrationDraft: (
+    value: Partial<{
+      v0BalanceNock: number;
+      feeNock: number;
+      destinationWalletIndex: number | null;
+      seedWords: string[];
+      keyfileName?: string;
+    }>
+  ) => void;
+  resetV0MigrationDraft: () => void;
 
   // Pending connect request (for showing approval screen)
   pendingConnectRequest: ConnectRequest | null;
@@ -172,6 +195,13 @@ export const useStore = create<AppStore>((set, get) => ({
 
   onboardingMnemonic: null,
   lastTransaction: null,
+  v0MigrationDraft: {
+    v0BalanceNock: 2500,
+    feeNock: 59,
+    destinationWalletIndex: null,
+    seedWords: Array(24).fill(''),
+    keyfileName: undefined,
+  },
   pendingConnectRequest: null,
   pendingSignRequest: null,
   pendingSignRawTxRequest: null,
@@ -218,6 +248,27 @@ export const useStore = create<AppStore>((set, get) => ({
   // Set last transaction details
   setLastTransaction: (transaction: TransactionDetails | null) => {
     set({ lastTransaction: transaction });
+  },
+
+  setV0MigrationDraft: value => {
+    set(state => ({
+      v0MigrationDraft: {
+        ...state.v0MigrationDraft,
+        ...value,
+      },
+    }));
+  },
+
+  resetV0MigrationDraft: () => {
+    set({
+      v0MigrationDraft: {
+        v0BalanceNock: 2500,
+        feeNock: 59,
+        destinationWalletIndex: null,
+        seedWords: Array(24).fill(''),
+        keyfileName: undefined,
+      },
+    });
   },
 
   // Set pending connect request

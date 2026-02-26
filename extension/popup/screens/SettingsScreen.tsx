@@ -3,6 +3,7 @@ import IrisLogo from '../assets/iris-logo.svg';
 import ThemeIcon from '../assets/theme-icon.svg';
 import KeyIcon from '../assets/key-icon.svg';
 import ClockIcon from '../assets/clock-icon.svg';
+import TransferV0Icon from '../assets/transferv0_icon.svg';
 import { CloseIcon } from '../components/icons/CloseIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import AboutIcon from '../assets/settings-gear-icon.svg';
@@ -25,6 +26,9 @@ export function SettingsScreen() {
   }
   function handleAbout() {
     navigate('about');
+  }
+  function handleTransferV0() {
+    navigate('v0-migration-intro');
   }
 
   const Row = ({ icon, label, onClick }: { icon: string; label: string; onClick: () => void }) => (
@@ -89,6 +93,7 @@ export function SettingsScreen() {
           <Row icon={ThemeIcon} label="Theme settings" onClick={handleThemeSettings} />
           <Row icon={KeyIcon} label="Key settings" onClick={handleKeySettings} />
           <Row icon={ClockIcon} label="Lock time" onClick={handleLockTime} />
+          <Row icon={TransferV0Icon} label="Transfer v0 funds" onClick={handleTransferV0} />
           <Row icon={AboutIcon} label="About" onClick={handleAbout} />
         </div>
 
