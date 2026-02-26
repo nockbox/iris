@@ -4,8 +4,8 @@
  * for wallet provider API and internal extension communication
  */
 
-// Import provider methods from SDK
-import { PROVIDER_METHODS } from '@nockbox/iris-sdk';
+// Import provider methods from local SDK source
+import { PROVIDER_METHODS } from '../../../iris-sdk/src/index';
 
 /**
  * Internal Extension Methods - Called by popup UI and other extension components
@@ -304,6 +304,15 @@ export const NOCK_TO_NICKS = 65_536;
  * This is just a reasonable starting point for the fee input field.
  */
 export const DEFAULT_TRANSACTION_FEE = 3_407_872;
+
+/** Fee per word (8-byte unit) for transaction size calculation in nicks */
+export const DEFAULT_FEE_PER_WORD = 1 << 15; // 32,768 nicks = 0.5 NOCK per word
+
+/** Minimum bridge amount in NOCK (UI guardrail) */
+export const MIN_BRIDGE_AMOUNT_NOCK = 100_000;
+
+/** Bridge protocol fee display string (for review UI) */
+export const BRIDGE_PROTOCOL_FEE_DISPLAY = '0.5%';
 
 /**
  * User Activity Methods - Methods that count as user activity for auto-lock timer
