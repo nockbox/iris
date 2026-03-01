@@ -3,7 +3,7 @@
  * Centralized utilities for loading and initializing WASM modules
  */
 
-import initWasm from '@nockbox/iris-wasm/iris_wasm.js';
+import { initWasm } from './sdk-wasm.js';
 
 /**
  * WASM module paths relative to extension root

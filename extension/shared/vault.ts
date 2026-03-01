@@ -16,10 +16,11 @@ import {
   ACCOUNT_COLORS,
   PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
+  DEFAULT_FEE_PER_WORD,
 } from './constants';
 import { Account } from './types';
 import { buildMultiNotePayment, type Note } from './transaction-builder';
-import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
+import wasm from './sdk-wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
 import type { Note as BalanceNote, UTXOStore, WalletTxStore } from './types';
@@ -39,6 +40,127 @@ import {
   matchChangeOutputs,
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
+
+function txEngineSettings(): wasm.TxEngineSettings {
+  return {
+    tx_engine_version: 1,
+    tx_engine_patch: 0,
+    min_fee: '0',
+    cost_per_word: String(DEFAULT_FEE_PER_WORD),
+    witness_word_div: 1,
+  };
+}
+
+function toRawTx(rawTx: any): wasm.RawTx {
+  // Prefer protobuf path so external builders (protobuf or .toProtobuf()) deserialize correctly.
+  // Casting plain objects with 'spends' as RawTx can fail at WASM boundary (untagged enum).
+  const asProtobuf =
+    rawTx && typeof rawTx.toProtobuf === 'function'
+      ? rawTx.toProtobuf()
+      : rawTx;
+  try {
+    return wasm.rawTxFromProtobuf(asProtobuf);
+  } catch {
+    if (rawTx && typeof rawTx === 'object' && 'spends' in rawTx) {
+      return rawTx as wasm.RawTx;
+    }
+    throw new Error(
+      'Raw transaction must be protobuf or have .toProtobuf(); data did not match any variant of RawTx'
+    );
+  }
+}
+
+function toNote(note: any): wasm.Note {
+  if (note && typeof note === 'object' && ('version' in note || 'inner' in note)) {
+    return note as wasm.Note;
+  }
+  if (note && typeof note.toProtobuf === 'function') {
+    return wasm.note_from_protobuf(note.toProtobuf());
+  }
+  return wasm.note_from_protobuf(note);
+}
+
+function parseHeight(value: { value: string } | null | undefined): number | null {
+  if (!value?.value) {
+    return null;
+  }
+  const parsed = Number(value.value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function protobufSpendConditionToNative(
+  protobufSpendCondition: wasm.PbCom2SpendCondition
+): wasm.SpendCondition {
+  return (protobufSpendCondition.primitives || []).map(primitive => {
+    const kind = primitive?.primitive;
+    if (!kind) {
+      throw new Error('Invalid protobuf spend condition primitive');
+    }
+
+    if ('Pkh' in kind) {
+      return {
+        Pkh: {
+          m: kind.Pkh.m,
+          hashes: kind.Pkh.hashes || [],
+        },
+      };
+    }
+
+    if ('Tim' in kind) {
+      return {
+        Tim: {
+          rel: {
+            min: parseHeight(kind.Tim.rel?.min),
+            max: parseHeight(kind.Tim.rel?.max),
+          },
+          abs: {
+            min: parseHeight(kind.Tim.abs?.min),
+            max: parseHeight(kind.Tim.abs?.max),
+          },
+        },
+      };
+    }
+
+    if ('Burn' in kind) {
+      return 'Brn';
+    }
+
+    if ('Hax' in kind) {
+      return {
+        Hax: (kind.Hax.hashes || []).map(hash => {
+          if (!hash) {
+            throw new Error('Invalid Hax hash in protobuf spend condition');
+          }
+          return wasm.digest_from_protobuf(hash);
+        }),
+      };
+    }
+
+    throw new Error('Unknown protobuf spend condition primitive type');
+  });
+}
+
+function toSpendCondition(spendCondition: any): wasm.SpendCondition {
+  if (Array.isArray(spendCondition) && (spendCondition.length === 0 || !('primitive' in spendCondition[0]))) {
+    return spendCondition as wasm.SpendCondition;
+  }
+  if (
+    spendCondition &&
+    typeof spendCondition === 'object' &&
+    Array.isArray((spendCondition as wasm.PbCom2SpendCondition).primitives)
+  ) {
+    return protobufSpendConditionToNative(spendCondition as wasm.PbCom2SpendCondition);
+  }
+  if (spendCondition && typeof spendCondition.toProtobuf === 'function') {
+    return toSpendCondition(spendCondition.toProtobuf());
+  }
+  throw new Error('Expected spend condition in new API shape (LockPrimitive[])');
+}
+
+function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
+  const rawTx = wasm.nockchainTxToRaw(tx) as wasm.RawTxV1;
+  return wasm.rawTxToProtobuf(rawTx);
+}
 
 /**
  * Convert a balance query note to transaction builder note format
@@ -1278,7 +1400,7 @@ export class Vault {
     const rpcClient = createBrowserClient();
 
     return withAccountLock(accountAddress, async () => {
-      // Fetch current UTXOs from chain
+      // Fetch current UTXOs from chain (first-name only)
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
       const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
       const fetchedUTXOs = chainNotes.map(n => this.noteToFetchedUTXO(n));
@@ -1560,22 +1682,51 @@ export class Vault {
       throw new Error('Cannot sign: no private key available');
     }
 
-    // Sign the message
-    const signature = wasm.signMessage(accountKey.privateKey, msgString);
+    // Sign: WASM expects 32-byte private key; copy to avoid view-into-WASM-memory issues
+    const pk = accountKey.privateKey;
+    if (pk.byteLength !== 32) {
+      if (currentAccount?.derivation !== 'master') {
+        accountKey.free();
+      }
+      masterKey.free();
+      throw new Error('Invalid private key length for signing');
+    }
+    const signingKeyBytes = new Uint8Array(pk.slice(0, 32));
+    const signature = wasm.signMessage(signingKeyBytes, msgString);
 
-    // Convert signature to JSON format
-    const signatureJson = JSON.stringify({
-      c: Array.from(signature.c),
-      s: Array.from(signature.s),
-    });
+    // Keep legacy payload format: old WASM exposed c/s as little-endian bytes.
+    // New WASM exposes hex strings, so reverse byte order to preserve legacy compatibility.
+    const toLegacyHex = (v: string | Uint8Array): string => {
+      if (typeof v !== 'string') {
+        return Array.from(v)
+          .map(b => b.toString(16).padStart(2, '0'))
+          .join('');
+      }
+      const hex = v.length % 2 === 0 ? v : `0${v}`;
+      return hex.match(/.{2}/g)?.reverse().join('') ?? '';
+    };
+    const signatureJson = JSON.stringify({ c: toLegacyHex(signature.c), s: toLegacyHex(signature.s) });
+
+    // Log whether the signature verifies (helps detect old SDK / old WASM API mismatch)
+    try {
+      const pubKey = accountKey.publicKey as Uint8Array;
+      if (pubKey.byteLength === 97 && typeof wasm.verifySignature === 'function') {
+        const pubKeyBytes = new Uint8Array(pubKey.slice(0, 97));
+        const valid = wasm.verifySignature(pubKeyBytes, signature, msgString);
+        console.log('[vault] sign_message verification:', valid ? 'valid' : 'invalid');
+      } else {
+        console.log('[vault] sign_message verification: skipped (pubKey not 97 bytes or verifySignature not available)');
+      }
+    } catch (e) {
+      console.warn('[vault] sign_message verification failed:', e);
+    }
 
     // Convert public key to hex string for easy transport
-    const publicKeyHex = Array.from(accountKey.publicKey)
+    const publicKeyHex = Array.from(accountKey.publicKey as Uint8Array)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
 
-    // Clean up WASM memory
-    signature.free();
+    // Signature is plain data in new API; no explicit free needed.
     if (currentAccount?.derivation !== 'master') {
       accountKey.free();
     }
@@ -1938,7 +2089,7 @@ export class Vault {
         );
 
         // Convert to protobuf format for gRPC and broadcast
-        const protobufTx = constructedTx.nockchainTx.toRawTx().toProtobuf();
+        const protobufTx = nockchainTxToProtobuf(constructedTx.nockchainTx);
         await rpcClient.sendTransaction(protobufTx);
 
         return {
@@ -2096,7 +2247,7 @@ export class Vault {
           );
 
           // 7. Broadcast transaction
-          const protobufTx = constructedTx.nockchainTx.toRawTx().toProtobuf();
+          const protobufTx = nockchainTxToProtobuf(constructedTx.nockchainTx);
           await rpcClient.sendTransaction(protobufTx);
 
           // 8. Update tx status to broadcasted
@@ -2182,25 +2333,33 @@ export class Vault {
 
     try {
       // Deserialize wasm.RawTx from protobuf (notes and spend conditions come as protobuf)
-      const irisRawTx = wasm.RawTx.fromProtobuf(rawTx);
+      const irisRawTx = toRawTx(rawTx);
 
       // Notes are already in protobuf format from the SDK
-      const irisNotes = notes.map(n => wasm.Note.fromProtobuf(n));
+      const irisNotes = notes.map(n => toNote(n));
 
       // SpendConditions are in protobuf format
-      const irisSpendConditions = spendConditions.map(sc => wasm.SpendCondition.fromProtobuf(sc));
+      const irisSpendConditions = spendConditions.map(sc => toSpendCondition(sc));
 
       // Reconstruct the transaction builder
-      const builder = wasm.TxBuilder.fromTx(irisRawTx, irisNotes, irisSpendConditions);
+      const builder = wasm.TxBuilder.fromTx(irisRawTx, irisNotes, irisSpendConditions, txEngineSettings());
 
-      // Sign
-      builder.sign(accountKey.privateKey);
+      // Sign: WASM expects exactly 32 bytes (big-endian). Copy to a fresh Uint8Array so we don't pass a view into WASM memory.
+      const pk = accountKey.privateKey;
+      if (!pk || pk.byteLength !== 32) {
+        throw new Error('Signing requires a 32-byte private key');
+      }
+      const signingKeyBytes = new Uint8Array(pk.slice(0, 32));
+      builder.sign(signingKeyBytes);
+
+      // Validate before build (surfaces missing unlocks, fee, balanced spends)
+      builder.validate();
 
       // Build signed tx (returns NockchainTx)
       const signedTx = builder.build();
 
       // Convert to protobuf for return
-      const protobuf = signedTx.toRawTx().toProtobuf();
+      const protobuf = nockchainTxToProtobuf(signedTx);
 
       return protobuf;
     } finally {
@@ -2220,9 +2379,9 @@ export class Vault {
     await initWasmModules();
 
     try {
-      const irisRawTx = wasm.RawTx.fromProtobuf(rawTx);
-      const outputs = irisRawTx.outputs();
-      return outputs.map((output: wasm.Note) => output.toProtobuf());
+      const irisRawTx = toRawTx(rawTx);
+      const outputs = wasm.rawTxOutputs(irisRawTx);
+      return outputs.map(output => wasm.note_to_protobuf(output));
     } catch (err) {
       console.error('Failed to compute outputs:', err);
       throw err;

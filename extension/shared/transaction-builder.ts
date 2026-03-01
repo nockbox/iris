@@ -3,11 +3,71 @@
  * High-level API for constructing Nockchain transactions
  */
 
-import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
+import wasm from './sdk-wasm.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
 import { DEFAULT_FEE_PER_WORD } from './constants.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
+
+type SpendConditionLike = wasm.SpendCondition;
+
+function createPkhOnlyCondition(senderPKH: string): SpendConditionLike {
+  return [{ Pkh: { m: 1, hashes: [senderPKH] } }];
+}
+
+function createPkhCoinbaseCondition(senderPKH: string): SpendConditionLike {
+  return [
+    { Pkh: { m: 1, hashes: [senderPKH] } },
+    { Tim: { rel: { min: 100, max: null }, abs: { min: null, max: null } } },
+  ];
+}
+
+function createPkhRelativeTimelockCondition(senderPKH: string, blocks: bigint): SpendConditionLike {
+  return [
+    { Pkh: { m: 1, hashes: [senderPKH] } },
+    { Tim: { rel: { min: Number(blocks), max: null }, abs: { min: null, max: null } } },
+  ];
+}
+
+function createPkhAbsoluteTimelockCondition(senderPKH: string, minHeight: bigint): SpendConditionLike {
+  return [
+    { Pkh: { m: 1, hashes: [senderPKH] } },
+    { Tim: { rel: { min: null, max: null }, abs: { min: Number(minHeight), max: null } } },
+  ];
+}
+
+function deriveFirstName(condition: SpendConditionLike): string {
+  return wasm.spendConditionFirstName(condition);
+}
+
+function noteFromProtobuf(protoNote: any): any {
+  return wasm.note_from_protobuf(protoNote);
+}
+
+function createTxBuilder(feePerWord: number): wasm.TxBuilder {
+  const settings: wasm.TxEngineSettings = {
+    tx_engine_version: 1,
+    tx_engine_patch: 0,
+    min_fee: '0',
+    cost_per_word: String(feePerWord),
+    witness_word_div: 1,
+  };
+  return new wasm.TxBuilder(settings);
+}
+
+function getFeeFromBuilder(builder: wasm.TxBuilder): number {
+  return Number(builder.calcFee());
+}
+
+function getTxIdCompat(nockchainTx: wasm.NockchainTx): string {
+  return nockchainTx.id;
+}
+
+function isSpendConditionList(
+  value: wasm.SpendCondition | wasm.SpendCondition[]
+): value is wasm.SpendCondition[] {
+  return Array.isArray(value) && value.length > 0 && Array.isArray(value[0]);
+}
 
 /**
  * Discover the correct spend condition for a note by matching lock-root to name.first
@@ -25,12 +85,11 @@ export async function discoverSpendConditionForNote(
 ): Promise<wasm.SpendCondition> {
   await ensureWasmInitialized();
 
-  const candidates: Array<{ name: string; condition: wasm.SpendCondition }> = [];
+  const candidates: Array<{ name: string; condition: SpendConditionLike }> = [];
 
   // 1) PKH only (standard simple note)
   try {
-    const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(senderPKH));
-    const condition = new wasm.SpendCondition([pkhLeaf]);
+    const condition = createPkhOnlyCondition(senderPKH);
     candidates.push({ name: 'PKH-only', condition });
   } catch (e) {
     console.warn('[TxBuilder] Failed to create PKH-only condition:', e);
@@ -38,9 +97,7 @@ export async function discoverSpendConditionForNote(
 
   // 2) PKH ∧ TIM (coinbase helper)
   try {
-    const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(senderPKH));
-    const timLeaf = wasm.LockPrimitive.newTim(wasm.LockTim.coinbase());
-    const condition = new wasm.SpendCondition([pkhLeaf, timLeaf]);
+    const condition = createPkhCoinbaseCondition(senderPKH);
     candidates.push({ name: 'PKH+TIM(coinbase)', condition });
   } catch (e) {
     console.warn('[TxBuilder] Failed to create PKH+TIM(coinbase) condition:', e);
@@ -48,11 +105,7 @@ export async function discoverSpendConditionForNote(
 
   // 3) PKH ∧ TIM (relative 100 blocks - common coinbase maturity)
   try {
-    const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(senderPKH));
-    const timLeaf = wasm.LockPrimitive.newTim(
-      new wasm.LockTim(new wasm.TimelockRange(100n, null), new wasm.TimelockRange(null, null))
-    );
-    const condition = new wasm.SpendCondition([pkhLeaf, timLeaf]);
+    const condition = createPkhRelativeTimelockCondition(senderPKH, 100n);
     candidates.push({ name: 'PKH+TIM(rel:100)', condition });
   } catch (e) {
     console.warn('[TxBuilder] Failed to create PKH+TIM(rel:100) condition:', e);
@@ -61,11 +114,7 @@ export async function discoverSpendConditionForNote(
   // 4) PKH ∧ TIM (absolute = originPage + 100)
   try {
     const absMin = BigInt(note.originPage) + 100n;
-    const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(senderPKH));
-    const timLeaf = wasm.LockPrimitive.newTim(
-      new wasm.LockTim(new wasm.TimelockRange(null, null), new wasm.TimelockRange(absMin, null))
-    );
-    const condition = new wasm.SpendCondition([pkhLeaf, timLeaf]);
+    const condition = createPkhAbsoluteTimelockCondition(senderPKH, absMin);
     candidates.push({ name: 'PKH+TIM(abs:origin+100)', condition });
   } catch (e) {
     console.warn('[TxBuilder] Failed to create PKH+TIM(abs:origin+100) condition:', e);
@@ -73,9 +122,9 @@ export async function discoverSpendConditionForNote(
 
   // Find the candidate whose first-name matches note.nameFirst
   for (const candidate of candidates) {
-    const derivedFirstName = candidate.condition.firstName().value;
+    const derivedFirstName = deriveFirstName(candidate.condition);
     if (derivedFirstName === note.nameFirst) {
-      return candidate.condition;
+      return candidate.condition as wasm.SpendCondition;
     }
   }
 
@@ -178,14 +227,16 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
         'Note missing protoNote - cannot build transaction. RPC must provide full note data.'
       );
     }
-    return wasm.Note.fromProtobuf(note.protoNote);
+    return noteFromProtobuf(note.protoNote);
   });
 
   // Create transaction builder with PKH digests (builder computes lock-roots)
   // include_lock_data: false keeps note-data empty (0.5 NOCK fee component)
   // Each note needs its own spend condition (array of conditions, one per note)
   const spendConditions = Array.isArray(spendCondition)
-    ? spendCondition // Use provided array (one per note)
+    ? isSpendConditionList(spendCondition)
+      ? spendCondition // Use provided array (one per note)
+      : notes.map(() => spendCondition) // Single condition applied to all notes
     : notes.map(() => spendCondition); // Single condition applied to all notes
 
   if (spendConditions.length !== notes.length) {
@@ -195,16 +246,16 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   }
 
   // New WASM API: constructor takes fee_per_word
-  const builder = new wasm.TxBuilder(BigInt(DEFAULT_FEE_PER_WORD));
+  const builder = createTxBuilder(DEFAULT_FEE_PER_WORD);
 
-  // simpleSpend now takes fee_override (user-specified fee) instead of fee_per_word
+  // New API: Nicks values are strings and digest values are strings.
   builder.simpleSpend(
     wasmNotes,
     spendConditions,
-    new wasm.Digest(recipientPKH),
-    BigInt(amount), // gift
-    fee !== undefined ? BigInt(fee) : null, // fee_override (user-specified fee)
-    new wasm.Digest(refundPKH),
+    recipientPKH,
+    String(amount),
+    fee !== undefined ? String(fee) : null,
+    refundPKH,
     includeLockData
   );
 
@@ -213,13 +264,13 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   builder.validate();
 
   // Get the fee before building (for return value)
-  const feeUsed = Number(builder.curFee());
+  const feeUsed = getFeeFromBuilder(builder);
 
   // Build the final transaction
   const nockchainTx = builder.build();
 
   return {
-    txId: nockchainTx.id.value,
+    txId: getTxIdCompat(nockchainTx),
     version: 1, // V1 only
     nockchainTx,
     feeUsed,
@@ -268,7 +319,7 @@ export async function buildPayment(
   });
 
   // Sanity check: verify the derived first-name matches
-  const derivedFirstName = spendCondition.firstName().value;
+  const derivedFirstName = deriveFirstName(spendCondition);
   if (derivedFirstName !== note.nameFirst) {
     throw new Error(
       `First-name mismatch! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
@@ -336,7 +387,7 @@ export async function buildMultiNotePayment(
 
   // Discover the correct spend condition for each note
   // Each note may have different spend conditions (e.g., some are coinbase with timelocks)
-  const spendConditions: wasm.SpendCondition[] = [];
+  const spendConditions: SpendConditionLike[] = [];
 
   for (let i = 0; i < notes.length; i++) {
     const note = notes[i];
@@ -346,7 +397,7 @@ export async function buildMultiNotePayment(
     });
 
     // Sanity check: verify the derived first-name matches
-    const derivedFirstName = spendCondition.firstName().value;
+    const derivedFirstName = deriveFirstName(spendCondition);
     if (derivedFirstName !== note.nameFirst) {
       throw new Error(
         `First-name mismatch for note ${i}! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
@@ -388,8 +439,7 @@ export async function createSinglePKHSpendCondition(
   await ensureWasmInitialized();
 
   const pkhDigest = publicKeyToPKHDigest(publicKey);
-  const pkh = wasm.Pkh.single(pkhDigest);
-  return wasm.SpendCondition.newPkh(pkh);
+  return createPkhOnlyCondition(pkhDigest) as wasm.SpendCondition;
 }
 
 /**
@@ -404,9 +454,7 @@ export async function calculateNoteDataHash(
 ): Promise<Uint8Array> {
   await ensureWasmInitialized();
 
-  const hashDigest = spendCondition.hash();
-  // The digest value is already a base58 string, decode it to bytes
-  return base58.decode(hashDigest.value);
+  return base58.decode(wasm.spendConditionHash(spendCondition));
 }
 
 /**
