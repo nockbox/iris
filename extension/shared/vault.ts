@@ -238,6 +238,32 @@ export class Vault {
     return `Wallet ${seedOrdinal}.${childOrdinal}`;
   }
 
+  /** Returns a style (icon + color) not already used by any account across all seeds. */
+  private pickUnusedStyleGlobally(): { iconStyleId: number; iconColor: string } {
+    const allAccounts = this.seedAccounts.flatMap(seed => seed.accounts);
+    const usedKeys = new Set(
+      allAccounts.map(
+        a => `${a.iconStyleId ?? 1}-${a.iconColor ?? PRESET_WALLET_STYLES[0].iconColor}`
+      )
+    );
+    for (const preset of PRESET_WALLET_STYLES) {
+      const key = `${preset.iconStyleId}-${preset.iconColor}`;
+      if (!usedKeys.has(key)) {
+        return { iconStyleId: preset.iconStyleId, iconColor: preset.iconColor };
+      }
+    }
+    // All presets used: pick random until we find an unused combo
+    const styleIds = Array.from({ length: 15 }, (_, i) => i + 1);
+    const colors = [...ACCOUNT_COLORS];
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const iconStyleId = styleIds[Math.floor(Math.random() * styleIds.length)];
+      const iconColor = colors[Math.floor(Math.random() * colors.length)];
+      const key = `${iconStyleId}-${iconColor}`;
+      if (!usedKeys.has(key)) return { iconStyleId, iconColor };
+    }
+    return { iconStyleId: 1, iconColor: PRESET_WALLET_STYLES[0].iconColor };
+  }
+
   private createSeedAccountFromLegacy(mnemonic: string, legacyAccounts: Account[]): SeedAccount {
     const seedAccountId = crypto.randomUUID();
     const seedOrdinal = this.getSeedOrdinal(seedAccountId);
@@ -843,8 +869,7 @@ export class Vault {
 
     const seedOrdinal = this.seedAccounts.length + 1;
     const seedId = crypto.randomUUID();
-    const presetIdx = Math.max(0, Math.min(seedOrdinal - 1, PRESET_WALLET_STYLES.length - 1));
-    const preset = PRESET_WALLET_STYLES[presetIdx];
+    const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
     const masterName = name?.trim() || this.getDefaultMasterWalletName(seedOrdinal);
     const masterAddress = await deriveAddressFromMaster(words);
 
@@ -853,8 +878,8 @@ export class Vault {
       address: masterAddress,
       seedAccountId: seedId,
       index: 0,
-      iconStyleId: preset.iconStyleId,
-      iconColor: preset.iconColor,
+      iconStyleId,
+      iconColor,
       createdAt: Date.now(),
       keySource: 'mnemonic',
       derivation: 'master',
@@ -910,16 +935,15 @@ export class Vault {
     const seedId = crypto.randomUUID();
     const provider = params.provider || 'unknown';
     const masterName = params.name?.trim() || this.getDefaultMasterWalletName(seedOrdinal);
-    const presetIdx = Math.max(0, Math.min(seedOrdinal - 1, PRESET_WALLET_STYLES.length - 1));
-    const preset = PRESET_WALLET_STYLES[presetIdx];
+    const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
 
     const externalMasterAccount: Account = {
       name: masterName,
       address: params.address,
       seedAccountId: seedId,
       index: 0,
-      iconStyleId: preset.iconStyleId,
-      iconColor: preset.iconColor,
+      iconStyleId,
+      iconColor,
       createdAt: Date.now(),
       keySource: 'external',
       external: {
@@ -1676,20 +1700,8 @@ export class Vault {
     const nextChildOrdinal = seedAccount.accounts.filter(acc => acc.derivation !== 'master').length + 1;
     const accountName = name || this.getDefaultChildWalletName(seedOrdinal, nextChildOrdinal);
 
-    // Use preset style if available, otherwise random
-    let iconStyleId: number;
-    let iconColor: string;
-
-    if (nextIndex < PRESET_WALLET_STYLES.length) {
-      // Use predetermined style for first 21 wallets
-      const preset = PRESET_WALLET_STYLES[nextIndex];
-      iconStyleId = preset.iconStyleId;
-      iconColor = preset.iconColor;
-    } else {
-      // After presets exhausted, use random selection
-      iconColor = ACCOUNT_COLORS[Math.floor(Math.random() * ACCOUNT_COLORS.length)];
-      iconStyleId = Math.floor(Math.random() * 15) + 1;
-    }
+    // Pick a style (icon + color) not already used by any account across all seeds
+    const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
 
     const newAccount: Account = {
       name: accountName,
