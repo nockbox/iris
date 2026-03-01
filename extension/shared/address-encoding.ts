@@ -4,7 +4,7 @@
  */
 
 import { base58 } from '@scure/base';
-import { hashPublicKey } from '@nockbox/iris-wasm/iris_wasm.js';
+import wasm from './sdk-wasm.js';
 
 /**
  * Converts a public key to a Nockchain V1 PKH (Public Key Hash) address
@@ -18,10 +18,7 @@ export function publicKeyToPKH(publicKey: Uint8Array): string {
     throw new Error(`Invalid public key length: ${publicKey.length}, expected 97`);
   }
 
-  // Use proper Noun representation before hashing
-  const address = hashPublicKey(publicKey);
-
-  return address;
+  return wasm.hashPublicKey(publicKey);
 }
 
 /**
@@ -64,6 +61,5 @@ export function publicKeyToPKHDigest(publicKey: Uint8Array): string {
   if (publicKey.length !== 97) {
     throw new Error(`Invalid public key length: ${publicKey.length}, expected 97`);
   }
-  // Use proper Noun representation before hashing
-  return hashPublicKey(publicKey);
+  return wasm.hashPublicKey(publicKey);
 }

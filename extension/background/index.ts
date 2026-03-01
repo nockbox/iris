@@ -221,6 +221,85 @@ function isRequestExpired(timestamp: number): boolean {
   return Date.now() - timestamp > REQUEST_EXPIRATION_MS;
 }
 
+type ParsedNicks =
+  | { ok: true; value: number }
+  | {
+      ok: false;
+      error: string;
+    };
+
+function parseNicksParam(
+  input: unknown,
+  field: string,
+  opts: { required?: boolean; allowZero?: boolean } = {}
+): ParsedNicks {
+  const { required = true, allowZero = false } = opts;
+
+  if (input === undefined || input === null) {
+    if (!required) {
+      return { ok: true, value: 0 };
+    }
+    return { ok: false, error: `Missing ${field}` };
+  }
+
+  let normalized: unknown = input;
+  if (typeof input === 'object' && 'value' in (input as Record<string, unknown>)) {
+    normalized = (input as Record<string, unknown>).value;
+  }
+
+  let asBigInt: bigint;
+  try {
+    if (typeof normalized === 'bigint') {
+      asBigInt = normalized;
+    } else if (typeof normalized === 'number') {
+      if (!Number.isFinite(normalized) || !Number.isInteger(normalized)) {
+        return { ok: false, error: `Invalid ${field}` };
+      }
+      asBigInt = BigInt(normalized);
+    } else if (typeof normalized === 'string') {
+      const trimmed = normalized.trim();
+      if (!/^-?\d+$/.test(trimmed)) {
+        return { ok: false, error: `Invalid ${field}` };
+      }
+      asBigInt = BigInt(trimmed);
+    } else {
+      return { ok: false, error: `Invalid ${field}` };
+    }
+  } catch {
+    return { ok: false, error: `Invalid ${field}` };
+  }
+
+  if (asBigInt < 0n || (!allowZero && asBigInt === 0n)) {
+    return { ok: false, error: `Invalid ${field}` };
+  }
+  if (asBigInt > BigInt(Number.MAX_SAFE_INTEGER)) {
+    return { ok: false, error: `${field} exceeds supported range` };
+  }
+
+  return { ok: true, value: Number(asBigInt) };
+}
+
+function normalizeSignRawTxParams(input: any): {
+  rawTx: any;
+  notes: any[];
+  spendConditions: any[];
+} {
+  const toProtobufIfNeeded = (value: any): any => {
+    if (value && typeof value.toProtobuf === 'function') {
+      return value.toProtobuf();
+    }
+    return value;
+  };
+
+  return {
+    rawTx: toProtobufIfNeeded(input.rawTx),
+    notes: Array.isArray(input.notes) ? input.notes.map(toProtobufIfNeeded) : [],
+    spendConditions: Array.isArray(input.spendConditions)
+      ? input.spendConditions.map(toProtobufIfNeeded)
+      : [],
+  };
+}
+
 /**
  * Pending approval requests
  * Maps request ID to the request data and response callback
@@ -603,16 +682,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        const outputs = await vault.computeOutputs(rawTxParams.rawTx);
+        const normalizedRawTxParams = normalizeSignRawTxParams(rawTxParams);
+        if (
+          !normalizedRawTxParams.rawTx ||
+          normalizedRawTxParams.notes.length === 0 ||
+          normalizedRawTxParams.spendConditions.length === 0
+        ) {
+          sendResponse({ error: { code: -32602, message: 'Invalid params' } });
+          return;
+        }
+
+        const outputs = await vault.computeOutputs(normalizedRawTxParams.rawTx);
 
         // Create sign raw tx approval request
         const signRawTxId = crypto.randomUUID();
         const signRawTxRequest: SignRawTxRequest = {
           id: signRawTxId,
           origin: signRawTxOrigin,
-          rawTx: rawTxParams.rawTx,
-          notes: rawTxParams.notes,
-          spendConditions: rawTxParams.spendConditions,
+          rawTx: normalizedRawTxParams.rawTx,
+          notes: normalizedRawTxParams.notes,
+          spendConditions: normalizedRawTxParams.spendConditions,
           outputs: outputs,
           timestamp: Date.now(),
         };
@@ -647,6 +736,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
         }
+        const parsedAmount = parseNicksParam(amount, 'amount');
+        if (!parsedAmount.ok) {
+          sendResponse({ error: parsedAmount.error });
+          return;
+        }
+        const parsedFee = parseNicksParam(fee, 'fee', { allowZero: true });
+        if (!parsedFee.ok) {
+          sendResponse({ error: parsedFee.error });
+          return;
+        }
 
         // Create transaction approval request
         const txRequestId = crypto.randomUUID();
@@ -654,8 +753,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           id: txRequestId,
           origin: sendTxOrigin,
           to,
-          amount,
-          fee,
+          amount: parsedAmount.value,
+          fee: parsedFee.value,
           timestamp: Date.now(),
         };
 
@@ -1267,9 +1366,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
         }
+        const parsedSignAmount = parseNicksParam(signAmount, 'amount');
+        if (!parsedSignAmount.ok) {
+          sendResponse({ error: parsedSignAmount.error });
+          return;
+        }
+        const parsedSignFee = parseNicksParam(signFee, 'fee', {
+          required: false,
+          allowZero: true,
+        });
+        if (!parsedSignFee.ok) {
+          sendResponse({ error: parsedSignFee.error });
+          return;
+        }
 
         try {
-          const txid = await vault.signTransaction(signTo, signAmount, signFee);
+          const txid = await vault.signTransaction(
+            signTo,
+            parsedSignAmount.value,
+            signFee === undefined || signFee === null ? undefined : parsedSignFee.value
+          );
           sendResponse({ txid });
         } catch (error) {
           console.error('[Background] Transaction signing failed:', error);
@@ -1291,14 +1407,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
         }
-
-        if (typeof estimateAmount !== 'number' || estimateAmount <= 0) {
-          sendResponse({ error: 'Invalid amount' });
+        const parsedEstimateAmount = parseNicksParam(estimateAmount, 'amount');
+        if (!parsedEstimateAmount.ok) {
+          sendResponse({ error: parsedEstimateAmount.error });
           return;
         }
 
         try {
-          const result = await vault.estimateTransactionFee(estimateTo, estimateAmount);
+          const result = await vault.estimateTransactionFee(estimateTo, parsedEstimateAmount.value);
 
           if ('error' in result) {
             sendResponse({ error: result.error });
@@ -1363,17 +1479,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
         }
-
-        if (typeof sendAmountV2 !== 'number' || sendAmountV2 <= 0) {
-          sendResponse({ error: 'Invalid amount' });
+        const parsedAmountV2 = parseNicksParam(sendAmountV2, 'amount');
+        if (!parsedAmountV2.ok) {
+          sendResponse({ error: parsedAmountV2.error });
+          return;
+        }
+        const parsedFeeV2 = parseNicksParam(sendFeeV2, 'fee', {
+          required: false,
+          allowZero: true,
+        });
+        if (!parsedFeeV2.ok) {
+          sendResponse({ error: parsedFeeV2.error });
           return;
         }
 
         try {
           const v2Result = await vault.sendTransactionV2(
             sendToV2,
-            sendAmountV2,
-            sendFeeV2, // optional, can be undefined
+            parsedAmountV2.value,
+            sendFeeV2 === undefined || sendFeeV2 === null ? undefined : parsedFeeV2.value,
             sendMaxV2, // optional, sweep all UTXOs to recipient
             priceUsdAtTimeV2 // optional, USD price at time of tx
           );
@@ -1409,19 +1533,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
         }
-
-        if (typeof sendAmount !== 'number' || sendAmount <= 0) {
-          sendResponse({ error: 'Invalid amount' });
+        const parsedSendAmount = parseNicksParam(sendAmount, 'amount');
+        if (!parsedSendAmount.ok) {
+          sendResponse({ error: parsedSendAmount.error });
           return;
         }
-
-        if (typeof sendFee !== 'number' || sendFee < 0) {
-          sendResponse({ error: 'Invalid fee' });
+        const parsedSendFee = parseNicksParam(sendFee, 'fee', { allowZero: true });
+        if (!parsedSendFee.ok) {
+          sendResponse({ error: parsedSendFee.error });
           return;
         }
 
         try {
-          const result = await vault.sendTransaction(sendTo, sendAmount, sendFee);
+          const result = await vault.sendTransaction(sendTo, parsedSendAmount.value, parsedSendFee.value);
 
           if ('error' in result) {
             sendResponse({ error: result.error });

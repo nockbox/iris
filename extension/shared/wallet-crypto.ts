@@ -8,7 +8,7 @@ import {
   validateMnemonic as validateMnemonicScure,
 } from '@scure/bip39';
 import { wordlist } from '@scure/bip39/wordlists/english.js';
-import { deriveMasterKeyFromMnemonic } from '@nockbox/iris-wasm/iris_wasm.js';
+import wasm from './sdk-wasm.js';
 import { publicKeyToPKH } from './address-encoding';
 import { ensureWasmInitialized as ensureWasmInit } from './wasm-utils';
 
@@ -39,7 +39,7 @@ export async function deriveAddressFromMaster(mnemonic: string): Promise<string>
   await ensureWasmInit();
 
   // Derive master key from mnemonic
-  const masterKey = deriveMasterKeyFromMnemonic(mnemonic, '');
+  const masterKey = wasm.deriveMasterKeyFromMnemonic(mnemonic, '');
 
   // Use master key public key directly (no child derivation)
   const address = publicKeyToPKH(masterKey.publicKey);
@@ -60,7 +60,7 @@ export async function deriveAddress(mnemonic: string, accountIndex: number = 0):
   await ensureWasmInit();
 
   // Derive master key from mnemonic
-  const masterKey = deriveMasterKeyFromMnemonic(mnemonic, '');
+  const masterKey = wasm.deriveMasterKeyFromMnemonic(mnemonic, '');
 
   // Derive child key at account index
   const childKey = masterKey.deriveChild(accountIndex);

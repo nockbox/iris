@@ -6,8 +6,24 @@
  * the expected first-name for standard lock types (simple PKH and coinbase).
  */
 
-import * as wasm from '@nockbox/iris-wasm/iris_wasm.js';
+import wasm from './sdk-wasm.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
+
+function createPkhCondition(pkhBase58: string): wasm.SpendCondition {
+  return [{ Pkh: { m: 1, hashes: [pkhBase58] } }];
+}
+
+function createCoinbaseCondition(pkhBase58: string): wasm.SpendCondition {
+  // In v1 semantics coinbase uses a relative timelock (100 blocks).
+  return [
+    { Pkh: { m: 1, hashes: [pkhBase58] } },
+    { Tim: { rel: { min: 100, max: null }, abs: { min: null, max: null } } },
+  ];
+}
+
+function firstNameFromCondition(condition: wasm.SpendCondition): string {
+  return wasm.spendConditionFirstName(condition);
+}
 
 /**
  * Derives the first-name for a simple PKH-locked note
@@ -33,13 +49,7 @@ export async function deriveSimpleFirstName(pkhBase58: string): Promise<string> 
     throw new Error('PKH must be a non-empty base58 string');
   }
 
-  // Create a simple PKH-only spend condition
-  const pkh = wasm.Pkh.single(pkhBase58);
-  const condition = wasm.SpendCondition.newPkh(pkh);
-
-  // Get the first-name from the spend condition
-  const firstNameDigest = condition.firstName();
-  const firstNameBase58 = firstNameDigest.value;
+  const firstNameBase58 = firstNameFromCondition(createPkhCondition(pkhBase58));
 
   // Verify it's the right length (40 bytes → ~55 chars base58)
   if (firstNameBase58.length < 50 || firstNameBase58.length > 60) {
@@ -75,14 +85,7 @@ export async function deriveCoinbaseFirstName(pkhBase58: string): Promise<string
     throw new Error('PKH must be a non-empty base58 string');
   }
 
-  // Create PKH + TIM (coinbase) spend condition
-  const pkhLeaf = wasm.LockPrimitive.newPkh(wasm.Pkh.single(pkhBase58));
-  const timLeaf = wasm.LockPrimitive.newTim(wasm.LockTim.coinbase());
-  const condition = new wasm.SpendCondition([pkhLeaf, timLeaf]);
-
-  // Get the first-name from the spend condition
-  const firstNameDigest = condition.firstName();
-  const firstNameBase58 = firstNameDigest.value;
+  const firstNameBase58 = firstNameFromCondition(createCoinbaseCondition(pkhBase58));
 
   // Verify it's the right length (40 bytes → ~55 chars base58)
   if (firstNameBase58.length < 50 || firstNameBase58.length > 60) {

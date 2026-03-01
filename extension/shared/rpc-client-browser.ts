@@ -3,11 +3,11 @@
  * Uses WASM-based tonic-web-wasm-client for proper bigint handling
  */
 
-import { GrpcClient } from '@nockbox/iris-wasm/iris_wasm.js';
 import type { Note } from './types';
 import { base58 } from '@scure/base';
 import { ensureWasmInitialized } from './wasm-utils.js';
 import { RPC_ENDPOINT, INTERNAL_METHODS } from './constants.js';
+import wasm from './sdk-wasm.js';
 
 /**
  * Report RPC connection status to background service worker
@@ -32,7 +32,7 @@ async function reportRpcStatus(healthy: boolean): Promise<void> {
  * Uses Rust WASM client for proper bigint serialization
  */
 export class NockchainBrowserRPCClient {
-  private client: GrpcClient | null = null;
+  private client: InstanceType<typeof wasm.GrpcClient> | null = null;
   private endpoint: string;
 
   constructor(endpoint: string = RPC_ENDPOINT) {
@@ -42,13 +42,13 @@ export class NockchainBrowserRPCClient {
   /**
    * Ensure the WASM client is initialized
    */
-  private async ensureClient(): Promise<GrpcClient> {
+  private async ensureClient(): Promise<InstanceType<typeof wasm.GrpcClient>> {
     if (this.client) {
       return this.client;
     }
 
     await ensureWasmInitialized();
-    this.client = new GrpcClient(this.endpoint);
+    this.client = new wasm.GrpcClient(this.endpoint);
     return this.client;
   }
 
@@ -60,10 +60,7 @@ export class NockchainBrowserRPCClient {
     try {
       const client = await this.ensureClient();
       const response = await client.getBalanceByAddress(address);
-
-      // Report successful RPC call
       reportRpcStatus(true);
-
       return this.convertBalanceToNotes(response);
     } catch (error) {
       console.error('[RPC Browser] Error fetching balance:', error);
@@ -88,7 +85,8 @@ export class NockchainBrowserRPCClient {
       // Report successful RPC call
       reportRpcStatus(true);
 
-      return this.convertBalanceToNotes(response);
+      const converted = this.convertBalanceToNotes(response);
+      return converted;
     } catch (error) {
       console.error('[RPC Browser] Error fetching notes by first-name:', error);
       // Report failed RPC call

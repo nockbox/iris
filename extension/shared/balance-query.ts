@@ -56,16 +56,37 @@ export interface BalanceResult {
  */
 export async function queryV1Balance(
   pkhBase58: string,
-  rpcClient: NockchainBrowserRPCClient
+  rpcClient: NockchainBrowserRPCClient,
 ): Promise<BalanceResult> {
-  // Derive both first-names
-  const { simple, coinbase } = await getBothFirstNames(pkhBase58);
+  // PKH digests used by the wallet are base58 strings (~55 chars).
+  // For this shape we should query by derived first-name, not address.
+  const isPkhDigestLike = typeof pkhBase58 === 'string' && pkhBase58.length >= 50 && pkhBase58.length <= 60;
 
-  // Query both types of notes in parallel
-  const [simpleNotes, coinbaseNotes] = await Promise.all([
+  let simpleNotes: Note[] = [];
+  let coinbaseNotes: Note[] = [];
+
+  if (!isPkhDigestLike) {
+    throw new Error('Balance query requires a PKH digest address for first-name lookup');
+  }
+
+  const { simple, coinbase } = await getBothFirstNames(pkhBase58);
+  const [simpleResult, coinbaseResult] = await Promise.allSettled([
     rpcClient.getNotesByFirstName(simple),
     rpcClient.getNotesByFirstName(coinbase),
   ]);
+
+  if (simpleResult.status === 'rejected' && coinbaseResult.status === 'rejected') {
+    const simpleError =
+      simpleResult.reason instanceof Error ? simpleResult.reason.message : String(simpleResult.reason);
+    const coinbaseError =
+      coinbaseResult.reason instanceof Error
+        ? coinbaseResult.reason.message
+        : String(coinbaseResult.reason);
+    throw new Error(`Failed balance query by first-name (${simpleError}; ${coinbaseError})`);
+  }
+
+  simpleNotes = simpleResult.status === 'fulfilled' ? simpleResult.value : [];
+  coinbaseNotes = coinbaseResult.status === 'fulfilled' ? coinbaseResult.value : [];
 
   // Sum the total value in nicks
   const totalNicks = [...simpleNotes, ...coinbaseNotes].reduce(
