@@ -4,12 +4,14 @@ import { ensureWasmInitialized } from './wasm-utils';
 import { wasm } from './sdk-wasm';
 import type { TxEngineSettings } from '@nockbox/iris-sdk/wasm';
 import { getEffectiveRpcEndpoint } from './rpc-config';
+import { createBrowserClient } from './rpc-client-browser';
 
 const DEFAULT_FEE_PER_WORD = '32768';
 const TARGET_NOTE_NOCK = 300;
 const MIGRATION_AMOUNT_NOCK = 200;
 const TARGET_NOTE_NICKS = BigInt(TARGET_NOTE_NOCK * NOCK_TO_NICKS);
 const MIGRATION_AMOUNT_NICKS = BigInt(MIGRATION_AMOUNT_NOCK * NOCK_TO_NICKS);
+let activeV0MigrationMnemonic: string | null = null;
 
 function isNoteV0(note: unknown): note is any {
   return Boolean(note && typeof note === 'object' && 'inner' in note && 'sig' in note && 'source' in note);
@@ -35,6 +37,55 @@ export interface BuiltV0MigrationResult {
     rawTx: any;
     notes: any[];
     spendConditions: any[];
+  };
+}
+
+export function setV0MigrationSigningMnemonic(mnemonic: string): void {
+  activeV0MigrationMnemonic = mnemonic.trim();
+}
+
+export function clearV0MigrationSigningMnemonic(): void {
+  activeV0MigrationMnemonic = null;
+}
+
+function getV0MigrationSigningMnemonic(): string {
+  if (!activeV0MigrationMnemonic) {
+    throw new Error('Missing v0 signing phrase. Re-import your v0 wallet and try again.');
+  }
+  return activeV0MigrationMnemonic;
+}
+
+function toRawTx(rawTx: any): any {
+  const asProtobuf = rawTx && typeof rawTx.toProtobuf === 'function' ? rawTx.toProtobuf() : rawTx;
+  try {
+    return wasm.rawTxFromProtobuf(asProtobuf);
+  } catch {
+    if (rawTx && typeof rawTx === 'object' && 'spends' in rawTx) {
+      return rawTx;
+    }
+    throw new Error(
+      'Raw transaction must be protobuf or have .toProtobuf(); data did not match any variant of RawTx'
+    );
+  }
+}
+
+function toNote(note: any): any {
+  if (note && typeof note === 'object' && ('version' in note || 'inner' in note)) {
+    return note;
+  }
+  if (note && typeof note.toProtobuf === 'function') {
+    return wasm.note_from_protobuf(note.toProtobuf());
+  }
+  return wasm.note_from_protobuf(note);
+}
+
+function txEngineSettings(): any {
+  return {
+    tx_engine_version: 1,
+    tx_engine_patch: 0,
+    min_fee: '0',
+    cost_per_word: String(DEFAULT_FEE_PER_WORD),
+    witness_word_div: 1,
   };
 }
 
@@ -193,4 +244,47 @@ export async function buildV0MigrationTransactionFromNotes(
       spendConditions: txNotes.spend_conditions ?? [],
     },
   };
+}
+
+export async function signAndBroadcastV0MigrationTransaction(params: {
+  rawTx: any;
+  notes: any[];
+  spendConditions: any[];
+}): Promise<{ txId: string }> {
+  await ensureWasmInitialized();
+  const signingMnemonic = getV0MigrationSigningMnemonic();
+  const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
+
+  if (!masterKey.privateKey) {
+    masterKey.free();
+    throw new Error('Cannot sign migration transaction: private key unavailable');
+  }
+
+  try {
+    const irisRawTx = toRawTx(params.rawTx);
+    const irisNotes = (params.notes || []).map(note => toNote(note));
+    const irisSpendConditions = (params.spendConditions || []) as any[];
+
+    const builder = wasm.TxBuilder.fromTx(
+      irisRawTx,
+      irisNotes,
+      irisSpendConditions,
+      txEngineSettings()
+    );
+    const signingKeyBytes = new Uint8Array(masterKey.privateKey.slice(0, 32));
+    builder.sign(signingKeyBytes);
+    builder.validate();
+
+    const signedTx = builder.build();
+    const rawSignedTx = wasm.nockchainTxToRaw(signedTx) as any;
+    const protobufTx = wasm.rawTxToProtobuf(rawSignedTx);
+
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
+    await rpcClient.sendTransaction(protobufTx);
+
+    return { txId: signedTx.id };
+  } finally {
+    masterKey.free();
+  }
 }

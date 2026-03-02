@@ -8,7 +8,10 @@ import ArrowDownIcon from '../assets/arrow-down-icon.svg';
 import ChevronDownIconAsset from '../assets/wallet-dropdown-arrow.svg';
 import InfoIconAsset from '../assets/info-icon.svg';
 import { truncateAddress } from '../utils/format';
-import { buildV0MigrationTransactionFromNotes } from '../../shared/v0-migration';
+import {
+  buildV0MigrationTransactionFromNotes,
+  clearV0MigrationSigningMnemonic,
+} from '../../shared/v0-migration';
 
 export function V0MigrationFundsScreen() {
   const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft } = useStore();
@@ -45,13 +48,29 @@ export function V0MigrationFundsScreen() {
   const [isBuilding, setIsBuilding] = useState(false);
 
   useEffect(() => {
-    if (v0MigrationDraft.destinationWalletIndex === null && visibleAccounts.length > 0) {
-      setV0MigrationDraft({ destinationWalletIndex: visibleAccounts[0].index });
+    if (
+      !v0MigrationDraft.destinationWalletAddress &&
+      v0MigrationDraft.destinationWalletIndex === null &&
+      visibleAccounts.length > 0
+    ) {
+      setV0MigrationDraft({
+        destinationWalletIndex: visibleAccounts[0].index,
+        destinationWalletAddress: visibleAccounts[0].address,
+      });
     }
-  }, [v0MigrationDraft.destinationWalletIndex, visibleAccounts, setV0MigrationDraft]);
+  }, [
+    v0MigrationDraft.destinationWalletAddress,
+    v0MigrationDraft.destinationWalletIndex,
+    visibleAccounts,
+    setV0MigrationDraft,
+  ]);
 
   const destinationWallet =
-    flattenedDestinationAccounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) ||
+    flattenedDestinationAccounts.find(
+      account =>
+        account.address === v0MigrationDraft.destinationWalletAddress ||
+        account.index === v0MigrationDraft.destinationWalletIndex
+    ) ||
     flattenedDestinationAccounts[0] ||
     null;
   const hasInsufficientFunds = v0MigrationDraft.v0BalanceNock <= v0MigrationDraft.feeNock;
@@ -102,6 +121,7 @@ export function V0MigrationFundsScreen() {
         feeNock: built.feeNock,
         signRawTxPayload: built.signRawTxPayload,
         txId: built.txId,
+        destinationWalletAddress: destinationWallet.address,
       });
       navigate('v0-migration-review');
     } catch (err) {
@@ -230,7 +250,19 @@ export function V0MigrationFundsScreen() {
         <div className="flex gap-3">
           <button
             type="button"
-            onClick={() => navigate('settings')}
+            onClick={() => {
+              clearV0MigrationSigningMnemonic();
+              setV0MigrationDraft({
+                signRawTxPayload: undefined,
+                txId: undefined,
+                sourceAddress: undefined,
+                sourcePkh: undefined,
+                v0NotesProtobuf: undefined,
+                destinationWalletAddress: undefined,
+                destinationWalletIndex: null,
+              });
+              navigate('settings');
+            }}
             className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-surface-800)] text-[var(--color-text-primary)] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 font-sans font-medium"
             style={{
               fontSize: 'var(--font-size-base)',
@@ -276,7 +308,9 @@ export function V0MigrationFundsScreen() {
                 >
                   <div className="flex flex-col gap-1">
                     {group.accounts.map(account => {
-                      const isSelected = account.index === v0MigrationDraft.destinationWalletIndex;
+                      const isSelected =
+                        account.address === v0MigrationDraft.destinationWalletAddress ||
+                        account.index === v0MigrationDraft.destinationWalletIndex;
                       const isTopLevelWallet = account.index === 0;
                       const balance = wallet.accountBalances[account.address] ?? 0;
                       return (
@@ -284,7 +318,10 @@ export function V0MigrationFundsScreen() {
                           key={account.address}
                           type="button"
                           onClick={() => {
-                            setV0MigrationDraft({ destinationWalletIndex: account.index });
+                            setV0MigrationDraft({
+                              destinationWalletIndex: account.index,
+                              destinationWalletAddress: account.address,
+                            });
                             setShowWalletPicker(false);
                           }}
                           className="self-stretch pl-2 pr-3 py-2 rounded-lg inline-flex justify-between items-center gap-2.5 transition"

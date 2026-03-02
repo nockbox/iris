@@ -5,7 +5,7 @@ import { Alert } from '../components/Alert';
 import lockIcon from '../assets/lock-icon.svg';
 import { importKeyfile, type Keyfile } from '../../shared/keyfile';
 import { UI_CONSTANTS } from '../../shared/constants';
-import { queryV0BalanceFromMnemonic } from '../../shared/v0-migration';
+import { queryV0BalanceFromMnemonic, setV0MigrationSigningMnemonic } from '../../shared/v0-migration';
 
 const WORD_COUNT = 24;
 
@@ -116,11 +116,13 @@ export function V0MigrationSetupScreen() {
     setDiscoverError('');
     setIsDiscovering(true);
     try {
-      const discovery = await queryV0BalanceFromMnemonic(words.join(' ').trim());
+      const mnemonic = words.join(' ').trim();
+      const discovery = await queryV0BalanceFromMnemonic(mnemonic);
 
       if (!discovery.v0NotesProtobuf.length) {
         throw new Error('No v0 notes found for this recovery phrase.');
       }
+      setV0MigrationSigningMnemonic(mnemonic);
 
       setV0MigrationDraft({
         sourceAddress: discovery.sourceAddress,
@@ -129,6 +131,7 @@ export function V0MigrationSetupScreen() {
         v0BalanceNock: discovery.totalNock,
         migratedAmountNock: undefined,
         feeNock: 59,
+        destinationWalletAddress: undefined,
         keyfileName: undefined,
         signRawTxPayload: undefined,
         txId: undefined,

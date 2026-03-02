@@ -2,12 +2,16 @@ import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { SendPaperPlaneIcon } from '../components/icons/SendPaperPlaneIcon';
 import { PlusIcon } from '../components/icons/PlusIcon';
+import { clearV0MigrationSigningMnemonic } from '../../shared/v0-migration';
+import { truncateAddress } from '../utils/format';
 
 export function V0MigrationSubmittedScreen() {
   const { navigate, v0MigrationDraft, resetV0MigrationDraft } = useStore();
   const sentAmount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock;
+  const txId = v0MigrationDraft.txId;
 
   function handleBackToOverview() {
+    clearV0MigrationSigningMnemonic();
     resetV0MigrationDraft();
     navigate('home');
   }
@@ -46,6 +50,38 @@ export function V0MigrationSubmittedScreen() {
             <div className="text-[14px] font-medium">{sentAmount.toLocaleString()} NOCK</div>
           </div>
         </div>
+
+        {txId && (
+          <div
+            className="mt-2 rounded-[14px] p-3 flex items-center justify-between gap-3"
+            style={{ backgroundColor: 'var(--color-surface-900)' }}
+          >
+            <div className="min-w-0">
+              <div className="text-[14px] font-medium">Transaction ID</div>
+              <div
+                className="text-[12px] leading-[18px] truncate"
+                style={{ color: 'var(--color-text-muted)' }}
+                title={txId}
+              >
+                {truncateAddress(txId)}
+              </div>
+            </div>
+            <button
+              type="button"
+              className="text-[12px] font-medium underline"
+              style={{ color: 'var(--color-text-primary)' }}
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(txId);
+                } catch (error) {
+                  console.warn('[V0 Migration] Failed to copy tx id:', error);
+                }
+              }}
+            >
+              Copy
+            </button>
+          </div>
+        )}
 
         <button
           type="button"

@@ -1,16 +1,42 @@
+import { useState } from 'react';
 import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../components/AccountIcon';
+import { Alert } from '../components/Alert';
 import WalletIconYellow from '../assets/wallet-icon-yellow.svg';
 import { truncateAddress } from '../utils/format';
+import { signAndBroadcastV0MigrationTransaction } from '../../shared/v0-migration';
 
 export function V0MigrationReviewScreen() {
-  const { navigate, wallet, v0MigrationDraft, priceUsd } = useStore();
+  const { navigate, wallet, v0MigrationDraft, priceUsd, setV0MigrationDraft, fetchBalance } = useStore();
   const destinationWallet =
-    wallet.accounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) || null;
+    wallet.accounts.find(
+      account =>
+        account.address === v0MigrationDraft.destinationWalletAddress ||
+        account.index === v0MigrationDraft.destinationWalletIndex
+    ) || null;
   const amount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock;
   const usdAmount = amount * priceUsd;
   const canSend = Boolean(v0MigrationDraft.signRawTxPayload);
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState('');
+
+  async function handleSend() {
+    if (!v0MigrationDraft.signRawTxPayload || isSending) return;
+
+    setSendError('');
+    setIsSending(true);
+    try {
+      const result = await signAndBroadcastV0MigrationTransaction(v0MigrationDraft.signRawTxPayload);
+      setV0MigrationDraft({ txId: result.txId });
+      await fetchBalance();
+      navigate('v0-migration-submitted');
+    } catch (error) {
+      setSendError(error instanceof Error ? error.message : 'Failed to send migration transaction');
+    } finally {
+      setIsSending(false);
+    }
+  }
 
   return (
     <div
@@ -72,6 +98,7 @@ export function V0MigrationReviewScreen() {
           <span className="text-[14px] font-medium">Network fee</span>
           <span className="text-[14px] font-medium">{v0MigrationDraft.feeNock} NOCK</span>
         </div>
+        {sendError && <Alert type="error">{sendError}</Alert>}
       </div>
 
       <div className="p-3 mt-auto">
@@ -86,12 +113,12 @@ export function V0MigrationReviewScreen() {
           </button>
           <button
             type="button"
-            onClick={() => navigate('v0-migration-submitted')}
-            disabled={!canSend}
+            onClick={handleSend}
+            disabled={!canSend || isSending}
             className="flex-1 h-12 rounded-[14px] text-[16px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
           >
-            Send
+            {isSending ? 'Sending...' : 'Send'}
           </button>
         </div>
       </div>

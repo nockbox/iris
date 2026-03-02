@@ -133,6 +133,7 @@ interface AppStore {
     migratedAmountNock?: number;
     feeNock: number;
     destinationWalletIndex: number | null;
+    destinationWalletAddress?: string;
     keyfileName?: string;
     sourceAddress?: string;
     sourcePkh?: string;
@@ -150,6 +151,7 @@ interface AppStore {
       migratedAmountNock?: number;
       feeNock: number;
       destinationWalletIndex: number | null;
+      destinationWalletAddress?: string;
       keyfileName?: string;
       sourceAddress?: string;
       sourcePkh?: string;
@@ -251,6 +253,7 @@ export const useStore = create<AppStore>((set, get) => ({
     migratedAmountNock: undefined,
     feeNock: 59,
     destinationWalletIndex: null,
+    destinationWalletAddress: undefined,
     keyfileName: undefined,
     sourceAddress: undefined,
     sourcePkh: undefined,
@@ -426,6 +429,7 @@ export const useStore = create<AppStore>((set, get) => ({
         migratedAmountNock: undefined,
         feeNock: 59,
         destinationWalletIndex: null,
+        destinationWalletAddress: undefined,
         keyfileName: undefined,
         sourceAddress: undefined,
         sourcePkh: undefined,
