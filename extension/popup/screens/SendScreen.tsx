@@ -41,6 +41,29 @@ export function SendScreen() {
 
   // Get real accounts from vault (filter out hidden accounts)
   const accounts = (wallet.accounts || []).filter(acc => !acc.hidden);
+  const groupedBySeed = (wallet.seedSources || [])
+    .map(seed => ({
+      seed,
+      accounts: accounts.filter(acc => acc.seedAccountId === seed.id),
+    }))
+    .filter(group => group.accounts.length > 0);
+  const seedGroups =
+    groupedBySeed.length > 0
+      ? groupedBySeed
+      : accounts.length > 0
+        ? [
+            {
+              seed: {
+                id: wallet.activeSeedSourceId || 'legacy',
+                name: 'Legacy',
+                type: 'mnemonic' as const,
+                createdAt: 0,
+                accounts: [],
+              },
+              accounts,
+            },
+          ]
+        : [];
   const currentAccount =
     wallet.currentAccount && !wallet.currentAccount.hidden ? wallet.currentAccount : accounts[0];
   // Use spendable balance (only UTXOs that are not in_flight - can be spent NOW)
@@ -499,57 +522,62 @@ export function SendScreen() {
               role="listbox"
               className="rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.1)] p-1 max-h-[240px] overflow-y-auto"
             >
-              {accounts.map(account => {
-                const isSelected = currentAccount?.address === account.address;
-                return (
-                  <button
-                    key={account.address}
-                    role="option"
-                    aria-selected={isSelected}
-                    className="w-full flex items-center gap-2 p-2 rounded-lg transition border"
-                    style={{
-                      backgroundColor: 'var(--color-bg)',
-                      borderColor: isSelected ? 'var(--color-text-primary)' : 'transparent',
-                    }}
-                    onMouseEnter={e => {
-                      if (!isSelected) {
-                        e.currentTarget.style.backgroundColor = 'var(--color-surface-900)';
-                      }
-                    }}
-                    onMouseLeave={e => {
-                      if (!isSelected) {
-                        e.currentTarget.style.backgroundColor = 'var(--color-bg)';
-                      }
-                    }}
-                    onClick={() => handleSwitchAccount(account.address)}
-                  >
-                    <div
-                      className="flex-shrink-0 w-10 h-10 rounded-lg grid place-items-center"
-                      style={{ backgroundColor: 'var(--color-bg)' }}
-                    >
-                      <AccountIcon
-                        styleId={account.iconStyleId}
-                        color={account.iconColor}
-                        className="w-6 h-6"
-                      />
-                    </div>
-                    <div className="flex-1 text-left">
-                      <div className="text-[14px] leading-[18px] font-medium tracking-[0.01em]">
-                        {account.name}
-                      </div>
-                      <div
-                        className="text-[13px] leading-[18px] tracking-[0.02em]"
-                        style={{ color: 'var(--color-text-muted)' }}
+              {seedGroups.map(group => (
+                <div key={group.seed.id} className="mb-1 rounded-xl flex flex-col gap-1">
+                  {group.accounts.map(account => {
+                    const isSelected = currentAccount?.address === account.address;
+                    const isTopLevelWallet = account.index === 0;
+                    return (
+                      <button
+                        key={account.address}
+                        role="option"
+                        aria-selected={isSelected}
+                        className="w-full flex items-center gap-2 p-2 rounded-lg transition"
+                        style={{
+                          backgroundColor: isSelected ? 'var(--color-surface-900)' : 'var(--color-bg)',
+                          paddingLeft: isTopLevelWallet ? undefined : 24,
+                        }}
+                        onMouseEnter={e => {
+                          if (!isSelected) {
+                            e.currentTarget.style.backgroundColor = 'var(--color-surface-800)';
+                          }
+                        }}
+                        onMouseLeave={e => {
+                          if (!isSelected) {
+                            e.currentTarget.style.backgroundColor = 'var(--color-bg)';
+                          }
+                        }}
+                        onClick={() => handleSwitchAccount(account.address)}
                       >
-                        {truncateAddress(account.address)}
-                      </div>
-                    </div>
-                    <div className="ml-auto text-[14px] leading-[18px] font-medium tracking-[0.01em] whitespace-nowrap">
-                      {formatInt(wallet.accountSpendableBalances?.[account.address] ?? 0)} NOCK
-                    </div>
-                  </button>
-                );
-              })}
+                        <div
+                          className="flex-shrink-0 w-10 h-10 rounded-lg grid place-items-center"
+                          style={{ backgroundColor: 'var(--color-bg)' }}
+                        >
+                          <AccountIcon
+                            styleId={account.iconStyleId}
+                            color={account.iconColor}
+                            className="w-6 h-6"
+                          />
+                        </div>
+                        <div className="flex-1 text-left min-w-0">
+                          <div className="text-[14px] leading-[18px] font-medium tracking-[0.01em] truncate">
+                            {account.name}
+                          </div>
+                          <div
+                            className="text-[13px] leading-[18px] tracking-[0.02em]"
+                            style={{ color: 'var(--color-text-muted)' }}
+                          >
+                            {truncateAddress(account.address)}
+                          </div>
+                        </div>
+                        <div className="ml-auto text-[14px] leading-[18px] font-medium tracking-[0.01em] whitespace-nowrap">
+                          {formatInt(wallet.accountSpendableBalances?.[account.address] ?? 0)} NOCK
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
             </div>
           )}
         </div>

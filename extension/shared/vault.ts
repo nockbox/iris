@@ -390,19 +390,28 @@ export class Vault {
   private createSeedAccountFromLegacy(mnemonic: string, legacyAccounts: Account[]): SeedAccount {
     const seedAccountId = crypto.randomUUID();
     const seedOrdinal = this.getSeedOrdinal(seedAccountId);
-    const normalizedAccounts = legacyAccounts.map((account, idx) => ({
-      ...account,
-      seedAccountId,
-      keySource: 'mnemonic' as const,
-      derivation:
-        account.derivation || (typeof account.index === 'number' && account.index === 0 ? 'master' : 'slip10'),
-      index: typeof account.index === 'number' ? account.index : idx,
-      name:
-        account.name ||
-        (idx === 0
-          ? this.getDefaultMasterWalletName(seedOrdinal)
-          : this.getDefaultChildWalletName(seedOrdinal, idx)),
-    }));
+    const normalizedAccounts = legacyAccounts.map((account, idx) => {
+      // Normalize legacy default names into hierarchical seed naming while preserving custom names.
+      const normalizedIndex = typeof account.index === 'number' ? account.index : idx;
+      const isMaster = normalizedIndex === 0;
+      const defaultName = isMaster
+        ? this.getDefaultMasterWalletName(seedOrdinal)
+        : this.getDefaultChildWalletName(seedOrdinal, normalizedIndex);
+      const hasName = typeof account.name === 'string' && account.name.trim().length > 0;
+      const isLegacyDefaultName =
+        hasName && /^Wallet \d+(\.\d+)?$/.test((account.name as string).trim());
+      const normalizedName = hasName && !isLegacyDefaultName ? account.name : defaultName;
+
+      return {
+        ...account,
+        seedAccountId,
+        keySource: 'mnemonic' as const,
+        derivation:
+          account.derivation || (typeof account.index === 'number' && account.index === 0 ? 'master' : 'slip10'),
+        index: normalizedIndex,
+        name: normalizedName,
+      };
+    });
 
     return {
       id: seedAccountId,
@@ -1535,7 +1544,8 @@ export class Vault {
       throw new Error('Vault is locked');
     }
 
-    const rpcClient = createBrowserClient();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
 
     return withAccountLock(accountAddress, async () => {
       // 1. Fetch current UTXOs from chain
@@ -1717,7 +1727,8 @@ export class Vault {
       throw new Error('Vault is locked');
     }
 
-    const rpcClient = createBrowserClient();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
 
     return withAccountLock(accountAddress, async () => {
       // Check if already initialized
@@ -1753,7 +1764,8 @@ export class Vault {
       throw new Error('Vault is locked');
     }
 
-    const rpcClient = createBrowserClient();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
 
     return withAccountLock(accountAddress, async () => {
       // Fetch current UTXOs from chain (first-name only)

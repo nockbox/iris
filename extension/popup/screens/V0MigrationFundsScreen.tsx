@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../components/AccountIcon';
@@ -8,12 +8,38 @@ import ArrowDownIcon from '../assets/arrow-down-icon.svg';
 import ChevronDownIconAsset from '../assets/wallet-dropdown-arrow.svg';
 import InfoIconAsset from '../assets/info-icon.svg';
 import { truncateAddress } from '../utils/format';
-import { PlusIcon } from '../components/icons/PlusIcon';
 import { buildV0MigrationTransactionFromNotes } from '../../shared/v0-migration';
 
 export function V0MigrationFundsScreen() {
   const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft } = useStore();
   const visibleAccounts = wallet.accounts.filter(account => !account.hidden);
+  const groupedBySeed = (wallet.seedSources || [])
+    .map(seed => ({
+      seed,
+      accounts: visibleAccounts.filter(acc => acc.seedAccountId === seed.id),
+    }))
+    .filter(group => group.accounts.length > 0);
+  const destinationSeedGroups =
+    groupedBySeed.length > 0
+      ? groupedBySeed
+      : visibleAccounts.length > 0
+        ? [
+            {
+              seed: {
+                id: wallet.activeSeedSourceId || 'legacy',
+                name: 'Legacy',
+                type: 'mnemonic' as const,
+                createdAt: 0,
+                accounts: [],
+              },
+              accounts: visibleAccounts,
+            },
+          ]
+        : [];
+  const flattenedDestinationAccounts = useMemo(
+    () => destinationSeedGroups.flatMap(group => group.accounts),
+    [destinationSeedGroups]
+  );
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [buildError, setBuildError] = useState('');
   const [isBuilding, setIsBuilding] = useState(false);
@@ -25,8 +51,8 @@ export function V0MigrationFundsScreen() {
   }, [v0MigrationDraft.destinationWalletIndex, visibleAccounts, setV0MigrationDraft]);
 
   const destinationWallet =
-    visibleAccounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) ||
-    visibleAccounts[0] ||
+    flattenedDestinationAccounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) ||
+    flattenedDestinationAccounts[0] ||
     null;
   const hasInsufficientFunds = v0MigrationDraft.v0BalanceNock <= v0MigrationDraft.feeNock;
 
@@ -231,69 +257,89 @@ export function V0MigrationFundsScreen() {
       </div>
 
       {showWalletPicker && (
-        <div
-          className="absolute inset-0 z-50 flex items-center justify-center p-3"
-          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
-        >
+        <>
+          <div className="absolute inset-0 z-40" onClick={() => setShowWalletPicker(false)} />
           <div
-            className="w-full max-h-[520px] rounded-[20px] border p-3 overflow-y-auto"
-            style={{ backgroundColor: 'var(--color-bg)', borderColor: 'var(--color-surface-700)' }}
+            className="absolute top-[218px] left-4 right-4 rounded-xl z-50 flex flex-col max-h-[320px] overflow-hidden"
+            style={{
+              backgroundColor: 'var(--color-bg)',
+              border: '1px solid var(--color-surface-700)',
+              boxShadow: '0 4px 12px 0 rgba(5, 5, 5, 0.12)',
+            }}
           >
-            <div className="flex items-center justify-between h-10 mb-2">
-              <div className="w-7" />
-              <h2 className="text-[16px] font-medium">Select wallet</h2>
-              <button type="button" onClick={() => setShowWalletPicker(false)} className="p-1.5">
-                <ChevronLeftIcon className="w-5 h-5 rotate-180" />
-              </button>
-            </div>
-
-            {visibleAccounts.map((account, index) => {
-              const isSelected = account.index === v0MigrationDraft.destinationWalletIndex;
-              const balance = wallet.accountBalances[account.address] ?? 0;
-              return (
-                <button
-                  key={account.index}
-                  type="button"
-                  onClick={() => {
-                    setV0MigrationDraft({ destinationWalletIndex: account.index });
-                    setShowWalletPicker(false);
-                  }}
-                  className="w-full rounded-[14px] px-3 py-3 mb-2 flex items-center justify-between"
-                  style={{
-                    backgroundColor: 'var(--color-surface-900)',
-                    border: isSelected ? '1px solid var(--color-text-primary)' : '1px solid transparent',
-                  }}
+            <div className="flex-1 min-h-0 overflow-y-auto p-2">
+              {destinationSeedGroups.map(group => (
+                <div
+                  key={group.seed.id}
+                  className="mb-2 rounded-xl flex flex-col gap-1"
+                  style={{ backgroundColor: 'var(--color-bg)' }}
                 >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <AccountIcon styleId={account.iconStyleId} color={account.iconColor} className="w-10 h-10" />
-                    <div className="text-left min-w-0">
-                      <div className="text-[16px] font-medium">{account.name}</div>
-                      <div className="text-[12px] truncate" style={{ color: 'var(--color-text-muted)' }}>
-                        {truncateAddress(account.address)}
-                      </div>
-                    </div>
+                  <div className="flex flex-col gap-1">
+                    {group.accounts.map(account => {
+                      const isSelected = account.index === v0MigrationDraft.destinationWalletIndex;
+                      const isTopLevelWallet = account.index === 0;
+                      const balance = wallet.accountBalances[account.address] ?? 0;
+                      return (
+                        <button
+                          key={account.address}
+                          type="button"
+                          onClick={() => {
+                            setV0MigrationDraft({ destinationWalletIndex: account.index });
+                            setShowWalletPicker(false);
+                          }}
+                          className="self-stretch pl-2 pr-3 py-2 rounded-lg inline-flex justify-between items-center gap-2.5 transition"
+                          style={{
+                            backgroundColor: isSelected ? 'var(--color-surface-900)' : 'transparent',
+                            paddingLeft: isTopLevelWallet ? undefined : 24,
+                          }}
+                          onMouseEnter={e => {
+                            if (!isSelected) e.currentTarget.style.backgroundColor = 'var(--color-surface-800)';
+                          }}
+                          onMouseLeave={e => {
+                            if (!isSelected) e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
+                        >
+                          <div className="flex-1 flex justify-start items-center gap-2.5 min-w-0">
+                            <div
+                              className="w-10 h-10 shrink-0 relative grid place-items-center rounded-[9.6px]"
+                              style={{ backgroundColor: 'var(--color-bg)' }}
+                            >
+                              <AccountIcon
+                                styleId={account.iconStyleId}
+                                color={account.iconColor}
+                                className="w-6 h-6"
+                              />
+                            </div>
+                            <div className="flex-1 inline-flex flex-col justify-center items-start gap-0.5 min-w-0">
+                              <div
+                                className="text-sm font-medium leading-4 tracking-tight truncate w-full text-left"
+                                style={{ color: 'var(--color-text-primary)' }}
+                              >
+                                {account.name}
+                              </div>
+                              <div
+                                className="text-xs font-normal leading-4 tracking-tight"
+                                style={{ color: 'var(--color-text-muted)' }}
+                              >
+                                {truncateAddress(account.address)}
+                              </div>
+                            </div>
+                          </div>
+                          <div
+                            className="text-sm font-medium leading-4 tracking-tight text-right shrink-0 whitespace-nowrap"
+                            style={{ color: 'var(--color-text-primary)' }}
+                          >
+                            {balance.toLocaleString('en-US', { maximumFractionDigits: 0 })} NOCK
+                          </div>
+                        </button>
+                      );
+                    })}
                   </div>
-                  {index === 0 && (
-                    <div className="text-[16px] font-medium whitespace-nowrap">
-                      {balance.toLocaleString('en-US', { maximumFractionDigits: 0 })} NOCK
-                    </div>
-                  )}
-                </button>
-              );
-            })}
-
-            <button
-              type="button"
-              className="w-full rounded-[14px] px-3 py-3 mb-2 flex items-center gap-2.5"
-              style={{ backgroundColor: 'transparent' }}
-            >
-              <div className="w-10 h-10 rounded-full grid place-items-center bg-[var(--color-surface-900)]">
-                <PlusIcon className="w-5 h-5" />
-              </div>
-              <div className="text-[16px] font-medium">Add sub-wallet</div>
-            </button>
+                </div>
+              ))}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
