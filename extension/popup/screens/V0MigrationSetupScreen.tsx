@@ -1,35 +1,22 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
-import { AccountIcon } from '../components/AccountIcon';
-import LockIconYellow from '../assets/lock-icon-yellow.svg';
-import WalletIconYellow from '../assets/wallet-icon-yellow.svg';
-import ArrowUpIcon from '../assets/arrow-up-icon.svg';
-import ArrowDownIcon from '../assets/arrow-down-icon.svg';
-import ChevronDownIconAsset from '../assets/wallet-dropdown-arrow.svg';
-import InfoIconAsset from '../assets/info-icon.svg';
-import { truncateAddress } from '../utils/format';
-import { PlusIcon } from '../components/icons/PlusIcon';
+import { Alert } from '../components/Alert';
+import lockIcon from '../assets/lock-icon.svg';
+import { importKeyfile, type Keyfile } from '../../shared/keyfile';
+import { UI_CONSTANTS } from '../../shared/constants';
 
 const WORD_COUNT = 24;
 
 export function V0MigrationSetupScreen() {
-  const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft } = useStore();
-  const visibleAccounts = wallet.accounts.filter(account => !account.hidden);
-  const [showWalletPicker, setShowWalletPicker] = useState(false);
+  const { navigate, v0MigrationDraft, setV0MigrationDraft } = useStore();
+  const [showKeyfileImport, setShowKeyfileImport] = useState(false);
+  const [keyfileError, setKeyfileError] = useState('');
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  useEffect(() => {
-    if (v0MigrationDraft.destinationWalletIndex === null && visibleAccounts.length > 0) {
-      setV0MigrationDraft({ destinationWalletIndex: visibleAccounts[0].index });
-    }
-  }, [v0MigrationDraft.destinationWalletIndex, visibleAccounts, setV0MigrationDraft]);
-
-  const destinationWallet =
-    visibleAccounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) ||
-    visibleAccounts[0] ||
-    null;
-  const hasInsufficientFunds = v0MigrationDraft.v0BalanceNock <= v0MigrationDraft.feeNock;
+  const words = v0MigrationDraft.seedWords;
+  const canContinue = words.length === WORD_COUNT && words.every(w => Boolean(w));
 
   async function handlePasteAll() {
     try {
@@ -46,267 +33,294 @@ export function V0MigrationSetupScreen() {
   }
 
   function handleWordChange(index: number, value: string) {
-    const next = [...v0MigrationDraft.seedWords];
-    next[index] = value.trim().toLowerCase();
-    setV0MigrationDraft({ seedWords: next });
+    const trimmedValue = value.trim().toLowerCase();
+    const newWords = [...v0MigrationDraft.seedWords];
+    newWords[index] = trimmedValue;
+    setV0MigrationDraft({ seedWords: newWords });
+    if (value.endsWith(' ')) {
+      const nextIndex = index + 1;
+      if (nextIndex < WORD_COUNT) {
+        inputRefs.current[nextIndex]?.focus();
+      }
+    }
   }
 
-  function handleFilePick(event: React.ChangeEvent<HTMLInputElement>) {
+  function handlePaste(index: number, e: React.ClipboardEvent<HTMLInputElement>) {
+    if (index === 0) {
+      const pasteData = e.clipboardData.getData('text');
+      const pastedWords = pasteData.trim().toLowerCase().split(/\s+/);
+      if (pastedWords.length === WORD_COUNT) {
+        e.preventDefault();
+        const next = Array(WORD_COUNT).fill('');
+        pastedWords.forEach((word, i) => {
+          next[i] = word;
+        });
+        setV0MigrationDraft({ seedWords: next });
+      }
+    }
+  }
+
+  function handleKeyDown(index: number, e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Backspace' && !words[index] && index > 0) {
+      inputRefs.current[index - 1]?.focus();
+    }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const nextIndex = index + 1;
+      if (nextIndex < WORD_COUNT) {
+        inputRefs.current[nextIndex]?.focus();
+      }
+    }
+  }
+
+  function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
-    setV0MigrationDraft({ keyfileName: file.name });
+    setKeyfileError('');
+    const reader = new FileReader();
+    reader.onload = e => {
+      try {
+        const keyfile = JSON.parse(e.target?.result as string) as Keyfile;
+        const mnemonic = importKeyfile(keyfile);
+        const importedWords = mnemonic.trim().split(/\s+/);
+        if (importedWords.length !== UI_CONSTANTS.MNEMONIC_WORD_COUNT) {
+          setKeyfileError('Invalid keyfile: expected 24 words');
+          return;
+        }
+        const next = Array(WORD_COUNT).fill('');
+        importedWords.forEach((word, i) => {
+          next[i] = word;
+        });
+        setV0MigrationDraft({ seedWords: next });
+        setShowKeyfileImport(false);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      } catch (err) {
+        setKeyfileError(err instanceof Error ? err.message : 'Invalid keyfile format');
+      }
+    };
+    reader.readAsText(file);
+  }
+
+  function handleCancelKeyfileImport() {
+    setShowKeyfileImport(false);
+    setKeyfileError('');
+    if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
   return (
-    <div
-      className="relative w-[357px] h-[600px] flex flex-col"
-      style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
-    >
-      <header className="flex items-center justify-between h-16 px-4">
-        <button type="button" onClick={() => navigate('v0-migration-intro')} className="p-2">
+    <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)]">
+      {/* Header - same as onboarding ImportScreen */}
+      <div className="flex items-center justify-between h-16 px-4 py-3 border-b border-[var(--color-divider)]">
+        <button
+          type="button"
+          onClick={() => navigate('v0-migration-intro')}
+          className="p-2 -ml-2 hover:opacity-70 transition-opacity text-[var(--color-text-primary)]"
+          aria-label="Go back"
+        >
           <ChevronLeftIcon className="w-5 h-5" />
         </button>
-        <h1 className="text-[16px] font-medium tracking-[0.01em]">Transfer v0 funds</h1>
-        <div className="w-7" />
-      </header>
-
-      <div className="flex-1 overflow-y-auto px-4 py-3 flex flex-col gap-4">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <img src={LockIconYellow} alt="" className="w-10 h-10" />
-          <p className="text-[10px] leading-8 font-medium">
-            Enter your 24-word recovery phrase.
-            <br />
-            Paste into first field to auto-fill all words.
-          </p>
-        </div>
-
-        <div
-          className="rounded-[14px] h-[52px] px-4 flex items-center justify-center gap-2"
-          style={{ backgroundColor: '#EDE4C8' }}
+        <h2
+          className="font-sans font-medium text-[var(--color-text-primary)]"
+          style={{
+            fontSize: 'var(--font-size-lg)',
+            lineHeight: 'var(--line-height-normal)',
+            letterSpacing: '0.01em',
+          }}
         >
-          <img src={ArrowUpIcon} alt="" className="w-4 h-4" />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="text-[16px] leading-[22px] font-medium"
-          >
-            Upload a keyfile
-          </button>
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".json"
-            className="hidden"
-            onChange={handleFilePick}
-          />
-        </div>
+          Transfer v0 funds
+        </h2>
+        <div className="w-8" />
+      </div>
 
-        {v0MigrationDraft.keyfileName && (
-          <div className="text-[12px] text-center" style={{ color: 'var(--color-text-muted)' }}>
-            Keyfile: {v0MigrationDraft.keyfileName}
-          </div>
-        )}
-
-        <div className="grid grid-cols-2 gap-2">
-          {Array.from({ length: WORD_COUNT }).map((_, i) => (
-            <div
-              key={i}
-              className="h-11 rounded-lg border px-2 flex items-center gap-2"
-              style={{ borderColor: 'var(--color-surface-700)' }}
-            >
-              <div
-                className="w-8 h-8 rounded-[8px] grid place-items-center text-[12px] font-medium"
-                style={{ backgroundColor: 'var(--color-surface-900)' }}
+      <div className="h-[536px] flex flex-col">
+        <div className="flex-1 overflow-y-auto no-scrollbar">
+          <div className="px-4 py-2 flex flex-col gap-6">
+            {/* Icon and instructions - same as ImportScreen */}
+            <div className="flex flex-col items-center gap-3">
+              <div className="w-10 h-10">
+                <img src={lockIcon} alt="" className="w-full h-full" />
+              </div>
+              <p
+                className="font-sans font-medium text-center text-[var(--color-text-primary)]"
+                style={{
+                  fontSize: 'var(--font-size-base)',
+                  lineHeight: 'var(--line-height-snug)',
+                  letterSpacing: '0.01em',
+                }}
               >
-                {i + 1}
-              </div>
-              <input
-                type="text"
-                value={v0MigrationDraft.seedWords[i] || ''}
-                onChange={e => handleWordChange(i, e.target.value)}
-                placeholder="word"
-                className="flex-1 bg-transparent outline-none text-[16px]"
-              />
-            </div>
-          ))}
-        </div>
-
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={handlePasteAll}
-            className="flex-1 h-12 rounded-[14px] text-[16px] leading-[22px] font-medium tracking-[0.01em]"
-            style={{ backgroundColor: 'var(--color-surface-900)' }}
-          >
-            Paste all
-          </button>
-          <button
-            type="button"
-            className="flex-1 h-12 rounded-[14px] text-[16px] leading-[22px] font-medium tracking-[0.01em]"
-            style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
-          >
-            Import wallet
-          </button>
-        </div>
-
-        <div className="pt-1 flex flex-col items-center gap-3 text-center">
-          <img src={WalletIconYellow} alt="" className="w-10 h-10" />
-          <p className="text-[10px] leading-8 font-medium">Pick a wallet to receive your v0 funds.</p>
-        </div>
-
-        <div className="rounded-[14px] p-4" style={{ backgroundColor: 'var(--color-surface-900)' }}>
-          <div className="text-[12px] leading-[18px] font-medium">v0 Wallet Balance</div>
-          <div className="mt-2 text-[56px] leading-[56px] font-[Lora] tracking-[-0.03em]">
-            {v0MigrationDraft.v0BalanceNock.toLocaleString('en-US')}
-          </div>
-        </div>
-
-        <div className="flex justify-center">
-          <div
-            className="w-10 h-10 rounded-full grid place-items-center"
-            style={{ border: '1px solid var(--color-surface-700)' }}
-          >
-            <img src={ArrowDownIcon} alt="" className="w-4 h-4" />
-          </div>
-        </div>
-
-        <div>
-          <div className="text-[16px] font-medium mb-2">Receiving wallet</div>
-          <button
-            type="button"
-            onClick={() => setShowWalletPicker(true)}
-            className="w-full rounded-[14px] border px-4 py-3 flex items-center justify-between"
-            style={{ borderColor: 'var(--color-surface-700)' }}
-          >
-            <div className="flex items-center gap-2.5 min-w-0">
-              {destinationWallet ? (
-                <AccountIcon
-                  styleId={destinationWallet.iconStyleId}
-                  color={destinationWallet.iconColor}
-                  className="w-9 h-9"
-                />
-              ) : (
-                <div className="w-9 h-9 rounded-full" style={{ backgroundColor: 'var(--color-surface-900)' }} />
-              )}
-              <div className="text-left min-w-0">
-                <div className="text-[16px] font-medium truncate">
-                  {destinationWallet?.name || 'Select wallet'}
-                </div>
-                <div className="text-[12px] truncate" style={{ color: 'var(--color-text-muted)' }}>
-                  {truncateAddress(destinationWallet?.address)}
-                </div>
-              </div>
-            </div>
-            <img src={ChevronDownIconAsset} alt="" className="w-4 h-4" />
-          </button>
-        </div>
-
-        {hasInsufficientFunds && (
-          <div
-            className="rounded-[14px] px-3 py-2 text-[14px] font-medium"
-            style={{ backgroundColor: 'var(--color-red-light)', color: 'var(--color-red)' }}
-          >
-            Insufficient funds to cover transaction fee.
-          </div>
-        )}
-
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5 text-[16px] font-medium">
-            Fee
-            <img src={InfoIconAsset} alt="" className="w-4 h-4" />
-          </div>
-          <div
-            className="h-12 rounded-[14px] px-3 py-2 flex items-center gap-2 border"
-            style={{ borderColor: 'var(--color-surface-700)' }}
-          >
-            <span className="text-[16px] font-medium">{v0MigrationDraft.feeNock} NOCK</span>
-          </div>
-        </div>
-      </div>
-
-      <div className="p-3 mt-auto" style={{ borderTop: '1px solid var(--color-divider)' }}>
-        <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={() => navigate('settings')}
-            className="flex-1 h-12 rounded-[14px] text-[16px] font-medium"
-            style={{ backgroundColor: 'var(--color-surface-900)' }}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            disabled={hasInsufficientFunds || !destinationWallet}
-            onClick={() => navigate('v0-migration-review')}
-            className="flex-1 h-12 rounded-[14px] text-[16px] font-medium disabled:opacity-50"
-            style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
-          >
-            Continue
-          </button>
-        </div>
-      </div>
-
-      {showWalletPicker && (
-        <div
-          className="absolute inset-0 z-50 flex items-center justify-center p-3"
-          style={{ backgroundColor: 'rgba(0,0,0,0.45)' }}
-        >
-          <div
-            className="w-full max-h-[520px] rounded-[20px] border p-3 overflow-y-auto"
-            style={{ backgroundColor: 'var(--color-bg)', borderColor: 'var(--color-surface-700)' }}
-          >
-            <div className="flex items-center justify-between h-10 mb-2">
-              <div className="w-7" />
-              <h2 className="text-[16px] font-medium">Select wallet</h2>
-              <button type="button" onClick={() => setShowWalletPicker(false)} className="p-1.5">
-                <ChevronLeftIcon className="w-5 h-5 rotate-180" />
-              </button>
+                Enter your 24-word secret phrase.
+                <br />
+                Paste into first field to auto-fill all words.
+              </p>
             </div>
 
-            {visibleAccounts.map((account, index) => {
-              const isSelected = account.index === v0MigrationDraft.destinationWalletIndex;
-              const balance = wallet.accountBalances[account.address] ?? 0;
-              return (
-                <button
-                  key={account.index}
-                  type="button"
-                  onClick={() => {
-                    setV0MigrationDraft({ destinationWalletIndex: account.index });
-                    setShowWalletPicker(false);
-                  }}
-                  className="w-full rounded-[14px] px-3 py-3 mb-2 flex items-center justify-between"
-                  style={{
-                    backgroundColor: 'var(--color-surface-900)',
-                    border: isSelected ? '1px solid var(--color-text-primary)' : '1px solid transparent',
-                  }}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <AccountIcon styleId={account.iconStyleId} color={account.iconColor} className="w-10 h-10" />
-                    <div className="text-left min-w-0">
-                      <div className="text-[16px] font-medium">{account.name}</div>
-                      <div className="text-[12px] truncate" style={{ color: 'var(--color-text-muted)' }}>
-                        {truncateAddress(account.address)}
+            {/* Or import from keyfile - same as ImportScreen */}
+            <button
+              type="button"
+              onClick={() => setShowKeyfileImport(true)}
+              className="font-sans font-medium text-center text-[var(--color-text-primary)] underline hover:opacity-70 transition-opacity"
+              style={{
+                fontSize: 'var(--font-size-base)',
+                lineHeight: 'var(--line-height-snug)',
+                letterSpacing: '0.01em',
+              }}
+            >
+              Or import from keyfile
+            </button>
+
+            {/* 24-word input grid - same as ImportScreen */}
+            <div className="flex flex-col gap-2 w-full pb-4">
+              {Array.from({ length: 12 }).map((_, rowIndex) => (
+                <div key={rowIndex} className="flex gap-2 w-full">
+                  {[0, 1].map(col => {
+                    const index = rowIndex * 2 + col;
+                    return (
+                      <div
+                        key={col}
+                        className="flex-1 min-w-0 bg-[var(--color-bg)] border border-[var(--color-surface-700)] rounded-lg p-2 flex items-center gap-2.5 h-11"
+                      >
+                        <span
+                          className="bg-[var(--color-surface-900)] rounded w-7 h-7 flex items-center justify-center font-sans font-medium text-[var(--color-text-primary)] flex-shrink-0"
+                          style={{
+                            fontSize: 'var(--font-size-base)',
+                            lineHeight: 'var(--line-height-snug)',
+                            letterSpacing: '0.01em',
+                          }}
+                        >
+                          {index + 1}
+                        </span>
+                        <input
+                          ref={el => {
+                            inputRefs.current[index] = el;
+                          }}
+                          type="text"
+                          value={words[index] || ''}
+                          onChange={e => handleWordChange(index, e.target.value)}
+                          onKeyDown={e => handleKeyDown(index, e)}
+                          onPaste={e => handlePaste(index, e)}
+                          placeholder="word"
+                          autoComplete="off"
+                          spellCheck="false"
+                          className="flex-1 min-w-0 bg-transparent font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] outline-none"
+                          style={{
+                            fontSize: 'var(--font-size-base)',
+                            lineHeight: 'var(--line-height-snug)',
+                            letterSpacing: '0.01em',
+                          }}
+                        />
                       </div>
-                    </div>
-                  </div>
-                  {index === 0 && (
-                    <div className="text-[16px] font-medium whitespace-nowrap">
-                      {balance.toLocaleString('en-US', { maximumFractionDigits: 0 })} NOCK
-                    </div>
-                  )}
-                </button>
-              );
-            })}
+                    );
+                  })}
+                </div>
+              ))}
+            </div>
 
             <button
               type="button"
-              className="w-full rounded-[14px] px-3 py-3 mb-2 flex items-center gap-2.5"
-              style={{ backgroundColor: 'transparent' }}
+              onClick={handlePasteAll}
+              className="font-sans font-medium text-center text-[var(--color-text-primary)] underline hover:opacity-70 transition-opacity"
+              style={{
+                fontSize: 'var(--font-size-base)',
+                lineHeight: 'var(--line-height-snug)',
+                letterSpacing: '0.01em',
+              }}
             >
-              <div className="w-10 h-10 rounded-full grid place-items-center bg-[var(--color-surface-900)]">
-                <PlusIcon className="w-5 h-5" />
-              </div>
-              <div className="text-[16px] font-medium">Add sub-wallet</div>
+              Paste all
+            </button>
+          </div>
+        </div>
+
+        {/* Bottom buttons */}
+        <div className="border-t border-[var(--color-surface-800)] px-4 py-3">
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => navigate('settings')}
+              className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-surface-800)] text-[var(--color-text-primary)] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 font-sans font-medium"
+              style={{
+                fontSize: 'var(--font-size-base)',
+                lineHeight: 'var(--line-height-snug)',
+                letterSpacing: '0.01em',
+              }}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              disabled={!canContinue}
+              onClick={() => navigate('v0-migration-funds')}
+              className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed font-sans font-medium"
+              style={{
+                fontSize: 'var(--font-size-base)',
+                lineHeight: 'var(--line-height-snug)',
+                letterSpacing: '0.01em',
+              }}
+            >
+              Import Wallet
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Keyfile Import Modal - same as onboarding ImportScreen */}
+      {showKeyfileImport && (
+        <div
+          className="absolute inset-0 flex items-center justify-center p-4"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 50 }}
+        >
+          <div
+            className="w-full max-w-[325px] rounded-lg p-4 flex flex-col gap-4"
+            style={{
+              backgroundColor: 'var(--color-bg)',
+              border: '1px solid var(--color-surface-800)',
+            }}
+          >
+            <h3 className="font-sans font-medium text-[var(--color-text-primary)] text-base tracking-[0.16px] leading-[22px]">
+              Import from keyfile
+            </h3>
+            <p
+              className="font-sans text-sm tracking-[0.14px] leading-[18px]"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
+              Select your keyfile to import your wallet.
+            </p>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="font-sans font-medium text-sm tracking-[0.14px] leading-[18px] text-[var(--color-text-primary)]">
+                Select keyfile
+              </label>
+              <input
+                ref={fileInputRef}
+                id="keyfile-upload-migration"
+                type="file"
+                accept=".json"
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full h-[52px] px-4 rounded-lg font-sans font-medium text-sm tracking-[0.14px] leading-[18px] text-left transition-opacity hover:opacity-90 text-[var(--color-text-primary)]"
+                style={{
+                  backgroundColor: 'var(--color-surface-700)',
+                  border: '1px solid var(--color-surface-800)',
+                }}
+              >
+                Choose File
+              </button>
+            </div>
+
+            {keyfileError && <Alert type="error">{keyfileError}</Alert>}
+
+            <button
+              type="button"
+              onClick={handleCancelKeyfileImport}
+              className="w-full h-12 rounded-lg font-sans font-medium text-sm tracking-[0.14px] leading-[18px] transition-opacity hover:opacity-90 text-[var(--color-text-primary)]"
+              style={{
+                backgroundColor: 'var(--color-surface-700)',
+              }}
+            >
+              Cancel
             </button>
           </div>
         </div>

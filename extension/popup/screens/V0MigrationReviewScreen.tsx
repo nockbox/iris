@@ -17,7 +17,7 @@ export function V0MigrationReviewScreen() {
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       <header className="flex items-center justify-between h-16 px-4">
-        <button type="button" onClick={() => navigate('v0-migration-setup')} className="p-2">
+        <button type="button" onClick={() => navigate('v0-migration-funds')} className="p-2">
           <ChevronLeftIcon className="w-5 h-5" />
         </button>
         <h1 className="text-[16px] font-medium tracking-[0.01em]">Review Transfer</h1>
@@ -27,7 +27,7 @@ export function V0MigrationReviewScreen() {
       <div className="flex-1 px-4 py-3 flex flex-col gap-3">
         <div className="flex flex-col items-center text-center gap-2">
           <img src={WalletIconYellow} alt="" className="w-10 h-10" />
-          <div className="text-[56px] leading-[56px] font-[Lora] tracking-[-0.03em]">
+          <div className="font-display text-[32px] leading-[40px] tracking-[-0.03em]">
             {amount.toLocaleString('en-US')} <span style={{ color: 'var(--color-text-muted)' }}>NOCK</span>
           </div>
           <div className="text-[16px] font-medium">
@@ -37,8 +37,8 @@ export function V0MigrationReviewScreen() {
 
         <div className="rounded-[14px] p-3" style={{ backgroundColor: 'var(--color-surface-900)' }}>
           <div className="flex items-center justify-between gap-3">
-            <div className="flex-1 rounded-[14px] p-3" style={{ backgroundColor: 'var(--color-bg)' }}>
-              <div className="w-10 h-10 rounded-full grid place-items-center bg-[var(--color-surface-900)] mb-2 text-[16px] font-medium">
+            <div className="flex-1 rounded-[14px] p-3" style={{ backgroundColor: 'var(--color-surface-900)' }}>
+              <div className="w-10 h-10 rounded-full grid place-items-center mb-2 text-[16px] font-medium" style={{ backgroundColor: 'var(--color-surface-900)' }}>
                 vØ
               </div>
               <div className="text-[16px] font-medium">v0 Wallet</div>
@@ -47,11 +47,11 @@ export function V0MigrationReviewScreen() {
               </div>
             </div>
 
-            <div className="w-10 h-10 rounded-full grid place-items-center bg-[var(--color-bg)] text-[22px]">
+            <div className="w-10 h-10 rounded-full grid place-items-center text-[22px]" style={{ backgroundColor: 'var(--color-surface-900)' }}>
               ›
             </div>
 
-            <div className="flex-1 rounded-[14px] p-3 text-right" style={{ backgroundColor: 'var(--color-bg)' }}>
+            <div className="flex-1 rounded-[14px] p-3 text-right" style={{ backgroundColor: 'var(--color-surface-900)' }}>
               <div className="flex justify-end mb-2">
                 <AccountIcon
                   styleId={destinationWallet?.iconStyleId}
@@ -68,8 +68,8 @@ export function V0MigrationReviewScreen() {
         </div>
 
         <div className="rounded-[14px] p-3 flex items-center justify-between" style={{ backgroundColor: 'var(--color-surface-900)' }}>
-          <span className="text-[16px] font-medium">Network fee</span>
-          <span className="text-[16px] font-medium">{v0MigrationDraft.feeNock} NOCK</span>
+          <span className="text-[14px] font-medium">Network fee</span>
+          <span className="text-[14px] font-medium">{v0MigrationDraft.feeNock} NOCK</span>
         </div>
       </div>
 
@@ -77,7 +77,7 @@ export function V0MigrationReviewScreen() {
         <div className="flex gap-3">
           <button
             type="button"
-            onClick={() => navigate('v0-migration-setup')}
+            onClick={() => navigate('v0-migration-funds')}
             className="flex-1 h-12 rounded-[14px] text-[16px] font-medium"
             style={{ backgroundColor: 'var(--color-surface-900)' }}
           >
