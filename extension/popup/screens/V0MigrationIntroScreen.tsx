@@ -15,46 +15,45 @@ export function V0MigrationIntroScreen() {
   }
 
   return (
-    <div
-      className="w-[357px] h-[600px] flex flex-col"
-      style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
-    >
-      <header className="flex items-center justify-between h-16 px-4">
-        <button type="button" onClick={handleBack} className="p-2" aria-label="Back">
-          <ChevronLeftIcon className="w-5 h-5" />
+    <div className="w-[357px] h-[600px] relative bg-greyscale-inverted-additional overflow-hidden flex flex-col">
+      <header className="w-[357px] h-16 px-4 py-3 shrink-0 bg-greyscale-inverted-additional inline-flex justify-between items-center">
+        <button type="button" onClick={handleBack} className="p-2 flex justify-start items-center" aria-label="Back">
+          <ChevronLeftIcon className="w-4 h-4 text-greyscale-inverted-accent" />
         </button>
-        <h1 className="text-[16px] font-medium tracking-[0.01em]">Transfer v0 funds</h1>
-        <div className="w-7" />
+        <h1 className="text-greyscale-inverted-accent text-base font-medium font-sans leading-5 tracking-tight">
+          Transfer v0 funds
+        </h1>
+        <div className="w-8 h-8" />
       </header>
 
-      <div className="flex-1 px-4 py-3 flex flex-col">
-        <div className="flex flex-col items-center text-center gap-3">
-          <img src={TransferV0Icon} alt="" className="w-10 h-10 mt-1" />
-          <h2 className="font-[Lora] text-[52px] leading-[52px] tracking-[-0.03em] mt-3">v0 Funds Migration</h2>
-          <p className="text-[20px] leading-[26px]" style={{ color: 'var(--color-text-muted)' }}>
+      <div className="w-[325px] mx-auto flex-1 flex flex-col justify-start items-center pt-6 pb-10 overflow-auto">
+        <img src={TransferV0Icon} alt="" className="w-12 h-12 shrink-0" />
+
+        <div className="self-stretch flex flex-col justify-start items-center gap-2 mt-6">
+          <div className="self-stretch text-center text-greyscale-inverted-accent text-[30px] font-medium font-display leading-[1.1] tracking-[-0.03em]">
+            v0 Funds Migration
+          </div>
+          <div className="self-stretch text-center text-greyscale-grey-500 text-[18px] font-normal font-sans leading-[26px]">
             Transfer your balance from V0 to V1
-          </p>
+          </div>
         </div>
 
-        <div className="mt-8 text-center text-[12px] leading-8 font-medium">
-          <p>
-            The network has upgraded. If your wallet was created before <b>October 25, 2025</b>{' '}
-            (block 39,000), your funds need to be migrated to remain accessible on the current
-            network.
-          </p>
-          <p className="mt-8">
-            This process transfers your full balance from your v0 wallet to v1. It only takes a
-            moment.
-          </p>
+        <div className="self-stretch mt-8 text-center text-greyscale-inverted-accent text-xs font-medium font-sans leading-5 tracking-tight">
+          <span>The network has upgraded. If your wallet was created before </span>
+          <span className="font-bold">October 25, 2025</span>
+          <span> (block 39,000), your funds need to be migrated to remain accessible on the current network.</span>
+        </div>
+        <div className="self-stretch mt-8 text-center text-greyscale-inverted-accent text-xs font-medium font-sans leading-5 tracking-tight">
+          This process transfers your full balance from your v0 wallet to v1. It only takes a moment.
         </div>
       </div>
 
-      <div className="p-3 mt-auto">
+      <div className="w-[357px] px-4 py-3 shrink-0">
         <button
           type="button"
           onClick={handleStart}
-          className="w-full h-12 rounded-[14px] text-[16px] leading-[22px] font-medium tracking-[0.01em]"
-          style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
+          className="w-full h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 font-sans font-medium"
+          style={{ fontSize: 'var(--font-size-base)' }}
         >
           Start Migration
         </button>
