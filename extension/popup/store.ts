@@ -52,6 +52,7 @@ export type Screen =
   | 'receive'
   | 'v0-migration-intro'
   | 'v0-migration-setup'
+  | 'v0-migration-funds'
   | 'v0-migration-review'
   | 'v0-migration-submitted'
   | 'tx-details'
