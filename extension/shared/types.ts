@@ -13,6 +13,8 @@ export interface Account {
   name: string;
   /** Nockchain V1 PKH address (40 bytes base58-encoded, ~54-55 chars) */
   address: string;
+  /** Parent seed account/source identifier */
+  seedAccountId?: string;
   /** BIP-44 derivation index (0, 1, 2, ...) */
   index: number;
   /** Icon style ID (1-15, defaults to index % 3 + 1 for variety) */
@@ -23,8 +25,32 @@ export interface Account {
   hidden?: boolean;
   /** Timestamp when the account was created (milliseconds since epoch) */
   createdAt?: number;
-  /** Derivation path: 'master' (master key) or 'derived' (child key at index) */
+  /** Key source for this wallet account */
+  keySource?: 'mnemonic' | 'external';
+  /** Derivation path for mnemonic-based wallets */
   derivation?: 'master' | 'slip10';
+  /** Optional hardware/external wallet metadata (for future integrations such as Ledger) */
+  external?: {
+    provider: 'ledger' | 'unknown';
+    accountRef?: string;
+  };
+}
+
+/**
+ * Top-level account source (seed phrase, hardware wallet, etc.)
+ * Each source can contain one or more child wallet accounts.
+ */
+export interface SeedAccount {
+  id: string;
+  name: string;
+  type: 'mnemonic' | 'external';
+  mnemonic?: string;
+  createdAt: number;
+  accounts: Account[];
+  external?: {
+    provider: 'ledger' | 'unknown';
+    sourceRef?: string;
+  };
 }
 
 /**

@@ -26,7 +26,8 @@ function generateRandomPositions(): number[] {
 }
 
 export function VerifyScreen() {
-  const { onboardingMnemonic, navigate, setOnboardingMnemonic } = useStore();
+  const { onboardingMnemonic, navigate, setOnboardingMnemonic, currentScreen, fetchBalance } = useStore();
+  const isAddWalletFlow = currentScreen === 'wallet-add-verify';
   const [inputs, setInputs] = useState<Record<number, string>>({});
   const [error, setError] = useState<string>('');
 
@@ -62,14 +63,19 @@ export function VerifyScreen() {
     if (allCorrect) {
       // Clear the mnemonic from memory and navigate to success
       setOnboardingMnemonic(null);
-      navigate('onboarding-success');
+      if (isAddWalletFlow) {
+        fetchBalance();
+        navigate('home');
+      } else {
+        navigate('onboarding-success');
+      }
     } else {
       setError('One or more words are incorrect. Please check your secret phrase and try again.');
     }
   }
 
   function handleBack() {
-    navigate('onboarding-backup');
+    navigate(isAddWalletFlow ? 'wallet-add-backup' : 'onboarding-backup');
   }
 
   return (

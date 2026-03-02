@@ -1,4 +1,4 @@
-import { useState, useLayoutEffect, useEffect, useRef } from 'react';
+import { useState, useLayoutEffect, useEffect, useRef, useMemo } from 'react';
 import { useStore } from '../store';
 import { useTheme } from '../contexts/ThemeContext';
 import { truncateAddress } from '../utils/format';
@@ -47,12 +47,19 @@ export function HomeScreen() {
     priceUsd,
     priceChange24h,
     isPriceFetching,
+    createChildAccount,
+    refreshWalletAccounts,
+    setSettingsAccountAddress,
   } = useStore();
   const { theme } = useTheme();
 
   const [balanceHidden, setBalanceHidden] = useState(false);
   const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
   const [settingsDropdownOpen, setSettingsDropdownOpen] = useState(false);
+  /** UI-only display order of seed groups (seed ids). Persists for session. */
+  const [seedDisplayOrder, setSeedDisplayOrder] = useState<string[]>([]);
+  const [draggedSeedId, setDraggedSeedId] = useState<string | null>(null);
+  const [dropTargetSeedId, setDropTargetSeedId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [copiedAddress, setCopiedAddress] = useState(false);
   const [isConnected, setIsConnected] = useState(true);
@@ -146,7 +153,67 @@ export function HomeScreen() {
 
   // Get accounts from vault (filter out hidden accounts)
   const accounts = (wallet.accounts || []).filter(acc => !acc.hidden);
-  const currentAccount = wallet.currentAccount || accounts[0];
+  const groupedBySeed = (wallet.seedSources || [])
+    .map(seed => ({
+      seed,
+      accounts: accounts.filter(acc => acc.seedAccountId === seed.id),
+    }))
+    .filter(group => group.accounts.length > 0);
+  const seedGroups =
+    groupedBySeed.length > 0
+      ? groupedBySeed
+      : accounts.length > 0
+        ? [
+            {
+              seed: {
+                id: wallet.activeSeedSourceId || 'legacy',
+                name: 'Legacy',
+                type: 'mnemonic' as const,
+                createdAt: 0,
+                accounts: [],
+              },
+              accounts,
+            },
+          ]
+        : [];
+
+  // Sync UI display order from vault seed order; append new seeds when added
+  useEffect(() => {
+    const ids = (wallet.seedSources || []).map(s => s.id);
+    if (ids.length === 0) return;
+    setSeedDisplayOrder(prev => {
+      if (prev.length === 0) return ids;
+      const next = [...prev];
+      ids.forEach(id => {
+        if (!next.includes(id)) next.push(id);
+      });
+      return next;
+    });
+  }, [wallet.seedSources]);
+
+  /** Seed groups in UI display order (draggable order). */
+  const sortedSeedGroups = useMemo(() => {
+    if (seedDisplayOrder.length === 0) return seedGroups;
+    return [...seedGroups].sort(
+      (a, b) =>
+        seedDisplayOrder.indexOf(a.seed.id) - seedDisplayOrder.indexOf(b.seed.id) ||
+        seedGroups.indexOf(a) - seedGroups.indexOf(b)
+    );
+  }, [seedGroups, seedDisplayOrder]);
+
+  function handleSeedReorder(draggedId: string, dropTargetId: string) {
+    if (draggedId === dropTargetId) return;
+    const order = [...seedDisplayOrder];
+    const fromIdx = order.indexOf(draggedId);
+    const toIdx = order.indexOf(dropTargetId);
+    if (fromIdx === -1 || toIdx === -1) return;
+    order.splice(fromIdx, 1);
+    order.splice(toIdx, 0, draggedId);
+    setSeedDisplayOrder(order);
+  }
+
+  const currentAccount =
+    wallet.currentAccount && !wallet.currentAccount.hidden ? wallet.currentAccount : accounts[0];
 
   // Lock wallet handler
   async function handleLockWallet() {
@@ -162,10 +229,13 @@ export function HomeScreen() {
   }
 
   // Account switching handler
-  async function handleSwitchAccount(index: number) {
+  async function handleSwitchAccount(accountAddress: string) {
+    const flatIndex = wallet.accounts.findIndex(acc => acc.address === accountAddress);
+    if (flatIndex < 0) return;
+
     const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
       INTERNAL_METHODS.SWITCH_ACCOUNT,
-      [index]
+      [flatIndex]
     );
 
     if (result?.ok && result.account) {
@@ -191,30 +261,33 @@ export function HomeScreen() {
 
   // Account creation handler
   async function handleAddAccount() {
-    const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
-      INTERNAL_METHODS.CREATE_ACCOUNT,
-      []
-    );
+    navigate('wallet-add-start');
+    setWalletDropdownOpen(false);
+  }
 
-    if (result?.ok && result.account) {
-      const updatedWallet = {
-        ...wallet,
-        accounts: [...wallet.accounts, result.account],
-        currentAccount: result.account,
-        address: result.account.address,
-        balance: 0, // Reset balance to 0 for new account
-        accountBalances: {
-          ...wallet.accountBalances,
-          [result.account.address]: 0, // Initialize new account balance to 0
-        },
-      };
-      syncWallet(updatedWallet);
-
-      // Fetch balance for the newly created account
-      fetchBalance();
+  async function handleAddSubWallet(seedAccountId: string) {
+    const fallbackSeedId = wallet.currentAccount?.seedAccountId;
+    const resolvedSeedAccountId =
+      seedAccountId === 'legacy' && fallbackSeedId ? fallbackSeedId : seedAccountId;
+    const isLegacySeed = resolvedSeedAccountId === 'legacy';
+    const result = isLegacySeed
+      ? await send<{ ok?: boolean; account?: Account; error?: string }>(
+          INTERNAL_METHODS.CREATE_ACCOUNT,
+          []
+        )
+      : await createChildAccount(resolvedSeedAccountId);
+    if (result?.error) {
+      alert(`Failed to create sub-wallet: ${result.error}`);
+      return;
     }
 
-    setWalletDropdownOpen(false);
+    // Legacy CREATE_ACCOUNT path does not auto-refresh store state.
+    if (isLegacySeed) {
+      await refreshWalletAccounts();
+      // Keep refresh non-blocking to preserve dropdown responsiveness.
+      void fetchBalance();
+      void fetchWalletTransactions();
+    }
   }
 
   // Refresh balance handler
@@ -421,93 +494,183 @@ export function HomeScreen() {
           <>
             <div className="fixed inset-0 z-40" onClick={() => setWalletDropdownOpen(false)} />
             <div
-              className="fixed top-[64px] left-2 right-2 rounded-xl z-50 max-h-[400px] overflow-y-auto"
+              className="fixed top-[64px] left-2 right-2 rounded-xl z-50 flex flex-col max-h-[400px] overflow-hidden"
               style={{
                 backgroundColor: 'var(--color-bg)',
                 border: '1px solid var(--color-surface-700)',
                 boxShadow: '0 4px 12px 0 rgba(5, 5, 5, 0.12)',
               }}
             >
-              <div className="p-2">
-                {accounts.map(account => {
-                  const isSelected = currentAccount?.index === account.index;
-                  const showSelection = accounts.length > 1 && isSelected;
-                  return (
-                    <button
-                      key={account.index}
-                      onClick={() => handleSwitchAccount(account.index)}
-                      className="wallet-dropdown-item w-full flex items-center gap-2 p-2 rounded-tile border transition"
-                      style={{
-                        backgroundColor: showSelection ? 'var(--color-bg)' : 'transparent',
-                        borderColor: showSelection ? 'var(--color-text-primary)' : 'transparent',
-                      }}
-                      onMouseEnter={e => {
-                        if (!showSelection) {
-                          e.currentTarget.style.backgroundColor = 'var(--color-surface-900)';
-                        }
-                      }}
-                      onMouseLeave={e => {
-                        if (!showSelection) {
-                          e.currentTarget.style.backgroundColor = showSelection
-                            ? 'var(--color-bg)'
-                            : 'transparent';
-                        }
-                      }}
-                    >
-                      <div
-                        className="h-10 w-10 rounded-tile grid place-items-center"
-                        style={{ backgroundColor: 'var(--color-bg)' }}
-                      >
-                        <AccountIcon
-                          styleId={account.iconStyleId}
-                          color={account.iconColor}
-                          className="h-6 w-6"
-                        />
-                      </div>
-                      <div className="flex-1 text-left">
-                        <div
-                          className="text-[14px] leading-[18px] font-medium"
-                          style={{ color: 'var(--color-text-primary)' }}
+              <div className="flex-1 min-h-0 overflow-y-auto p-2">
+                {sortedSeedGroups.map(group => (
+                  <div
+                    key={group.seed.id}
+                    className="mb-2 rounded-xl flex flex-col gap-1"
+                    style={{
+                      backgroundColor: 'var(--color-bg)',
+                      opacity: dropTargetSeedId === group.seed.id ? 0.85 : 1,
+                      outline:
+                        dropTargetSeedId === group.seed.id
+                          ? '2px dashed var(--color-surface-700)'
+                          : undefined,
+                      outlineOffset: 2,
+                    }}
+                    onDragOver={e => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (draggedSeedId && draggedSeedId !== group.seed.id) setDropTargetSeedId(group.seed.id);
+                    }}
+                    onDragLeave={() => setDropTargetSeedId(null)}
+                    onDrop={e => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      if (draggedSeedId && draggedSeedId !== group.seed.id)
+                        handleSeedReorder(draggedSeedId, group.seed.id);
+                      setDraggedSeedId(null);
+                      setDropTargetSeedId(null);
+                    }}
+                  >
+                    <div className="flex flex-col gap-1">
+                      {group.accounts.map(account => {
+                        const isSelected = currentAccount?.address === account.address;
+                        const showSelection = accounts.length > 1 && isSelected;
+                        const isTopLevelWallet = account.index === 0;
+                        const baseBackground = 'transparent';
+                        const hoverBackground = 'var(--color-surface-800)';
+                        const selectedBackground = 'var(--color-surface-900)';
+                        return (
+                          <button
+                            key={account.address}
+                            onClick={() => handleSwitchAccount(account.address)}
+                            className="wallet-dropdown-item self-stretch pl-2 pr-3 py-2 rounded-lg inline-flex justify-between items-center gap-2.5 transition"
+                            style={{
+                              backgroundColor: showSelection
+                                ? selectedBackground
+                                : baseBackground,
+                              paddingLeft: isTopLevelWallet ? undefined : 24,
+                            }}
+                            onMouseEnter={e => {
+                              if (!showSelection) {
+                                e.currentTarget.style.backgroundColor = hoverBackground;
+                              }
+                            }}
+                            onMouseLeave={e => {
+                              if (!showSelection) {
+                                e.currentTarget.style.backgroundColor = baseBackground;
+                              }
+                            }}
+                          >
+                            <div className="flex-1 flex justify-start items-center gap-2.5 min-w-0">
+                              <div
+                                className={`w-10 h-10 shrink-0 relative grid place-items-center rounded-[9.6px] ${isTopLevelWallet ? 'cursor-grab active:cursor-grabbing touch-none' : ''}`}
+                                style={{ backgroundColor: 'var(--color-bg)' }}
+                                {...(isTopLevelWallet
+                                  ? {
+                                      draggable: true,
+                                      onDragStart: (e: React.DragEvent) => {
+                                        e.stopPropagation();
+                                        setDraggedSeedId(group.seed.id);
+                                        e.dataTransfer.effectAllowed = 'move';
+                                        e.dataTransfer.setData('text/plain', group.seed.id);
+                                      },
+                                      onDragEnd: () => {
+                                        setDraggedSeedId(null);
+                                        setDropTargetSeedId(null);
+                                      },
+                                      title: 'Drag to reorder',
+                                      role: 'button',
+                                      'aria-label': 'Drag to reorder wallet group',
+                                    }
+                                  : {})}
+                              >
+                                <AccountIcon
+                                  styleId={account.iconStyleId}
+                                  color={account.iconColor}
+                                  className="w-6 h-6"
+                                />
+                              </div>
+                              <div className="flex-1 inline-flex flex-col justify-center items-start gap-0.5 min-w-0">
+                                <div
+                                  className="text-sm font-medium leading-4 tracking-tight truncate w-full text-left"
+                                  style={{ color: 'var(--color-text-primary)' }}
+                                >
+                                  {account.name}
+                                </div>
+                                <div
+                                  className="text-xs font-normal leading-4 tracking-tight"
+                                  style={{ color: 'var(--color-text-muted)' }}
+                                >
+                                  {truncateAddress(account.address)}
+                                </div>
+                              </div>
+                            </div>
+                            <div
+                              className="wallet-balance text-sm font-medium leading-4 tracking-tight text-right shrink-0 whitespace-nowrap"
+                              style={{ color: 'var(--color-text-primary)' }}
+                            >
+                              {(wallet.accountBalances[account.address] ?? 0).toLocaleString('en-US', {
+                                minimumFractionDigits: 2,
+                                maximumFractionDigits: 2,
+                              })}{' '}
+                              NOCK
+                            </div>
+                            <div
+                              className="wallet-settings-icon h-10 w-10 shrink-0 rounded-lg hidden items-center justify-center"
+                              style={{ backgroundColor: 'var(--color-surface-700)' }}
+                              onClick={e => {
+                                e.stopPropagation();
+                                setWalletDropdownOpen(false);
+                                setSettingsAccountAddress(account.address);
+                                navigate('wallet-settings');
+                              }}
+                            >
+                              <img src={PencilEditIcon} alt="Edit wallet" className="h-4 w-4" />
+                            </div>
+                          </button>
+                        );
+                      })}
+                      {group.seed.type === 'mnemonic' && (
+                        <button
+                          className="w-full flex items-center gap-2 rounded-tile transition"
+                          style={{
+                            color: 'var(--color-text-primary)',
+                            padding: 8,
+                            paddingLeft: 24,
+                            backgroundColor: 'transparent',
+                          }}
+                          onClick={() => handleAddSubWallet(group.seed.id)}
+                          onMouseEnter={e => {
+                            e.currentTarget.style.backgroundColor = 'var(--color-surface-800)';
+                          }}
+                          onMouseLeave={e => {
+                            e.currentTarget.style.backgroundColor = 'transparent';
+                          }}
                         >
-                          {account.name}
-                        </div>
-                        <div
-                          className="text-[13px] leading-[18px] tracking-[0.26px]"
-                          style={{ color: 'var(--color-text-muted)' }}
-                        >
-                          {truncateAddress(account.address)}
-                        </div>
-                      </div>
-                      <div
-                        className="wallet-balance text-[14px] font-medium whitespace-nowrap"
-                        style={{ color: 'var(--color-text-primary)' }}
-                      >
-                        {(wallet.accountBalances[account.address] ?? 0).toLocaleString('en-US', {
-                          minimumFractionDigits: 2,
-                          maximumFractionDigits: 2,
-                        })}{' '}
-                        NOCK
-                      </div>
-                      <div
-                        className="wallet-settings-icon h-10 w-10 rounded-tile hidden items-center justify-center"
-                        style={{ backgroundColor: 'var(--color-surface-700)' }}
-                        onClick={e => {
-                          e.stopPropagation();
-                          setWalletDropdownOpen(false);
-                          navigate('wallet-settings');
-                        }}
-                      >
-                        <img src={PencilEditIcon} alt="Edit wallet" className="h-5 w-5" />
-                      </div>
-                    </button>
-                  );
-                })}
+                          <div
+                            className="w-8 h-8 shrink-0 rounded-[32px] inline-flex justify-center items-center"
+                            style={{ backgroundColor: 'var(--color-surface-900)' }}
+                          >
+                            <span
+                              className="text-base font-medium leading-none"
+                              style={{ color: 'var(--color-text-primary)' }}
+                            >
+                              +
+                            </span>
+                          </div>
+                          <span className="text-[14px] font-medium tracking-[0.14px]">Add sub-wallet</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
               </div>
-              <div className="h-px" style={{ backgroundColor: 'var(--color-divider)' }} />
-              <div className="p-2">
+              <div
+                className="flex-shrink-0 border-t border-[var(--color-divider)] p-2 rounded-b-xl"
+                style={{ backgroundColor: 'var(--color-bg)' }}
+              >
                 <button
                   className="w-full h-12 font-medium rounded-lg"
-                  style={{ backgroundColor: 'var(--color-text-primary)', color: 'var(--color-bg)' }}
+                  style={{ backgroundColor: '#FFC413', color: '#000000' }}
                   onClick={handleAddAccount}
                 >
                   Add Wallet
