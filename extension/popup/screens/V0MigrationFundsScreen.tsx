@@ -2,17 +2,21 @@ import { useEffect, useState } from 'react';
 import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../components/AccountIcon';
+import { Alert } from '../components/Alert';
 import WalletIconYellow from '../assets/wallet-icon-yellow.svg';
 import ArrowDownIcon from '../assets/arrow-down-icon.svg';
 import ChevronDownIconAsset from '../assets/wallet-dropdown-arrow.svg';
 import InfoIconAsset from '../assets/info-icon.svg';
 import { truncateAddress } from '../utils/format';
 import { PlusIcon } from '../components/icons/PlusIcon';
+import { buildV0MigrationTransactionFromNotes } from '../../shared/v0-migration';
 
 export function V0MigrationFundsScreen() {
   const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft } = useStore();
   const visibleAccounts = wallet.accounts.filter(account => !account.hidden);
   const [showWalletPicker, setShowWalletPicker] = useState(false);
+  const [buildError, setBuildError] = useState('');
+  const [isBuilding, setIsBuilding] = useState(false);
 
   useEffect(() => {
     if (v0MigrationDraft.destinationWalletIndex === null && visibleAccounts.length > 0) {
@@ -25,6 +29,61 @@ export function V0MigrationFundsScreen() {
     visibleAccounts[0] ||
     null;
   const hasInsufficientFunds = v0MigrationDraft.v0BalanceNock <= v0MigrationDraft.feeNock;
+
+  async function handleContinue() {
+    if (!destinationWallet || isBuilding) return;
+
+    if (!v0MigrationDraft.v0NotesProtobuf?.length) {
+      setBuildError('No v0 notes loaded. Go back and import your recovery phrase again.');
+      return;
+    }
+    if (!v0MigrationDraft.sourcePkh) {
+      setBuildError('Missing v0 source key data. Go back and import your recovery phrase again.');
+      return;
+    }
+
+    setBuildError('');
+    setIsBuilding(true);
+    try {
+      const built = await buildV0MigrationTransactionFromNotes(
+        v0MigrationDraft.v0NotesProtobuf,
+        v0MigrationDraft.sourcePkh,
+        destinationWallet.address
+      );
+      console.log('[V0 Migration] transaction build', {
+        sourceAddress: v0MigrationDraft.sourceAddress,
+        sourcePkh: v0MigrationDraft.sourcePkh,
+        destinationPkh: destinationWallet.address,
+        discoveredV0BalanceNock: v0MigrationDraft.v0BalanceNock,
+        migratedAmountNock: built.migratedNock,
+        feeNock: built.feeNock,
+        selectedNoteNock: built.selectedNoteNock,
+        selectedNoteNicks: built.selectedNoteNicks,
+        txInputs: {
+          notesCount: built.signRawTxPayload.notes?.length ?? 0,
+          spendConditionsCount: built.signRawTxPayload.spendConditions?.length ?? 0,
+          notes: built.signRawTxPayload.notes,
+          spendConditions: built.signRawTxPayload.spendConditions,
+        },
+        finalTransaction: {
+          txId: built.txId,
+          rawTx: built.signRawTxPayload.rawTx,
+        },
+      });
+
+      setV0MigrationDraft({
+        migratedAmountNock: built.migratedNock,
+        feeNock: built.feeNock,
+        signRawTxPayload: built.signRawTxPayload,
+        txId: built.txId,
+      });
+      navigate('v0-migration-review');
+    } catch (err) {
+      setBuildError(err instanceof Error ? err.message : 'Failed to build migration transaction');
+    } finally {
+      setIsBuilding(false);
+    }
+  }
 
   return (
     <div
@@ -137,6 +196,8 @@ export function V0MigrationFundsScreen() {
             <span className="font-sans font-medium text-[var(--color-text-primary)]" style={{ fontSize: 'var(--font-size-base)' }}>{v0MigrationDraft.feeNock} NOCK</span>
           </div>
         </div>
+
+        {buildError && <Alert type="error">{buildError}</Alert>}
       </div>
 
       <div className="border-t border-[var(--color-surface-800)] px-4 py-3">
@@ -155,8 +216,8 @@ export function V0MigrationFundsScreen() {
           </button>
           <button
             type="button"
-            disabled={hasInsufficientFunds || !destinationWallet}
-            onClick={() => navigate('v0-migration-review')}
+            disabled={hasInsufficientFunds || !destinationWallet || isBuilding}
+            onClick={handleContinue}
             className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed font-sans font-medium"
             style={{
               fontSize: 'var(--font-size-base)',
@@ -164,7 +225,7 @@ export function V0MigrationFundsScreen() {
               letterSpacing: '0.01em',
             }}
           >
-            Continue
+            {isBuilding ? 'Building...' : 'Continue'}
           </button>
         </div>
       </div>

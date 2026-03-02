@@ -8,8 +8,9 @@ export function V0MigrationReviewScreen() {
   const { navigate, wallet, v0MigrationDraft, priceUsd } = useStore();
   const destinationWallet =
     wallet.accounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) || null;
-  const amount = v0MigrationDraft.v0BalanceNock;
+  const amount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock;
   const usdAmount = amount * priceUsd;
+  const canSend = Boolean(v0MigrationDraft.signRawTxPayload);
 
   return (
     <div
@@ -86,7 +87,8 @@ export function V0MigrationReviewScreen() {
           <button
             type="button"
             onClick={() => navigate('v0-migration-submitted')}
-            className="flex-1 h-12 rounded-[14px] text-[16px] font-medium"
+            disabled={!canSend}
+            className="flex-1 h-12 rounded-[14px] text-[16px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
           >
             Send

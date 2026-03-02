@@ -5,6 +5,7 @@ import { PlusIcon } from '../components/icons/PlusIcon';
 
 export function V0MigrationSubmittedScreen() {
   const { navigate, v0MigrationDraft, resetV0MigrationDraft } = useStore();
+  const sentAmount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock;
 
   function handleBackToOverview() {
     resetV0MigrationDraft();
@@ -42,7 +43,7 @@ export function V0MigrationSubmittedScreen() {
         <div className="mt-6 rounded-[14px] p-3 flex items-start justify-between" style={{ backgroundColor: 'var(--color-surface-900)' }}>
           <div className="text-[14px] font-medium">You sent</div>
           <div className="text-right">
-            <div className="text-[14px] font-medium">{v0MigrationDraft.v0BalanceNock.toLocaleString()} NOCK</div>
+            <div className="text-[14px] font-medium">{sentAmount.toLocaleString()} NOCK</div>
           </div>
         </div>
 

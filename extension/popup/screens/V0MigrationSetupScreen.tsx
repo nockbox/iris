@@ -5,17 +5,20 @@ import { Alert } from '../components/Alert';
 import lockIcon from '../assets/lock-icon.svg';
 import { importKeyfile, type Keyfile } from '../../shared/keyfile';
 import { UI_CONSTANTS } from '../../shared/constants';
+import { queryV0BalanceFromMnemonic } from '../../shared/v0-migration';
 
 const WORD_COUNT = 24;
 
 export function V0MigrationSetupScreen() {
-  const { navigate, v0MigrationDraft, setV0MigrationDraft } = useStore();
+  const { navigate, setV0MigrationDraft } = useStore();
   const [showKeyfileImport, setShowKeyfileImport] = useState(false);
   const [keyfileError, setKeyfileError] = useState('');
+  const [discoverError, setDiscoverError] = useState('');
+  const [isDiscovering, setIsDiscovering] = useState(false);
+  const [words, setWords] = useState<string[]>(Array(WORD_COUNT).fill(''));
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
-  const words = v0MigrationDraft.seedWords;
   const canContinue = words.length === WORD_COUNT && words.every(w => Boolean(w));
 
   async function handlePasteAll() {
@@ -26,7 +29,7 @@ export function V0MigrationSetupScreen() {
       pasted.forEach((word, index) => {
         next[index] = word;
       });
-      setV0MigrationDraft({ seedWords: next });
+      setWords(next);
     } catch (error) {
       console.warn('Paste failed:', error);
     }
@@ -34,9 +37,9 @@ export function V0MigrationSetupScreen() {
 
   function handleWordChange(index: number, value: string) {
     const trimmedValue = value.trim().toLowerCase();
-    const newWords = [...v0MigrationDraft.seedWords];
+    const newWords = [...words];
     newWords[index] = trimmedValue;
-    setV0MigrationDraft({ seedWords: newWords });
+    setWords(newWords);
     if (value.endsWith(' ')) {
       const nextIndex = index + 1;
       if (nextIndex < WORD_COUNT) {
@@ -55,7 +58,7 @@ export function V0MigrationSetupScreen() {
         pastedWords.forEach((word, i) => {
           next[i] = word;
         });
-        setV0MigrationDraft({ seedWords: next });
+        setWords(next);
       }
     }
   }
@@ -91,7 +94,7 @@ export function V0MigrationSetupScreen() {
         importedWords.forEach((word, i) => {
           next[i] = word;
         });
-        setV0MigrationDraft({ seedWords: next });
+        setWords(next);
         setShowKeyfileImport(false);
         if (fileInputRef.current) fileInputRef.current.value = '';
       } catch (err) {
@@ -105,6 +108,44 @@ export function V0MigrationSetupScreen() {
     setShowKeyfileImport(false);
     setKeyfileError('');
     if (fileInputRef.current) fileInputRef.current.value = '';
+  }
+
+  async function handleContinue() {
+    if (!canContinue || isDiscovering) return;
+
+    setDiscoverError('');
+    setIsDiscovering(true);
+    try {
+      const discovery = await queryV0BalanceFromMnemonic(words.join(' ').trim());
+
+      if (!discovery.v0NotesProtobuf.length) {
+        throw new Error('No v0 notes found for this recovery phrase.');
+      }
+
+      setV0MigrationDraft({
+        sourceAddress: discovery.sourceAddress,
+        sourcePkh: discovery.sourcePkh,
+        v0NotesProtobuf: discovery.v0NotesProtobuf,
+        v0BalanceNock: discovery.totalNock,
+        migratedAmountNock: undefined,
+        feeNock: 59,
+        keyfileName: undefined,
+        signRawTxPayload: undefined,
+        txId: undefined,
+      });
+      console.log('[V0 Migration] derived query address', {
+        sourceAddress: discovery.sourceAddress,
+        sourcePkh: discovery.sourcePkh,
+        totalNock: discovery.totalNock,
+        legacyNotesCount: discovery.v0NotesProtobuf.length,
+      });
+      setWords(Array(WORD_COUNT).fill(''));
+      navigate('v0-migration-funds');
+    } catch (err) {
+      setDiscoverError(err instanceof Error ? err.message : 'Failed to discover v0 notes');
+    } finally {
+      setIsDiscovering(false);
+    }
   }
 
   return (
@@ -227,6 +268,8 @@ export function V0MigrationSetupScreen() {
             >
               Paste all
             </button>
+
+            {discoverError && <Alert type="error">{discoverError}</Alert>}
           </div>
         </div>
 
@@ -247,8 +290,8 @@ export function V0MigrationSetupScreen() {
             </button>
             <button
               type="button"
-              disabled={!canContinue}
-              onClick={() => navigate('v0-migration-funds')}
+              disabled={!canContinue || isDiscovering}
+              onClick={handleContinue}
               className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed font-sans font-medium"
               style={{
                 fontSize: 'var(--font-size-base)',
@@ -256,7 +299,7 @@ export function V0MigrationSetupScreen() {
                 letterSpacing: '0.01em',
               }}
             >
-              Import Wallet
+              {isDiscovering ? 'Checking v0 balance...' : 'Import Wallet'}
             </button>
           </div>
         </div>

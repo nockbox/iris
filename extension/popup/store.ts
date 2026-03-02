@@ -110,18 +110,36 @@ interface AppStore {
   // UI-only draft state for transfering v0 funds flow
   v0MigrationDraft: {
     v0BalanceNock: number;
+    migratedAmountNock?: number;
     feeNock: number;
     destinationWalletIndex: number | null;
-    seedWords: string[];
     keyfileName?: string;
+    sourceAddress?: string;
+    sourcePkh?: string;
+    v0NotesProtobuf?: any[];
+    signRawTxPayload?: {
+      rawTx: any;
+      notes: any[];
+      spendConditions: any[];
+    };
+    txId?: string;
   };
   setV0MigrationDraft: (
     value: Partial<{
       v0BalanceNock: number;
+      migratedAmountNock?: number;
       feeNock: number;
       destinationWalletIndex: number | null;
-      seedWords: string[];
       keyfileName?: string;
+      sourceAddress?: string;
+      sourcePkh?: string;
+      v0NotesProtobuf?: any[];
+      signRawTxPayload?: {
+        rawTx: any;
+        notes: any[];
+        spendConditions: any[];
+      };
+      txId?: string;
     }>
   ) => void;
   resetV0MigrationDraft: () => void;
@@ -204,10 +222,15 @@ export const useStore = create<AppStore>((set, get) => ({
   lastTransaction: null,
   v0MigrationDraft: {
     v0BalanceNock: 2500,
+    migratedAmountNock: undefined,
     feeNock: 59,
     destinationWalletIndex: null,
-    seedWords: Array(24).fill(''),
     keyfileName: undefined,
+    sourceAddress: undefined,
+    sourcePkh: undefined,
+    v0NotesProtobuf: undefined,
+    signRawTxPayload: undefined,
+    txId: undefined,
   },
   pendingConnectRequest: null,
   pendingSignRequest: null,
@@ -283,10 +306,15 @@ export const useStore = create<AppStore>((set, get) => ({
     set({
       v0MigrationDraft: {
         v0BalanceNock: 2500,
+        migratedAmountNock: undefined,
         feeNock: 59,
         destinationWalletIndex: null,
-        seedWords: Array(24).fill(''),
         keyfileName: undefined,
+        sourceAddress: undefined,
+        sourcePkh: undefined,
+        v0NotesProtobuf: undefined,
+        signRawTxPayload: undefined,
+        txId: undefined,
       },
     });
   },
