@@ -3,6 +3,7 @@ import { NOCK_TO_NICKS, RPC_ENDPOINT } from './constants';
 import { ensureWasmInitialized } from './wasm-utils';
 import { wasm } from './sdk-wasm';
 import type { TxEngineSettings } from '@nockbox/iris-sdk/wasm';
+import { getEffectiveRpcEndpoint } from './rpc-config';
 
 const DEFAULT_FEE_PER_WORD = '32768';
 const TARGET_NOTE_NOCK = 300;
@@ -51,7 +52,7 @@ export async function deriveV0AddressFromMnemonic(
 
 export async function queryV0BalanceFromMnemonic(
   mnemonic: string,
-  grpcEndpoint = RPC_ENDPOINT
+  grpcEndpoint?: string
 ): Promise<V0DiscoveryResult> {
   const { sourceAddress, sourcePkh } = await deriveV0AddressFromMnemonic(mnemonic);
   return queryV0BalanceByAddress(sourceAddress, grpcEndpoint, sourcePkh);
@@ -59,11 +60,17 @@ export async function queryV0BalanceFromMnemonic(
 
 async function queryV0BalanceByAddress(
   sourceAddress: string,
-  grpcEndpoint = RPC_ENDPOINT,
+  grpcEndpoint?: string,
   providedSourcePkh?: string
 ): Promise<V0DiscoveryResult> {
   await ensureWasmInitialized();
-  const grpcClient = new wasm.GrpcClient(grpcEndpoint);
+  const effectiveEndpoint = (
+    grpcEndpoint && grpcEndpoint.trim().length > 0 ? grpcEndpoint : await getEffectiveRpcEndpoint()
+  ).trim();
+  const normalizedEndpoint = /^https?:\/\//i.test(effectiveEndpoint)
+    ? effectiveEndpoint
+    : `https://${effectiveEndpoint || RPC_ENDPOINT}`;
+  const grpcClient = new wasm.GrpcClient(normalizedEndpoint);
   const balance = await grpcClient.getBalanceByAddress(sourceAddress);
 
   const v0NotesProtobuf: any[] = [];
