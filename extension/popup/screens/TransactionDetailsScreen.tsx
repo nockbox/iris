@@ -3,8 +3,9 @@ import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { CheckIcon } from '../components/icons/CheckIcon';
+import { AccountIcon } from '../components/AccountIcon';
 import IrisLogo40 from '../assets/iris-logo-40.svg';
-import { truncateAddress, formatUTCTimestamp } from '../utils/format';
+import { truncateAddress } from '../utils/format';
 import { NOCK_TO_NICKS } from '../../shared/constants';
 
 export function TransactionDetailsScreen() {
@@ -118,6 +119,14 @@ export function TransactionDetailsScreen() {
     selectedTransaction.direction === 'outgoing'
       ? truncateAddress(counterpartyAddress || '')
       : truncateAddress(currentAddress);
+  const fromAddressDisplay = fromAddress || 'Unknown';
+  const toAddressDisplay = toAddress || 'Unknown';
+  const fromAddressRaw =
+    selectedTransaction.direction === 'outgoing' ? currentAddress : counterpartyAddress || '';
+  const toAddressRaw =
+    selectedTransaction.direction === 'outgoing' ? counterpartyAddress || '' : currentAddress;
+  const fromAccount = wallet.accounts.find(account => account.address === fromAddressRaw);
+  const toAccount = wallet.accounts.find(account => account.address === toAddressRaw);
 
   // For incoming transactions, we don't have fee info
   const networkFee =
@@ -133,7 +142,6 @@ export function TransactionDetailsScreen() {
     ? `$${(totalNock * selectedTransaction.priceUsdAtTime).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
     : null;
   const transactionId = selectedTransaction.txHash || selectedTransaction.id;
-  const transactionTimeUTC = formatUTCTimestamp(selectedTransaction.createdAt);
 
   function handleBack() {
     navigate('home');
@@ -187,7 +195,7 @@ export function TransactionDetailsScreen() {
         className="flex flex-col gap-2 h-[536px] overflow-y-auto"
         style={{ backgroundColor: 'var(--color-bg)' }}
       >
-        <div className="flex flex-col gap-8 px-4 py-2">
+        <div className="flex flex-col gap-6 px-4 py-2">
           {/* Amount Section */}
           <div className="flex flex-col items-center gap-3">
             <img src={IrisLogo40} alt="Iris" className="w-10 h-10" />
@@ -201,8 +209,8 @@ export function TransactionDetailsScreen() {
               </h2>
               {usdValue && (
                 <p
-                  className="m-0 text-[13px] font-medium leading-[18px] tracking-[0.26px]"
-                  style={{ color: 'var(--color-text-muted)' }}
+                  className="m-0 text-[13px] font-semibold leading-[18px] tracking-[0.26px]"
+                  style={{ color: 'var(--color-text-primary)' }}
                 >
                   {usdValue}
                 </p>
@@ -214,8 +222,8 @@ export function TransactionDetailsScreen() {
           <div className="flex flex-col gap-2">
             {/* Status */}
             <div
-              className="rounded-lg px-3 py-5"
-              style={{ backgroundColor: 'var(--color-surface-800)' }}
+              className="rounded-[14px] px-3 py-5"
+              style={{ backgroundColor: 'var(--color-surface-900)' }}
             >
               <div className="flex items-center justify-between text-sm font-medium leading-[18px] tracking-[0.14px]">
                 <div style={{ color: 'var(--color-text-primary)' }}>Status</div>
@@ -225,53 +233,84 @@ export function TransactionDetailsScreen() {
               </div>
             </div>
 
-            {/* Transaction Time */}
-            <div
-              className="rounded-lg px-3 py-5"
-              style={{ backgroundColor: 'var(--color-surface-800)' }}
-            >
-              <div className="flex items-center justify-between text-sm font-medium leading-[18px] tracking-[0.14px]">
-                <div style={{ color: 'var(--color-text-primary)' }}>Time</div>
+            {/* From / To */}
+            <div className="flex items-stretch gap-2">
+              <div
+                className="flex-1 rounded-[14px] p-3 min-w-0 flex flex-col"
+                style={{ backgroundColor: 'var(--color-surface-900)' }}
+              >
+                <div className="h-10 mb-3">
+                  {fromAccount ? (
+                    <AccountIcon
+                      styleId={fromAccount.iconStyleId}
+                      color={fromAccount.iconColor}
+                      className="w-10 h-10"
+                    />
+                  ) : (
+                    <div
+                      className="w-10 h-10 rounded-full grid place-items-center text-[12px] font-semibold"
+                      style={{ backgroundColor: 'var(--color-bg)' }}
+                    >
+                      NOCK
+                    </div>
+                  )}
+                </div>
+                <div className="text-[16px] font-medium leading-[24px] tracking-[0.01em] truncate">
+                  {fromAccount?.name || 'Unknown wallet'}
+                </div>
                 <div
-                  className="text-right text-[13px] leading-[18px] tracking-[0.26px]"
+                  className="text-[12px] leading-[18px] tracking-[0.02em] truncate"
                   style={{ color: 'var(--color-text-muted)' }}
                 >
-                  {transactionTimeUTC}
+                  {fromAddressDisplay}
                 </div>
               </div>
-            </div>
 
-            {/* From / To */}
-            <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--color-surface-800)' }}>
-              <div className="flex items-center gap-2.5">
-                <div className="flex-1 flex flex-col gap-1 min-w-0">
-                  <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">From</div>
-                  <div
-                    className="text-[13px] leading-[18px] tracking-[0.26px] truncate"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
-                    {fromAddress}
-                  </div>
+              <div className="w-10 shrink-0 flex items-center justify-center">
+                <div
+                  className="w-10 h-10 rounded-full grid place-items-center"
+                  style={{ backgroundColor: 'var(--color-surface-800)' }}
+                >
+                  <ChevronRightIcon className="w-5 h-5" />
                 </div>
-                <div className="p-1 shrink-0">
-                  <ChevronRightIcon className="w-4 h-4" />
+              </div>
+
+              <div
+                className="flex-1 rounded-[14px] p-3 min-w-0 flex flex-col"
+                style={{ backgroundColor: 'var(--color-surface-900)' }}
+              >
+                <div className="h-10 mb-3">
+                  {toAccount ? (
+                    <AccountIcon
+                      styleId={toAccount.iconStyleId}
+                      color={toAccount.iconColor}
+                      className="w-10 h-10"
+                    />
+                  ) : (
+                    <div
+                      className="w-10 h-10 rounded-full grid place-items-center text-[12px] font-semibold"
+                      style={{ backgroundColor: 'var(--color-bg)' }}
+                    >
+                      NOCK
+                    </div>
+                  )}
                 </div>
-                <div className="flex-1 flex flex-col gap-1 min-w-0">
-                  <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">To</div>
-                  <div
-                    className="text-[13px] leading-[18px] tracking-[0.26px] truncate"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
-                    {toAddress}
-                  </div>
+                <div className="text-[16px] font-medium leading-[24px] tracking-[0.01em] truncate">
+                  {toAccount?.name || 'Unknown wallet'}
+                </div>
+                <div
+                  className="text-[12px] leading-[18px] tracking-[0.02em] truncate"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  {toAddressDisplay}
                 </div>
               </div>
             </div>
 
             {/* Fee and Total */}
             <div
-              className="rounded-lg px-3 py-3 flex flex-col gap-3"
-              style={{ backgroundColor: 'var(--color-surface-800)' }}
+              className="rounded-[14px] px-3 py-3 flex flex-col gap-3"
+              style={{ backgroundColor: 'var(--color-surface-900)' }}
             >
               <div className="flex items-center justify-between text-sm font-medium leading-[18px] tracking-[0.14px]">
                 <div style={{ color: 'var(--color-text-primary)', opacity: 0.7 }}>Network fee</div>
