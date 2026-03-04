@@ -6,6 +6,7 @@
 
 import { Vault } from '../shared/vault';
 import { isNockAddress } from '../shared/validators';
+import * as wasmGuard from '@nockbox/iris-wasm/iris_wasm.guard';
 import {
   PROVIDER_METHODS,
   INTERNAL_METHODS,
@@ -326,6 +327,28 @@ function isTransactionRequest(
   request: TransactionRequest | SignRequest | ConnectRequest | SignRawTxRequest
 ): request is TransactionRequest {
   return 'to' in request;
+}
+
+/** Validates all-native or all-protobuf. */
+function isSignRawTxPayload(obj: unknown): obj is SignRawTxRequest {
+  if (!obj || typeof obj !== 'object') return false;
+  const p = obj as { rawTx?: unknown; notes?: unknown; spendConditions?: unknown };
+  if (!Array.isArray(p.notes) || p.notes.length === 0) return false;
+  if (!Array.isArray(p.spendConditions) || p.spendConditions.length === 0) return false;
+
+  const rawTxIsNative = wasmGuard.isRawTx(p.rawTx);
+  const rawTxIsProtobuf = wasmGuard.isPbCom2RawTransaction(p.rawTx);
+  const allNotesNative = p.notes.every((n: unknown) => wasmGuard.isNote(n));
+  const allNotesProtobuf = p.notes.every((n: unknown) => wasmGuard.isPbCom2Note(n));
+  const allScNative = p.spendConditions.every((sc: unknown) => wasmGuard.isSpendCondition(sc));
+  const allScProtobuf = p.spendConditions.every((sc: unknown) =>
+    wasmGuard.isPbCom2SpendCondition(sc)
+  );
+
+  return (
+    (rawTxIsNative && allNotesNative && allScNative) ||
+    (rawTxIsProtobuf && allNotesProtobuf && allScProtobuf)
+  );
 }
 
 /**
@@ -651,30 +674,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         const rawTxParams = payload.params?.[0];
-        if (
-          !rawTxParams ||
-          !rawTxParams.rawTx ||
-          !rawTxParams.notes ||
-          !rawTxParams.spendConditions
-        ) {
-          sendResponse({ error: { code: -32602, message: 'Invalid params' } });
-          return;
-        }
-
-        if (
-          !rawTxParams.rawTx ||
-          !Array.isArray(rawTxParams.notes) ||
-          !Array.isArray(rawTxParams.spendConditions) ||
-          rawTxParams.notes.length === 0 ||
-          rawTxParams.spendConditions.length === 0
-        ) {
+        if (!isSignRawTxPayload(rawTxParams)) {
           sendResponse({ error: { code: -32602, message: 'Invalid params' } });
           return;
         }
 
         const outputs = await vault.computeOutputs(rawTxParams.rawTx);
 
-        // Create sign raw tx approval request
+        // Create sign raw tx approval request (payload validated as all-native or all-protobuf)
         const signRawTxId = crypto.randomUUID();
         const signRawTxRequest: SignRawTxRequest = {
           id: signRawTxId,
@@ -684,7 +691,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           spendConditions: rawTxParams.spendConditions,
           outputs: outputs,
           timestamp: Date.now(),
-        };
+        } as SignRawTxRequest;
 
         // Store pending request with response callback
         pendingRequests.set(signRawTxId, {

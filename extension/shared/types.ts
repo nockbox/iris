@@ -3,6 +3,14 @@
  */
 
 import { PROVIDER_METHODS, INTERNAL_METHODS, RPC_METHODS, ERROR_CODES } from './constants';
+import type {
+  PbCom2RawTransaction,
+  PbCom2Note,
+  PbCom2SpendCondition,
+  RawTx,
+  Note as WasmNote,
+  SpendCondition,
+} from '@nockbox/iris-wasm/iris_wasm.js';
 
 /**
  * Account information for multi-account wallet
@@ -146,25 +154,32 @@ export interface TransactionRequest {
   timestamp: number;
 }
 
-/**
- * Pending raw transaction signing request from a dApp
- */
-export interface SignRawTxRequest {
-  /** Unique request ID */
-  id: string;
-  /** Origin of the requesting site */
-  origin: string;
-  /** Raw transaction protobuf */
-  rawTx: any;
-  /** Input notes (protobuf) */
-  notes: any[];
-  /** Spend conditions (protobuf) */
-  spendConditions: any[];
-  /** Output notes (protobuf). Ignored from dApp side */
-  outputs?: any[];
-  /** Request timestamp */
-  timestamp: number;
+/** Protobuf payload (all protobuf, no mixing). */
+export interface LegacySignRawTxRequest {
+  rawTx: PbCom2RawTransaction;
+  notes: PbCom2Note[];
+  spendConditions: PbCom2SpendCondition[];
 }
+
+/** Native payload (all native, no mixing). */
+export interface SignRawTxRequestNative {
+  rawTx: RawTx;
+  notes: WasmNote[];
+  spendConditions: SpendCondition[];
+}
+
+/** Pending signRawTx request. Either all native or all protobuf. */
+export type SignRawTxRequest = (LegacySignRawTxRequest & {
+  id: string;
+  origin: string;
+  outputs?: any[];
+  timestamp: number;
+}) | (SignRawTxRequestNative & {
+  id: string;
+  origin: string;
+  outputs?: any[];
+  timestamp: number;
+});
 
 /**
  * Nockchain note (UTXO) structure

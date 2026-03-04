@@ -106,12 +106,26 @@ export function SignRawTxScreen() {
     window.close();
   }
 
-  // Calculate network fee
+  // Calculate network fee. Logic based on iris-sdk/vendor/iris-wasm/iris_wasm.d.ts:
+  // - Native: SpendsV1 = ZMap<Name, SpendV1> = [Name, SpendV1][]. SpendV1 = { version, spend } where spend has fee: Nicks (string).
+  //   Path: entry[1].spend.fee
+  // - Protobuf: PbCom2SpendEntry[] with spend.spend_kind.{Witness|Legacy}.fee (PbCom1Nicks = { value: string }).
+  //   Path: spend.spend_kind.Witness.fee.value | spend.spend_kind.Legacy.fee.value
+  //  Double check this
   let totalFeeNicks = 0;
   try {
-    if (rawTx && rawTx.spends && Array.isArray(rawTx.spends)) {
-      totalFeeNicks = rawTx.spends.reduce((sum: number, spend: any) => {
-        const feeValue = spend?.spend?.spend_kind?.Witness?.fee?.value;
+    const spends = rawTx && 'spends' in rawTx ? (rawTx as { spends: unknown[] }).spends : undefined;
+    if (spends && Array.isArray(spends) && spends.length > 0) {
+      const isNative = Array.isArray(spends[0]) && spends[0].length === 2; // the right check?
+      totalFeeNicks = spends.reduce((sum: number, entry: unknown) => {
+        let feeValue: string | undefined;
+        if (isNative) {
+          const spendV1 = (entry as [unknown, unknown])[1] as { spend?: { fee?: string } };
+          feeValue = spendV1?.spend?.fee;
+        } else {
+          const spend = (entry as { spend?: { spend_kind?: { Witness?: { fee?: { value?: string } }; Legacy?: { fee?: { value?: string } } } } }).spend;
+          feeValue = spend?.spend_kind?.Witness?.fee?.value ?? spend?.spend_kind?.Legacy?.fee?.value;
+        }
         const fee = feeValue ? parseInt(feeValue, 10) : 0;
         return sum + (isNaN(fee) ? 0 : fee);
       }, 0);
