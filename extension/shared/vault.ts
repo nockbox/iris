@@ -1106,22 +1106,8 @@ export class Vault {
           storedNote.pendingTxId = walletTxId;
           newChange++;
         } else {
-          // Incoming transaction - create a WalletTransaction record
-          const incomingTxId = crypto.randomUUID();
-          const now = Date.now();
-
-          await this.addWalletTransaction({
-            id: incomingTxId,
-            txHash: newUTXO.sourceHash,
-            accountAddress,
-            direction: 'incoming',
-            createdAt: now,
-            updatedAt: now,
-            status: 'confirmed',
-            amount: newUTXO.assets,
-            receivedNoteIds: [newUTXO.noteId],
-          });
-
+          // Don't create WalletTransaction records for incoming UTXOs.
+          // Only outgoing transactions appear in history. Balance still updates correctly.
           newIncoming++;
         }
 
