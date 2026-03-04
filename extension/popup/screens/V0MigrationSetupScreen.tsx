@@ -124,7 +124,6 @@ export function V0MigrationSetupScreen() {
 
       setV0MigrationDraft({
         sourceAddress: discovery.sourceAddress,
-        sourcePkh: discovery.sourcePkh,
         v0NotesProtobuf: discovery.v0NotesProtobuf,
         v0BalanceNock: discovery.totalNock,
         migratedAmountNock: undefined,
@@ -135,7 +134,6 @@ export function V0MigrationSetupScreen() {
       });
       console.log('[V0 Migration] derived query address', {
         sourceAddress: discovery.sourceAddress,
-        sourcePkh: discovery.sourcePkh,
         totalNock: discovery.totalNock,
         legacyNotesCount: discovery.v0NotesProtobuf.length,
       });

@@ -37,22 +37,16 @@ export function V0MigrationFundsScreen() {
       setBuildError('No v0 notes loaded. Go back and import your recovery phrase again.');
       return;
     }
-    if (!v0MigrationDraft.sourcePkh) {
-      setBuildError('Missing v0 source key data. Go back and import your recovery phrase again.');
-      return;
-    }
 
     setBuildError('');
     setIsBuilding(true);
     try {
       const built = await buildV0MigrationTransactionFromNotes(
         v0MigrationDraft.v0NotesProtobuf,
-        v0MigrationDraft.sourcePkh,
         destinationWallet.address
       );
       console.log('[V0 Migration] transaction build', {
         sourceAddress: v0MigrationDraft.sourceAddress,
-        sourcePkh: v0MigrationDraft.sourcePkh,
         destinationPkh: destinationWallet.address,
         discoveredV0BalanceNock: v0MigrationDraft.v0BalanceNock,
         migratedAmountNock: built.migratedNock,
