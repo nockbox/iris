@@ -5,12 +5,16 @@ import { Alert } from '../components/Alert';
 import lockIcon from '../assets/lock-icon.svg';
 import { importKeyfile, type Keyfile } from '../../shared/keyfile';
 import { UI_CONSTANTS } from '../../shared/constants';
-import { queryV0BalanceFromMnemonic, setV0MigrationSigningMnemonic } from '../../shared/v0-migration';
+import {
+  buildV0MigrationTransactionFromNotes,
+  queryV0BalanceFromMnemonic,
+  setV0MigrationSigningMnemonic,
+} from '../../shared/v0-migration';
 
 const WORD_COUNT = 24;
 
 export function V0MigrationSetupScreen() {
-  const { navigate, setV0MigrationDraft } = useStore();
+  const { navigate, wallet, setV0MigrationDraft } = useStore();
   const [showKeyfileImport, setShowKeyfileImport] = useState(false);
   const [keyfileError, setKeyfileError] = useState('');
   const [discoverError, setDiscoverError] = useState('');
@@ -124,23 +128,48 @@ export function V0MigrationSetupScreen() {
       }
       setV0MigrationSigningMnemonic(mnemonic);
 
-      setV0MigrationDraft({
+      const visibleAccounts = wallet.accounts.filter((a: { hidden?: boolean }) => !a.hidden);
+      const defaultDestination =
+        wallet.currentAccount && !wallet.currentAccount.hidden
+          ? wallet.currentAccount
+          : visibleAccounts[0];
+
+      let draft: Parameters<typeof setV0MigrationDraft>[0] = {
         sourceAddress: discovery.sourceAddress,
         sourcePkh: discovery.sourcePkh,
         v0NotesProtobuf: discovery.v0NotesProtobuf,
         v0BalanceNock: discovery.totalNock,
         migratedAmountNock: undefined,
-        feeNock: 59,
-        destinationWalletAddress: undefined,
+        feeNock: 0,
+        destinationWalletAddress: defaultDestination?.address,
+        destinationWalletIndex: defaultDestination != null ? defaultDestination.index : null,
         keyfileName: undefined,
         signRawTxPayload: undefined,
         txId: undefined,
-      });
+      };
+
+      if (defaultDestination) {
+        const built = await buildV0MigrationTransactionFromNotes(
+          discovery.v0NotesProtobuf,
+          discovery.sourcePkh,
+          defaultDestination.address
+        );
+        draft = {
+          ...draft,
+          feeNock: built.feeNock,
+          migratedAmountNock: built.migratedNock,
+          signRawTxPayload: built.signRawTxPayload,
+          txId: built.txId,
+        };
+      }
+
+      setV0MigrationDraft(draft);
       console.log('[V0 Migration] derived query address', {
         sourceAddress: discovery.sourceAddress,
         sourcePkh: discovery.sourcePkh,
         totalNock: discovery.totalNock,
         legacyNotesCount: discovery.v0NotesProtobuf.length,
+        feeNock: draft.feeNock,
       });
       setWords(Array(WORD_COUNT).fill(''));
       navigate('v0-migration-funds');

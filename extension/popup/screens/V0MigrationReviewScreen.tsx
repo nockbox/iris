@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../store';
+import { send } from '../utils/messaging';
+import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../shared/constants';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../components/AccountIcon';
 import { Alert } from '../components/Alert';
@@ -8,7 +10,7 @@ import { truncateAddress } from '../utils/format';
 import { signAndBroadcastV0MigrationTransaction } from '../../shared/v0-migration';
 
 export function V0MigrationReviewScreen() {
-  const { navigate, wallet, v0MigrationDraft, priceUsd, setV0MigrationDraft, fetchBalance } = useStore();
+  const { navigate, wallet, v0MigrationDraft, priceUsd, setV0MigrationDraft, fetchBalance, fetchWalletTransactions } = useStore();
   const destinationWallet =
     wallet.accounts.find(
       account =>
@@ -30,6 +32,7 @@ export function V0MigrationReviewScreen() {
       const result = await signAndBroadcastV0MigrationTransaction(v0MigrationDraft.signRawTxPayload);
       setV0MigrationDraft({ txId: result.txId });
       await fetchBalance();
+      await fetchWalletTransactions();
       navigate('v0-migration-submitted');
     } catch (error) {
       setSendError(error instanceof Error ? error.message : 'Failed to send migration transaction');

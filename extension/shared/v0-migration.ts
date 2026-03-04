@@ -7,10 +7,12 @@ import { getEffectiveRpcEndpoint } from './rpc-config';
 import { createBrowserClient } from './rpc-client-browser';
 
 const DEFAULT_FEE_PER_WORD = '32768';
-const TARGET_NOTE_NOCK = 300;
-const MIGRATION_AMOUNT_NOCK = 200;
-const TARGET_NOTE_NICKS = BigInt(TARGET_NOTE_NOCK * NOCK_TO_NICKS);
-const MIGRATION_AMOUNT_NICKS = BigInt(MIGRATION_AMOUNT_NOCK * NOCK_TO_NICKS);
+/** Chain minimum fee (nicks) per docs: fee = max(256, word_count × 32768). */
+const CHAIN_MIN_FEE_NICKS = '256';
+
+/** Hardcoded note to use for v0 migration (name.first, name.last). */
+const HARDCODED_NOTE_FIRST = '71JNQqthZQp2ZJgHFy7xn3r3tPtt9Vp2ga1xybPPHGboDTwB2EwYLMN';
+const HARDCODED_NOTE_LAST = '3VrzrLjtRatrFTPoeKoA38HaPKQ7KSWapXP1T4WcZ8wwnas21Wkcdmx';
 let activeV0MigrationMnemonic: string | null = null;
 
 function isNoteV0(note: unknown): note is any {
@@ -79,11 +81,15 @@ function toNote(note: any): any {
   return wasm.note_from_protobuf(note);
 }
 
+function buildSinglePkhSpendCondition(pkh: string): any[] {
+  return [{ Pkh: { m: 1, hashes: [pkh] } }];
+}
+
 function txEngineSettings(): any {
   return {
     tx_engine_version: 1,
     tx_engine_patch: 0,
-    min_fee: '0',
+    min_fee: CHAIN_MIN_FEE_NICKS,
     cost_per_word: String(DEFAULT_FEE_PER_WORD),
     witness_word_div: 1,
   };
@@ -163,7 +169,9 @@ export async function buildV0MigrationTransactionFromNotes(
   v0NotesProtobuf: any[],
   sourceV0Pkh: string,
   targetV1Pkh: string,
-  feePerWord: string = DEFAULT_FEE_PER_WORD
+  feePerWord: string = DEFAULT_FEE_PER_WORD,
+  /** Optional minimum fee override (nicks). When set, fee = max(override, word-based). Use for priority. */
+  minFeeOverrideNicks?: string
 ): Promise<BuiltV0MigrationResult> {
   await ensureWasmInitialized();
 
@@ -171,14 +179,18 @@ export async function buildV0MigrationTransactionFromNotes(
     throw new Error('No v0 notes available for migration');
   }
 
-  const sourceSpendCondition = [{ Pkh: { m: 1, hashes: [sourceV0Pkh] } }];
+  const minFee =
+    minFeeOverrideNicks && BigInt(minFeeOverrideNicks) >= BigInt(CHAIN_MIN_FEE_NICKS)
+      ? minFeeOverrideNicks
+      : CHAIN_MIN_FEE_NICKS;
+
   const settings: TxEngineSettings = {
     tx_engine_version: 1 as any,
     tx_engine_patch: 0 as any,
-    min_fee: '256',
+    min_fee: minFee,
     cost_per_word: feePerWord,
     witness_word_div: 1,
-  };
+  } as any;
   const builder = new wasm.TxBuilder(settings);
 
   const candidates: Array<{ note: any; assets: bigint }> = [];
@@ -186,42 +198,38 @@ export async function buildV0MigrationTransactionFromNotes(
     const parsed = wasm.note_from_protobuf(notePb);
     if (!isNoteV0(parsed)) continue;
     const assets = BigInt(parsed.assets);
-    if (assets < MIGRATION_AMOUNT_NICKS) continue;
+    if (assets < BigInt(CHAIN_MIN_FEE_NICKS)) continue;
     candidates.push({ note: parsed, assets });
   }
 
   if (!candidates.length) {
-    throw new Error('No v0 note is large enough to migrate 200 NOCK.');
+    throw new Error(`No v0 note has at least ${CHAIN_MIN_FEE_NICKS} nicks to cover the fee.`);
   }
 
-  let selected = candidates[0];
-  for (const candidate of candidates) {
-    const currentDiff = selected.assets > TARGET_NOTE_NICKS
-      ? selected.assets - TARGET_NOTE_NICKS
-      : TARGET_NOTE_NICKS - selected.assets;
-    const nextDiff = candidate.assets > TARGET_NOTE_NICKS
-      ? candidate.assets - TARGET_NOTE_NICKS
-      : TARGET_NOTE_NICKS - candidate.assets;
-    if (nextDiff < currentDiff) {
-      selected = candidate;
-    }
-  }
-
-  const feeNicksBigInt = selected.assets - MIGRATION_AMOUNT_NICKS;
-  const recipientDigest = wasm.hex_to_digest(targetV1Pkh);
-  const refundDigest = wasm.hex_to_digest(targetV1Pkh);
-
-  builder.simpleSpend(
-    [selected.note],
-    [sourceSpendCondition],
-    recipientDigest,
-    MIGRATION_AMOUNT_NICKS.toString(),
-    feeNicksBigInt.toString(),
-    refundDigest,
-    false
+  // Prefer hardcoded note if present; otherwise pick smallest (SDK-style: SpendBuilder + computeRefund)
+  // IMPORTANT: We use exactly ONE note, never all notes.
+  const hardcoded = candidates.find(
+    c =>
+      (c.note as any).name?.first === HARDCODED_NOTE_FIRST &&
+      (c.note as any).name?.last === HARDCODED_NOTE_LAST
   );
+  const selected = hardcoded ?? candidates.reduce((a, b) => (a.assets < b.assets ? a : b));
 
-  const feeNicks = feeNicksBigInt.toString();
+  console.log('[V0 Migration] build: using single note only', {
+    candidatesCount: candidates.length,
+    notesUsed: 1,
+    selectedNoteNicks: selected.assets.toString(),
+    selection: hardcoded ? 'hardcoded' : 'smallest',
+  });
+
+  const targetSpendCondition = buildSinglePkhSpendCondition(targetV1Pkh);
+  const spendBuilder = new wasm.SpendBuilder(selected.note, null, targetSpendCondition);
+  spendBuilder.computeRefund(false);
+  builder.spend(spendBuilder);
+
+  builder.recalcAndSetFee(false);
+  const feeResult = builder.calcFee();
+  const feeNicks = feeResult;
   const transaction = builder.build();
   const txNotes = builder.allNotes();
   const rawTx = {
@@ -230,18 +238,35 @@ export async function buildV0MigrationTransactionFromNotes(
     spends: transaction.spends,
   };
 
+  const feeNicksBigInt = BigInt(feeNicks);
+  const giftNicks = selected.assets - feeNicksBigInt;
+
+  if (giftNicks < 0n) {
+    throw new Error(
+      `Selected note (${selected.assets} nicks) cannot cover the fee (${feeNicks} nicks). Try a larger note.`
+    );
+  }
+
+  const spendCount = Array.isArray(transaction.spends) ? transaction.spends.length : 0;
+  if (spendCount !== 1) {
+    throw new Error(`V0 migration must use exactly 1 note, got ${spendCount} spends`);
+  }
+
   return {
     txId: transaction.id,
     feeNicks,
     feeNock: Number(feeNicksBigInt) / NOCK_TO_NICKS,
-    migratedNicks: MIGRATION_AMOUNT_NICKS.toString(),
-    migratedNock: Number(MIGRATION_AMOUNT_NICKS) / NOCK_TO_NICKS,
+    migratedNicks: giftNicks.toString(),
+    migratedNock: Number(giftNicks) / NOCK_TO_NICKS,
     selectedNoteNicks: selected.assets.toString(),
     selectedNoteNock: Number(selected.assets) / NOCK_TO_NICKS,
     signRawTxPayload: {
       rawTx,
       notes: (txNotes.notes ?? []).filter((note: unknown) => isNoteV0(note)),
-      spendConditions: txNotes.spend_conditions ?? [],
+      spendConditions:
+        txNotes.spend_conditions && txNotes.spend_conditions.length > 0
+          ? txNotes.spend_conditions
+          : [buildSinglePkhSpendCondition(sourceV0Pkh)],
     },
   };
 }
@@ -250,7 +275,7 @@ export async function signAndBroadcastV0MigrationTransaction(params: {
   rawTx: any;
   notes: any[];
   spendConditions: any[];
-}): Promise<{ txId: string }> {
+}): Promise<{ txId: string; accepted: boolean }> {
   await ensureWasmInitialized();
   const signingMnemonic = getV0MigrationSigningMnemonic();
   const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
@@ -264,26 +289,58 @@ export async function signAndBroadcastV0MigrationTransaction(params: {
     const irisRawTx = toRawTx(params.rawTx);
     const irisNotes = (params.notes || []).map(note => toNote(note));
     const irisSpendConditions = (params.spendConditions || []) as any[];
+    console.log('[V0 Migration] pre-sign payload', {
+      notesCount: irisNotes.length,
+      spendConditionsCount: irisSpendConditions.length,
+      spendConditionKinds: irisSpendConditions.map((condition: any, idx: number) => {
+        const first = Array.isArray(condition) ? condition[0] : condition?.primitives?.[0]?.primitive;
+        if (!first) return `#${idx}:unknown`;
+        if (first.Pkh) return `#${idx}:Pkh`;
+        if (first.Tim) return `#${idx}:Tim`;
+        if (first.Hax) return `#${idx}:Hax`;
+        if (first.Burn || first.Brn) return `#${idx}:Brn`;
+        return `#${idx}:other`;
+      }),
+      rawTxId: params.rawTx?.id,
+    });
 
-    const builder = wasm.TxBuilder.fromTx(
-      irisRawTx,
-      irisNotes,
-      irisSpendConditions,
-      txEngineSettings()
-    );
-    const signingKeyBytes = new Uint8Array(masterKey.privateKey.slice(0, 32));
-    builder.sign(signingKeyBytes);
-    builder.validate();
+    let builder: any;
+    try {
+      builder = wasm.TxBuilder.fromTx(irisRawTx, irisNotes, irisSpendConditions, txEngineSettings());
+      const signingKeyBytes = new Uint8Array(masterKey.privateKey.slice(0, 32));
+      builder.sign(signingKeyBytes);
+      builder.validate();
 
-    const signedTx = builder.build();
-    const rawSignedTx = wasm.nockchainTxToRaw(signedTx) as any;
-    const protobufTx = wasm.rawTxToProtobuf(rawSignedTx);
+      const signedTx = builder.build();
+      const rawSignedTx = wasm.nockchainTxToRaw(signedTx) as any;
+      const protobufTx = wasm.rawTxToProtobuf(rawSignedTx);
 
-    const endpoint = await getEffectiveRpcEndpoint();
-    const rpcClient = createBrowserClient(endpoint);
-    await rpcClient.sendTransaction(protobufTx);
+      // Use protobuf id - it's serialized as base58 (matches RPC expectation)
+      // signedTx.id / rawSignedTx.id may be in a different format
+      const txId = protobufTx?.id ?? signedTx.id;
+      console.log('[V0 Migration] signed transaction', {
+        txIdFromProtobuf: protobufTx?.id,
+        txIdFromSignedTx: signedTx.id,
+        rawSignedTxId: rawSignedTx?.id,
+        txIdUsed: txId,
+      });
 
-    return { txId: signedTx.id };
+      const endpoint = await getEffectiveRpcEndpoint();
+      const rpcClient = createBrowserClient(endpoint);
+      await rpcClient.sendTransaction(protobufTx);
+      const accepted = await rpcClient.isTransactionAccepted(txId);
+      return { txId, accepted };
+    } catch (error) {
+      console.error('[V0 Migration] sign/broadcast failed', {
+        error: error instanceof Error ? error.message : String(error),
+        notesCount: irisNotes.length,
+        spendConditionsCount: irisSpendConditions.length,
+        rawTxId: params.rawTx?.id,
+      });
+      throw error;
+    } finally {
+      builder?.free?.();
+    }
   } finally {
     masterKey.free();
   }
