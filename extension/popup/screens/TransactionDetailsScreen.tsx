@@ -193,7 +193,7 @@ export function TransactionDetailsScreen() {
             <img src={IrisLogo40} alt="Iris" className="w-10 h-10" />
             <div className="flex flex-col items-center gap-0.5 text-center">
               <h2
-                className="m-0 font-[Lora] text-[36px] font-semibold leading-10 tracking-[-0.72px]"
+                className="m-0 font-display text-[36px] font-semibold leading-10 tracking-[-0.72px]"
                 style={{ color: 'var(--color-text-primary)' }}
               >
                 {transactionType === 'sent' && '-'}

@@ -1,11 +1,14 @@
 @import 'tailwindcss';
 
-/* Import custom fonts */
-@import '@fontsource/lora/400.css';
-@import '@fontsource/lora/500.css';
-@import '@fontsource/lora/600.css';
-@import '@fontsource/inter/400.css';
-@import '@fontsource/inter/500.css';
+/* Raveo Display - variable font from https://github.com/jakubfoglar/raveo */
+@font-face {
+  font-family: 'Raveo Display';
+  src: url('https://cdn.jsdelivr.net/gh/jakubfoglar/raveo@v1.1/fonts/variable/RaveoVF-subsetted.woff2')
+    format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 @theme {
   /* ============================================================================
@@ -40,7 +43,7 @@
 
   /* Font Families */
   --font-serif: 'Lora', Georgia, serif;
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-sans: 'Raveo Display', system-ui, sans-serif;
 
   /* Font Sizes */
   --font-size-xs: 0.75rem;
@@ -100,7 +103,7 @@
   /* Custom Shadows */
   --shadow-card: 0 6px 18px rgba(0, 0, 0, 0.08);
 
-  /* Font Display (Lora) */
+  /* Font Display */
   --font-display: 'Lora', Georgia, serif;
 }
 

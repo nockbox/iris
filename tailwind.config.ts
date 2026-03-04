@@ -5,8 +5,9 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        display: ['Lora', 'serif'],
-        sans: ['Inter', 'ui-sans-serif', 'system-ui', '-apple-system', 'Segoe UI', 'Roboto'],
+        display: ['Lora', 'Georgia', 'serif'],
+        sans: ['Raveo Display', 'ui-sans-serif', 'system-ui', '-apple-system', 'sans-serif'],
+        serif: ['Lora', 'Georgia', 'serif'],
       },
       colors: {
         // Figma palette - flattened for Tailwind v4
