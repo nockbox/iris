@@ -56,11 +56,12 @@ export interface BalanceResult {
  */
 export async function queryV1Balance(
   pkhBase58: string,
-  rpcClient: NockchainBrowserRPCClient,
+  rpcClient: NockchainBrowserRPCClient
 ): Promise<BalanceResult> {
   // PKH digests used by the wallet are base58 strings (~55 chars).
   // For this shape we should query by derived first-name, not address.
-  const isPkhDigestLike = typeof pkhBase58 === 'string' && pkhBase58.length >= 50 && pkhBase58.length <= 60;
+  const isPkhDigestLike =
+    typeof pkhBase58 === 'string' && pkhBase58.length >= 50 && pkhBase58.length <= 60;
 
   let simpleNotes: Note[] = [];
   let coinbaseNotes: Note[] = [];
@@ -77,7 +78,9 @@ export async function queryV1Balance(
 
   if (simpleResult.status === 'rejected' && coinbaseResult.status === 'rejected') {
     const simpleError =
-      simpleResult.reason instanceof Error ? simpleResult.reason.message : String(simpleResult.reason);
+      simpleResult.reason instanceof Error
+        ? simpleResult.reason.message
+        : String(simpleResult.reason);
     const coinbaseError =
       coinbaseResult.reason instanceof Error
         ? coinbaseResult.reason.message

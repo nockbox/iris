@@ -30,7 +30,10 @@ function createPkhRelativeTimelockCondition(senderPKH: string, blocks: bigint): 
   ];
 }
 
-function createPkhAbsoluteTimelockCondition(senderPKH: string, minHeight: bigint): SpendConditionLike {
+function createPkhAbsoluteTimelockCondition(
+  senderPKH: string,
+  minHeight: bigint
+): SpendConditionLike {
   return [
     { Pkh: { m: 1, hashes: [senderPKH] } },
     { Tim: { rel: { min: null, max: null }, abs: { min: Number(minHeight), max: null } } },

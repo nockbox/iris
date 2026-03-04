@@ -22,9 +22,7 @@ export function toRawTx(rawTx: unknown): wasm.RawTx {
   if (guard.isPbCom2RawTransaction(rawTx)) {
     return wasm.rawTxFromProtobuf(rawTx);
   }
-  throw new Error(
-    'Raw transaction must be native RawTx or protobuf PbCom2RawTransaction'
-  );
+  throw new Error('Raw transaction must be native RawTx or protobuf PbCom2RawTransaction');
 }
 
 /**

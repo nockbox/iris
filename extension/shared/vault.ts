@@ -1590,7 +1590,10 @@ export class Vault {
       const hex = v.length % 2 === 0 ? v : `0${v}`;
       return hex.match(/.{2}/g)?.reverse().join('') ?? '';
     };
-    const signatureJson = JSON.stringify({ c: toLegacyHex(signature.c), s: toLegacyHex(signature.s) });
+    const signatureJson = JSON.stringify({
+      c: toLegacyHex(signature.c),
+      s: toLegacyHex(signature.s),
+    });
 
     // Log whether the signature verifies (helps detect old SDK / old WASM API mismatch)
     try {
@@ -1600,7 +1603,9 @@ export class Vault {
         const valid = wasm.verifySignature(pubKeyBytes, signature, msgString);
         console.log('[vault] sign_message verification:', valid ? 'valid' : 'invalid');
       } else {
-        console.log('[vault] sign_message verification: skipped (pubKey not 97 bytes or verifySignature not available)');
+        console.log(
+          '[vault] sign_message verification: skipped (pubKey not 97 bytes or verifySignature not available)'
+        );
       }
     } catch (e) {
       console.warn('[vault] sign_message verification failed:', e);
@@ -2227,7 +2232,12 @@ export class Vault {
       const irisSpendConditions = spendConditions.map(sc => toSpendCondition(sc));
 
       // Reconstruct the transaction builder
-      const builder = wasm.TxBuilder.fromTx(irisRawTx, irisNotes, irisSpendConditions, txEngineSettings());
+      const builder = wasm.TxBuilder.fromTx(
+        irisRawTx,
+        irisNotes,
+        irisSpendConditions,
+        txEngineSettings()
+      );
 
       // Sign: WASM expects exactly 32 bytes (big-endian). Copy to a fresh Uint8Array so we don't pass a view into WASM memory.
       const pk = accountKey.privateKey;

@@ -1532,7 +1532,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         try {
-          const result = await vault.sendTransaction(sendTo, parsedSendAmount.value, parsedSendFee.value);
+          const result = await vault.sendTransaction(
+            sendTo,
+            parsedSendAmount.value,
+            parsedSendFee.value
+          );
 
           if ('error' in result) {
             sendResponse({ error: result.error });

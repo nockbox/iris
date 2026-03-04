@@ -169,17 +169,19 @@ export interface SignRawTxRequestNative {
 }
 
 /** Pending signRawTx request. Either all native or all protobuf. */
-export type SignRawTxRequest = (LegacySignRawTxRequest & {
-  id: string;
-  origin: string;
-  outputs?: any[];
-  timestamp: number;
-}) | (SignRawTxRequestNative & {
-  id: string;
-  origin: string;
-  outputs?: any[];
-  timestamp: number;
-});
+export type SignRawTxRequest =
+  | (LegacySignRawTxRequest & {
+      id: string;
+      origin: string;
+      outputs?: any[];
+      timestamp: number;
+    })
+  | (SignRawTxRequestNative & {
+      id: string;
+      origin: string;
+      outputs?: any[];
+      timestamp: number;
+    });
 
 /**
  * Nockchain note (UTXO) structure

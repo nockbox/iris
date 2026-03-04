@@ -123,8 +123,18 @@ export function SignRawTxScreen() {
           const spendV1 = (entry as [unknown, unknown])[1] as { spend?: { fee?: string } };
           feeValue = spendV1?.spend?.fee;
         } else {
-          const spend = (entry as { spend?: { spend_kind?: { Witness?: { fee?: { value?: string } }; Legacy?: { fee?: { value?: string } } } } }).spend;
-          feeValue = spend?.spend_kind?.Witness?.fee?.value ?? spend?.spend_kind?.Legacy?.fee?.value;
+          const spend = (
+            entry as {
+              spend?: {
+                spend_kind?: {
+                  Witness?: { fee?: { value?: string } };
+                  Legacy?: { fee?: { value?: string } };
+                };
+              };
+            }
+          ).spend;
+          feeValue =
+            spend?.spend_kind?.Witness?.fee?.value ?? spend?.spend_kind?.Legacy?.fee?.value;
         }
         const fee = feeValue ? parseInt(feeValue, 10) : 0;
         return sum + (isNaN(fee) ? 0 : fee);
