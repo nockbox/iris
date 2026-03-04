@@ -10,14 +10,14 @@ export default {
       },
       colors: {
         // Figma palette - flattened for Tailwind v4
-        'fn-bg': '#EBEBE9',
+        'fn-bg': '#EBEAE6',
         'fn-card': '#FFFFFF',
         'fn-ink': '#000000',
-        'fn-sub': '#707070',
+        'fn-sub': '#71706D',
         'fn-yellow': '#FFC413',
         'fn-green': '#369929',
         'fn-line': '#E0E0E0',
-        'fn-lineMuted': '#DADAD8',
+        'fn-lineMuted': '#DADAD6',
         'fn-overlay': 'rgba(0,0,0,0.6)',
         'fn-overlayLight': 'rgba(0,0,0,0.2)',
       },
