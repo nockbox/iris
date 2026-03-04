@@ -33,7 +33,7 @@ export function V0MigrationFundsScreen() {
   async function handleContinue() {
     if (!destinationWallet || isBuilding) return;
 
-    if (!v0MigrationDraft.v0NotesProtobuf?.length) {
+    if (!v0MigrationDraft.v0Notes?.length) {
       setBuildError('No v0 notes loaded. Go back and import your recovery phrase again.');
       return;
     }
@@ -42,7 +42,7 @@ export function V0MigrationFundsScreen() {
     setIsBuilding(true);
     try {
       const built = await buildV0MigrationTransactionFromNotes(
-        v0MigrationDraft.v0NotesProtobuf,
+        v0MigrationDraft.v0Notes,
         destinationWallet.address
       );
       console.log('[V0 Migration] transaction build', {

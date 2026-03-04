@@ -115,13 +115,16 @@ interface AppStore {
     destinationWalletIndex: number | null;
     keyfileName?: string;
     sourceAddress?: string;
-    v0NotesProtobuf?: any[];
+    v0Mnemonic?: string; // Kept in memory only until sign+broadcast
+    v0Notes?: any[];
     signRawTxPayload?: {
       rawTx: any;
       notes: any[];
       spendConditions: any[];
     };
     txId?: string;
+    v0TxConfirmed?: boolean;
+    v0TxSkipped?: boolean;
   };
   setV0MigrationDraft: (
     value: Partial<{
@@ -131,14 +134,16 @@ interface AppStore {
       destinationWalletIndex: number | null;
       keyfileName?: string;
       sourceAddress?: string;
-      sourcePkh?: string;
-      v0NotesProtobuf?: any[];
+      v0Mnemonic?: string;
+      v0Notes?: any[];
       signRawTxPayload?: {
         rawTx: any;
         notes: any[];
         spendConditions: any[];
       };
       txId?: string;
+      v0TxConfirmed?: boolean;
+      v0TxSkipped?: boolean;
     }>
   ) => void;
   resetV0MigrationDraft: () => void;
@@ -227,9 +232,11 @@ export const useStore = create<AppStore>((set, get) => ({
     keyfileName: undefined,
     sourceAddress: undefined,
     sourcePkh: undefined,
-    v0NotesProtobuf: undefined,
-    signRawTxPayload: undefined,
-    txId: undefined,
+    v0Notes: undefined,
+        signRawTxPayload: undefined,
+        txId: undefined,
+        v0TxConfirmed: undefined,
+        v0TxSkipped: undefined,
   },
   pendingConnectRequest: null,
   pendingSignRequest: null,
@@ -310,10 +317,13 @@ export const useStore = create<AppStore>((set, get) => ({
         destinationWalletIndex: null,
         keyfileName: undefined,
         sourceAddress: undefined,
-        v0NotesProtobuf: undefined,
+        v0Mnemonic: undefined,
+        v0Notes: undefined,
         signRawTxPayload: undefined,
         txId: undefined,
-      },
+        v0TxConfirmed: undefined,
+        v0TxSkipped: undefined,
+  },
     });
   },
 

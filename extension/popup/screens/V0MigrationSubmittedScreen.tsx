@@ -33,10 +33,18 @@ export function V0MigrationSubmittedScreen() {
           <h2 className="font-display text-[28px] leading-[34px] tracking-[-0.03em] mt-2">
             Your transaction
             <br />
-            was submitted
+            {v0MigrationDraft.v0TxSkipped
+              ? 'was signed (not broadcast)'
+              : v0MigrationDraft.v0TxConfirmed
+                ? 'was confirmed'
+                : 'was submitted'}
           </h2>
           <p className="text-[14px] leading-[20px]" style={{ color: 'var(--color-text-muted)' }}>
-            Check the transaction activity below
+            {v0MigrationDraft.v0TxSkipped
+              ? 'Debug mode: transaction was signed but not broadcast.'
+              : v0MigrationDraft.v0TxConfirmed
+                ? 'Your migration is complete.'
+                : 'Check the transaction activity below for confirmation.'}
           </p>
         </div>
 

@@ -118,13 +118,20 @@ export function V0MigrationSetupScreen() {
     try {
       const discovery = await queryV0BalanceFromMnemonic(words.join(' ').trim());
 
-      if (!discovery.v0NotesProtobuf.length) {
-        throw new Error('No v0 notes found for this recovery phrase.');
+      if (!discovery.v0Notes.length) {
+        const rawCount = discovery.rawNotesFromRpc ?? 0;
+        const msg =
+          rawCount > 0
+            ? `No v0 (Legacy) notes found. RPC returned ${rawCount} note(s) but none match Legacy format. Check DevTools console for details.`
+            : `No v0 notes found for this recovery phrase. Queried address: ${discovery.sourceAddress?.slice(0, 12)}... (see console for full address)`;
+        throw new Error(msg);
       }
 
+      const mnemonic = words.join(' ').trim();
       setV0MigrationDraft({
         sourceAddress: discovery.sourceAddress,
-        v0NotesProtobuf: discovery.v0NotesProtobuf,
+        v0Mnemonic: mnemonic,
+        v0Notes: discovery.v0Notes,
         v0BalanceNock: discovery.totalNock,
         migratedAmountNock: undefined,
         feeNock: 59,
@@ -135,7 +142,7 @@ export function V0MigrationSetupScreen() {
       console.log('[V0 Migration] derived query address', {
         sourceAddress: discovery.sourceAddress,
         totalNock: discovery.totalNock,
-        legacyNotesCount: discovery.v0NotesProtobuf.length,
+        legacyNotesCount: discovery.v0Notes.length,
       });
       setWords(Array(WORD_COUNT).fill(''));
       navigate('v0-migration-funds');
