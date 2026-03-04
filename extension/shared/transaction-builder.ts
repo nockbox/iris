@@ -7,6 +7,7 @@ import wasm from './sdk-wasm.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
 import { DEFAULT_FEE_PER_WORD } from './constants.js';
+import { txEngineSettings } from './tx-engine-settings.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
 
 type SpendConditionLike = wasm.SpendCondition;
@@ -45,14 +46,7 @@ function noteFromProtobuf(protoNote: any): any {
 }
 
 function createTxBuilder(feePerWord: number): wasm.TxBuilder {
-  const settings: wasm.TxEngineSettings = {
-    tx_engine_version: 1,
-    tx_engine_patch: 0,
-    min_fee: '0',
-    cost_per_word: String(feePerWord),
-    witness_word_div: 1,
-  };
-  return new wasm.TxBuilder(settings);
+  return new wasm.TxBuilder(txEngineSettings(feePerWord));
 }
 
 function getFeeFromBuilder(builder: wasm.TxBuilder): number {

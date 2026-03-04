@@ -16,7 +16,6 @@ import {
   ACCOUNT_COLORS,
   PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
-  DEFAULT_FEE_PER_WORD,
 } from './constants';
 import { Account } from './types';
 import { buildMultiNotePayment, type Note } from './transaction-builder';
@@ -41,16 +40,7 @@ import {
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
 import { toRawTx, toNote, toSpendCondition } from './sign-raw-tx-compat';
-
-function txEngineSettings(): wasm.TxEngineSettings {
-  return {
-    tx_engine_version: 1,
-    tx_engine_patch: 0,
-    min_fee: '0',
-    cost_per_word: String(DEFAULT_FEE_PER_WORD),
-    witness_word_div: 1,
-  };
-}
+import { txEngineSettings } from './tx-engine-settings.js';
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
   const rawTx = wasm.nockchainTxToRaw(tx) as wasm.RawTxV1;
