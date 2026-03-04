@@ -114,7 +114,6 @@ interface AppStore {
     destinationWalletIndex: number | null;
     keyfileName?: string;
     sourceAddress?: string;
-    sourcePkh?: string;
     v0NotesProtobuf?: any[];
     signRawTxPayload?: {
       rawTx: any;
@@ -292,7 +291,6 @@ export const useStore = create<AppStore>((set, get) => ({
         destinationWalletIndex: null,
         keyfileName: undefined,
         sourceAddress: undefined,
-        sourcePkh: undefined,
         v0NotesProtobuf: undefined,
         signRawTxPayload: undefined,
         txId: undefined,
