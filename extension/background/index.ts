@@ -279,27 +279,6 @@ function parseNicksParam(
   return { ok: true, value: Number(asBigInt) };
 }
 
-function normalizeSignRawTxParams(input: any): {
-  rawTx: any;
-  notes: any[];
-  spendConditions: any[];
-} {
-  const toProtobufIfNeeded = (value: any): any => {
-    if (value && typeof value.toProtobuf === 'function') {
-      return value.toProtobuf();
-    }
-    return value;
-  };
-
-  return {
-    rawTx: toProtobufIfNeeded(input.rawTx),
-    notes: Array.isArray(input.notes) ? input.notes.map(toProtobufIfNeeded) : [],
-    spendConditions: Array.isArray(input.spendConditions)
-      ? input.spendConditions.map(toProtobufIfNeeded)
-      : [],
-  };
-}
-
 /**
  * Pending approval requests
  * Maps request ID to the request data and response callback
@@ -682,26 +661,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        const normalizedRawTxParams = normalizeSignRawTxParams(rawTxParams);
         if (
-          !normalizedRawTxParams.rawTx ||
-          normalizedRawTxParams.notes.length === 0 ||
-          normalizedRawTxParams.spendConditions.length === 0
+          !rawTxParams.rawTx ||
+          !Array.isArray(rawTxParams.notes) ||
+          !Array.isArray(rawTxParams.spendConditions) ||
+          rawTxParams.notes.length === 0 ||
+          rawTxParams.spendConditions.length === 0
         ) {
           sendResponse({ error: { code: -32602, message: 'Invalid params' } });
           return;
         }
 
-        const outputs = await vault.computeOutputs(normalizedRawTxParams.rawTx);
+        const outputs = await vault.computeOutputs(rawTxParams.rawTx);
 
         // Create sign raw tx approval request
         const signRawTxId = crypto.randomUUID();
         const signRawTxRequest: SignRawTxRequest = {
           id: signRawTxId,
           origin: signRawTxOrigin,
-          rawTx: normalizedRawTxParams.rawTx,
-          notes: normalizedRawTxParams.notes,
-          spendConditions: normalizedRawTxParams.spendConditions,
+          rawTx: rawTxParams.rawTx,
+          notes: rawTxParams.notes,
+          spendConditions: rawTxParams.spendConditions,
           outputs: outputs,
           timestamp: Date.now(),
         };
