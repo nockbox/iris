@@ -5,6 +5,7 @@ import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
 import NockBlocksFrame from '../assets/NockBlocksFrame.svg';
 import NockScanFrame from '../assets/NockScanFrame.svg';
+import type { TxEngineActivationHeights } from '../../shared/rpc-config';
 import {
   defaultRpcConfig,
   getEffectiveRpcConfig,
@@ -14,6 +15,34 @@ import {
   NOCKSCAN_URL,
   NOCKBLOCKS_URL,
 } from '../../shared/rpc-config';
+
+function txEngineHeightsToJson(heights: TxEngineActivationHeights | undefined): string {
+  if (!heights || Object.keys(heights).length === 0) {
+    return '{\n  0: "tx-engine-1"\n}';
+  }
+  const entries = Object.entries(heights)
+    .sort(([a], [b]) => Number(a) - Number(b))
+    .map(([h, name]) => `  ${h}: "${name}"`);
+  return `{\n${entries.join(',\n')}\n}`;
+}
+
+function parseTxEngineHeightsJson(json: string): TxEngineActivationHeights | null {
+  try {
+    // Support both { 0: "x" } (invalid JSON) and { "0": "x" } (valid JSON)
+    const normalized = json.replace(/(\d+)\s*:/g, '"$1":');
+    const parsed = JSON.parse(normalized) as Record<string, string>;
+    const result: TxEngineActivationHeights = {};
+    for (const [k, v] of Object.entries(parsed)) {
+      const h = parseInt(k, 10);
+      if (!Number.isNaN(h) && typeof v === 'string' && v.trim()) {
+        result[h] = v.trim();
+      }
+    }
+    return Object.keys(result).length > 0 ? result : null;
+  } catch {
+    return null;
+  }
+}
 
 const BLOCK_EXPLORER_ICONS: Record<string, string> = {
   [NOCKSCAN_URL]: NockScanFrame,
@@ -25,9 +54,17 @@ export function RpcSettingsScreen() {
   const [networkName, setNetworkName] = useState(defaultRpcConfig.networkName);
   const [rpcUrl, setRpcUrl] = useState(defaultRpcConfig.rpcUrl);
   const [blockExplorerUrl, setBlockExplorerUrl] = useState(defaultRpcConfig.blockExplorerUrl);
+  const [txEngineConfig, setTxEngineConfig] = useState(
+    txEngineHeightsToJson(defaultRpcConfig.txEngineActivationHeights)
+  );
+  const [coinbaseTimelockBlocks, setCoinbaseTimelockBlocks] = useState(
+    String(defaultRpcConfig.coinbaseTimelockBlocks ?? 100)
+  );
   const [explorerOpen, setExplorerOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [txEngineError, setTxEngineError] = useState<string | null>(null);
   const explorerRef = useRef<HTMLDivElement>(null);
 
   useClickOutside(explorerRef, () => setExplorerOpen(false), explorerOpen);
@@ -42,6 +79,10 @@ export function RpcSettingsScreen() {
         ? config.blockExplorerUrl
         : defaultRpcConfig.blockExplorerUrl;
       setBlockExplorerUrl(explorerUrl);
+      setTxEngineConfig(txEngineHeightsToJson(config.txEngineActivationHeights));
+      setCoinbaseTimelockBlocks(
+        String(config.coinbaseTimelockBlocks ?? defaultRpcConfig.coinbaseTimelockBlocks ?? 100)
+      );
       setIsLoading(false);
     });
   }, []);
@@ -51,12 +92,27 @@ export function RpcSettingsScreen() {
   }
 
   async function handleSave() {
+    const parsed = parseTxEngineHeightsJson(txEngineConfig);
+    if (!parsed) {
+      setTxEngineError('Invalid format. Use: { 0: "tx-engine-0", 24000: "tx-engine-1" }');
+      return;
+    }
+    setTxEngineError(null);
+
+    const timelock = parseInt(coinbaseTimelockBlocks, 10);
+    if (Number.isNaN(timelock) || timelock < 0) {
+      setTxEngineError('Coinbase timelock must be a non-negative number');
+      return;
+    }
+
     setSaveStatus('saving');
     try {
       await saveRpcConfig({
         networkName,
         rpcUrl: rpcUrl.trim(),
         blockExplorerUrl,
+        txEngineActivationHeights: parsed,
+        coinbaseTimelockBlocks: timelock,
       });
       await refreshRpcDisplayConfig();
       setSaveStatus('saved');
@@ -70,6 +126,11 @@ export function RpcSettingsScreen() {
     setNetworkName(defaultRpcConfig.networkName);
     setRpcUrl(defaultRpcConfig.rpcUrl);
     setBlockExplorerUrl(defaultRpcConfig.blockExplorerUrl);
+    setTxEngineConfig(txEngineHeightsToJson(defaultRpcConfig.txEngineActivationHeights));
+    setCoinbaseTimelockBlocks(
+      String(defaultRpcConfig.coinbaseTimelockBlocks ?? 100)
+    );
+    setTxEngineError(null);
     await clearRpcConfig();
   }
 
@@ -237,6 +298,96 @@ export function RpcSettingsScreen() {
               </div>
             )}
           </div>
+        </div>
+
+        <div className="flex flex-col gap-2">
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen(open => !open)}
+            aria-expanded={advancedOpen}
+            className="flex items-center justify-between w-full h-10 px-3 rounded-lg transition-colors focus:outline-none focus-visible:ring-2 cursor-pointer"
+            style={{
+              border: '1px solid var(--color-surface-700)',
+              color: 'var(--color-text-muted)',
+              backgroundColor: advancedOpen ? 'var(--color-surface-900)' : 'transparent',
+            }}
+            onMouseEnter={e => {
+              e.currentTarget.style.backgroundColor = 'var(--color-surface-800)';
+              e.currentTarget.style.color = 'var(--color-text-primary)';
+            }}
+            onMouseLeave={e => {
+              e.currentTarget.style.backgroundColor = advancedOpen ? 'var(--color-surface-900)' : 'transparent';
+              e.currentTarget.style.color = 'var(--color-text-muted)';
+            }}
+          >
+            <span className="text-[13px] font-medium leading-[18px] tracking-[0.26px]">
+              Advanced
+            </span>
+            <span
+              className="shrink-0 transition-transform opacity-70"
+              style={{ transform: advancedOpen ? 'rotate(180deg)' : undefined }}
+            >
+              <ChevronDownIcon className="w-4 h-4" />
+            </span>
+          </button>
+          {advancedOpen && (
+            <div className="flex flex-col gap-4 pl-0">
+              <div className="flex flex-col gap-[6px]">
+                <label className={labelClass} style={labelStyle}>
+                  Transaction engine activation heights
+                </label>
+                <textarea
+                  className={inputClass + ' min-h-[100px] resize-y'}
+                  style={{
+                    ...inputStyle,
+                    ...(txEngineError ? { borderColor: 'var(--color-error, #ef4444)' } : {}),
+                  }}
+                  value={txEngineConfig}
+                  onChange={e => {
+                    setTxEngineConfig(e.target.value);
+                    setTxEngineError(null);
+                  }}
+                  placeholder={'{\n  0: "tx-engine-0",\n  24000: "tx-engine-1",\n  54000: "tx-engine-bythos"\n}'}
+                  onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
+                  onBlur={e =>
+                    (e.currentTarget.style.borderColor = txEngineError
+                      ? 'var(--color-error, #ef4444)'
+                      : 'var(--color-surface-700)')
+                  }
+                />
+                {txEngineError && (
+                  <span className="text-xs" style={{ color: 'var(--color-error, #ef4444)' }}>
+                    {txEngineError}
+                  </span>
+                )}
+                <span className="text-xs block" style={labelStyle}>
+                  Block height → tx engine name. At height H, use the engine for the largest key ≤ H.
+                </span>
+                <span className="text-xs block" style={labelStyle}>
+                  Engine: <code>tx-engine-N</code> (vN patch 0) or <code>tx-engine-N.M</code> (vN patch M). e.g. <code>tx-engine-2.1</code>, <code>tx-engine-bythos</code>.
+                </span>
+              </div>
+
+              <div className="flex flex-col gap-[6px]">
+                <label className={labelClass} style={labelStyle}>
+                  Coinbase timelock (blocks)
+                </label>
+                <input
+                  type="number"
+                  min={0}
+                  className={inputClass}
+                  style={inputStyle}
+                  value={coinbaseTimelockBlocks}
+                  onChange={e => setCoinbaseTimelockBlocks(e.target.value)}
+                  onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
+                  onBlur={e => (e.currentTarget.style.borderColor = 'var(--color-surface-700)')}
+                />
+                <span className="text-xs" style={labelStyle}>
+                  Maturity for coinbase notes (e.g. 100 for mainnet, different for testnet).
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 

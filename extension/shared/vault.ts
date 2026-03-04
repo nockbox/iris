@@ -16,6 +16,7 @@ import {
   ACCOUNT_COLORS,
   PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
+  DEFAULT_FEE_PER_WORD,
 } from './constants';
 import { Account } from './types';
 import { buildMultiNotePayment, type Note } from './transaction-builder';
@@ -46,7 +47,24 @@ import {
   assertNativeNote,
   assertNativeSpendCondition,
 } from './sign-raw-tx-compat';
-import { txEngineSettings } from './tx-engine-settings.js';
+import { getTxEngineSettingsForHeight } from './rpc-config';
+
+async function txEngineSettings(): Promise<wasm.TxEngineSettings> {
+  try {
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
+    const blockHeight = Number(await rpcClient.getCurrentBlockHeight());
+    return getTxEngineSettingsForHeight(blockHeight, DEFAULT_FEE_PER_WORD);
+  } catch {
+    return {
+      tx_engine_version: 1,
+      tx_engine_patch: 0,
+      min_fee: '0',
+      cost_per_word: String(DEFAULT_FEE_PER_WORD),
+      witness_word_div: 1,
+    };
+  }
+}
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
   const rawTx = wasm.nockchainTxToRaw(tx) as wasm.RawTxV1;
@@ -1677,7 +1695,10 @@ export class Vault {
     try {
       const endpoint = await getEffectiveRpcEndpoint();
       const rpcClient = createBrowserClient(endpoint);
-      const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
+      const [balanceResult, blockHeight] = await Promise.all([
+        queryV1Balance(currentAccount.address, rpcClient),
+        rpcClient.getCurrentBlockHeight(),
+      ]);
 
       if (balanceResult.utxoCount === 0) {
         throw new Error('No UTXOs available. Your wallet may have zero balance.');
@@ -1700,7 +1721,9 @@ export class Vault {
         amount,
         accountKey.publicKey,
         accountKey.privateKey,
-        fee
+        fee,
+        undefined,
+        Number(blockHeight)
       );
 
       // Return constructed transaction (for caller to broadcast)
@@ -1756,7 +1779,10 @@ export class Vault {
       try {
         const endpoint = await getEffectiveRpcEndpoint();
         const rpcClient = createBrowserClient(endpoint);
-        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
+        const [balanceResult, blockHeight] = await Promise.all([
+          queryV1Balance(currentAccount.address, rpcClient),
+          rpcClient.getCurrentBlockHeight(),
+        ]);
 
         if (balanceResult.utxoCount === 0) {
           return { error: 'No UTXOs available. Your wallet may have zero balance.' };
@@ -1781,7 +1807,9 @@ export class Vault {
           amount,
           accountKey.publicKey,
           accountKey.privateKey,
-          undefined // let WASM auto-calc
+          undefined, // let WASM auto-calc
+          undefined,
+          Number(blockHeight)
         );
 
         // Get the calculated fee from the builder
@@ -1873,6 +1901,10 @@ export class Vault {
           return { error: 'Balance too low to send. Need more than fee amount.' };
         }
 
+        const endpoint = await getEffectiveRpcEndpoint();
+        const rpcClient = createBrowserClient(endpoint);
+        const blockHeight = Number(await rpcClient.getCurrentBlockHeight());
+
         const constructedTx = await buildMultiNotePayment(
           txBuilderNotes,
           to,
@@ -1880,7 +1912,8 @@ export class Vault {
           accountKey.publicKey,
           accountKey.privateKey,
           undefined, // let WASM auto-calc fee
-          to // refundPKH = recipient (sweep mode)
+          to, // refundPKH = recipient (sweep mode)
+          blockHeight
         );
 
         const fee = constructedTx.feeUsed;
@@ -1958,7 +1991,10 @@ export class Vault {
       try {
         const endpoint = await getEffectiveRpcEndpoint();
         const rpcClient = createBrowserClient(endpoint);
-        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
+        const [balanceResult, blockHeight] = await Promise.all([
+          queryV1Balance(currentAccount.address, rpcClient),
+          rpcClient.getCurrentBlockHeight(),
+        ]);
 
         if (balanceResult.utxoCount === 0) {
           return { error: 'No UTXOs available. Your wallet may have zero balance.' };
@@ -1982,7 +2018,9 @@ export class Vault {
           amount,
           accountKey.publicKey,
           accountKey.privateKey,
-          fee
+          fee,
+          undefined,
+          Number(blockHeight)
         );
 
         // Convert to protobuf format for gRPC and broadcast
@@ -2130,6 +2168,7 @@ export class Vault {
 
           const endpoint = await getEffectiveRpcEndpoint();
           const rpcClient = createBrowserClient(endpoint);
+          const blockHeight = Number(await rpcClient.getCurrentBlockHeight());
 
           // For sendMax: set refundPKH = recipient so all funds go to recipient (sweep)
           const refundAddress = sendMax ? to : undefined;
@@ -2141,7 +2180,8 @@ export class Vault {
             accountKey.publicKey,
             accountKey.privateKey,
             fee,
-            refundAddress
+            refundAddress,
+            blockHeight
           );
 
           // 7. Broadcast transaction
@@ -2234,7 +2274,8 @@ export class Vault {
 
     try {
       // rawTx, notes, spendConditions are native (converted at RPC boundary)
-      const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, txEngineSettings());
+      const settings = await txEngineSettings();
+      const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, settings);
 
       // Sign: WASM expects exactly 32 bytes (big-endian). Copy to a fresh Uint8Array so we don't pass a view into WASM memory.
       const pk = accountKey.privateKey;

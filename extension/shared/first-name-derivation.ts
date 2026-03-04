@@ -9,11 +9,13 @@
 import wasm from './sdk-wasm.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
 import { createSimplePkhCondition, createPkhCoinbaseCondition } from './spend-conditions.js';
+import { getEffectiveRpcConfig } from './rpc-config.js';
 
 /** Derives first-name (base58) from a spend condition. */
 export function firstNameFromCondition(condition: wasm.SpendCondition): string {
   return wasm.spendConditionFirstName(condition);
 }
+
 
 /**
  * Derives the first-name for a simple PKH-locked note
@@ -75,7 +77,9 @@ export async function deriveCoinbaseFirstName(pkhBase58: string): Promise<string
     throw new Error('PKH must be a non-empty base58 string');
   }
 
-  const firstNameBase58 = firstNameFromCondition(createPkhCoinbaseCondition(pkhBase58));
+  const config = await getEffectiveRpcConfig();
+  const timelock = config.coinbaseTimelockBlocks ?? 100;
+  const firstNameBase58 = firstNameFromCondition(createPkhCoinbaseCondition(pkhBase58, timelock));
 
   // Verify it's the right length (40 bytes → ~55 chars base58)
   if (firstNameBase58.length < 50 || firstNameBase58.length > 60) {
