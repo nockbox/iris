@@ -40,6 +40,7 @@ import {
   matchChangeOutputs,
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
+import { toRawTx, toNote, toSpendCondition } from './sign-raw-tx-compat';
 
 function txEngineSettings(): wasm.TxEngineSettings {
   return {
@@ -49,112 +50,6 @@ function txEngineSettings(): wasm.TxEngineSettings {
     cost_per_word: String(DEFAULT_FEE_PER_WORD),
     witness_word_div: 1,
   };
-}
-
-function toRawTx(rawTx: any): wasm.RawTx {
-  // Prefer protobuf path so external builders (protobuf or .toProtobuf()) deserialize correctly.
-  // Casting plain objects with 'spends' as RawTx can fail at WASM boundary (untagged enum).
-  const asProtobuf =
-    rawTx && typeof rawTx.toProtobuf === 'function'
-      ? rawTx.toProtobuf()
-      : rawTx;
-  try {
-    return wasm.rawTxFromProtobuf(asProtobuf);
-  } catch {
-    if (rawTx && typeof rawTx === 'object' && 'spends' in rawTx) {
-      return rawTx as wasm.RawTx;
-    }
-    throw new Error(
-      'Raw transaction must be protobuf or have .toProtobuf(); data did not match any variant of RawTx'
-    );
-  }
-}
-
-function toNote(note: any): wasm.Note {
-  if (note && typeof note === 'object' && ('version' in note || 'inner' in note)) {
-    return note as wasm.Note;
-  }
-  if (note && typeof note.toProtobuf === 'function') {
-    return wasm.note_from_protobuf(note.toProtobuf());
-  }
-  return wasm.note_from_protobuf(note);
-}
-
-function parseHeight(value: { value: string } | null | undefined): number | null {
-  if (!value?.value) {
-    return null;
-  }
-  const parsed = Number(value.value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function protobufSpendConditionToNative(
-  protobufSpendCondition: wasm.PbCom2SpendCondition
-): wasm.SpendCondition {
-  return (protobufSpendCondition.primitives || []).map(primitive => {
-    const kind = primitive?.primitive;
-    if (!kind) {
-      throw new Error('Invalid protobuf spend condition primitive');
-    }
-
-    if ('Pkh' in kind) {
-      return {
-        Pkh: {
-          m: kind.Pkh.m,
-          hashes: kind.Pkh.hashes || [],
-        },
-      };
-    }
-
-    if ('Tim' in kind) {
-      return {
-        Tim: {
-          rel: {
-            min: parseHeight(kind.Tim.rel?.min),
-            max: parseHeight(kind.Tim.rel?.max),
-          },
-          abs: {
-            min: parseHeight(kind.Tim.abs?.min),
-            max: parseHeight(kind.Tim.abs?.max),
-          },
-        },
-      };
-    }
-
-    if ('Burn' in kind) {
-      return 'Brn';
-    }
-
-    if ('Hax' in kind) {
-      return {
-        Hax: (kind.Hax.hashes || []).map(hash => {
-          if (!hash) {
-            throw new Error('Invalid Hax hash in protobuf spend condition');
-          }
-          return wasm.digest_from_protobuf(hash);
-        }),
-      };
-    }
-
-    throw new Error('Unknown protobuf spend condition primitive type');
-  });
-}
-
-function toSpendCondition(spendCondition: any): wasm.SpendCondition {
-  if (Array.isArray(spendCondition) && (spendCondition.length === 0 || !('primitive' in spendCondition[0]))) {
-    return spendCondition as wasm.SpendCondition;
-  }
-  if (
-    spendCondition &&
-    typeof spendCondition === 'object' &&
-    Array.isArray((spendCondition as wasm.PbCom2SpendCondition).primitives)
-  ) {
-    return protobufSpendConditionToNative(spendCondition as wasm.PbCom2SpendCondition);
-  }
-  if (spendCondition && typeof spendCondition.toProtobuf === 'function') {
-    return toSpendCondition(spendCondition.toProtobuf());
-  }
-  throw new Error('Expected spend condition in new API shape (LockPrimitive[])');
 }
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
