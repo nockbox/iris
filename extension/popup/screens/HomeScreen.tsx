@@ -270,9 +270,9 @@ export function HomeScreen() {
     }
   };
 
-  // Filter to show outgoing and incoming transactions (exclude 'self' which is internal transfers)
+  // Only show outgoing transactions in history (we don't store incoming)
   const displayTransactions = walletTransactions.filter(
-    tx => tx.direction === 'outgoing' || tx.direction === 'incoming'
+    tx => tx.direction === 'outgoing'
   );
 
   // Group wallet transactions by date
