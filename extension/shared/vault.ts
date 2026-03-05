@@ -829,7 +829,11 @@ export class Vault {
    * Save/merge notes for an account
    * Automatically persists to encrypted storage
    */
-  async saveNotes(accountAddress: string, newNotes: StoredNote[], blockHeight: number): Promise<void> {
+  async saveNotes(
+    accountAddress: string,
+    newNotes: StoredNote[],
+    blockHeight: number
+  ): Promise<void> {
     if (!this.utxoStore[accountAddress]) {
       this.utxoStore[accountAddress] = { notes: [], version: 0, blockHeight: 0 };
     }
@@ -957,7 +961,11 @@ export class Vault {
    * Used for force resync operations
    * Automatically persists to encrypted storage
    */
-  async replaceAccountNotes(accountAddress: string, notes: StoredNote[], blockHeight: number): Promise<void> {
+  async replaceAccountNotes(
+    accountAddress: string,
+    notes: StoredNote[],
+    blockHeight: number
+  ): Promise<void> {
     if (!this.utxoStore[accountAddress]) {
       this.utxoStore[accountAddress] = { notes: [], version: 0, blockHeight: 0 };
     }
@@ -2310,9 +2318,7 @@ export class Vault {
 
     try {
       // Use block height from latest balance (max originPage of current account's notes)
-      const accountNotes = currentAccount
-        ? this.getAccountNotes(currentAccount.address)
-        : [];
+      const accountNotes = currentAccount ? this.getAccountNotes(currentAccount.address) : [];
       const blockHeight = currentAccount
         ? this.getAccountBlockHeight(currentAccount.address)
         : await rpcClient.getCurrentBlockHeight();

@@ -5,10 +5,7 @@ import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
 import NockBlocksFrame from '../assets/NockBlocksFrame.svg';
 import NockScanFrame from '../assets/NockScanFrame.svg';
-import type {
-  TxEngineActivationHeights,
-  TxEngineSettings,
-} from '../../shared/rpc-config';
+import type { TxEngineActivationHeights, TxEngineSettings } from '../../shared/rpc-config';
 import {
   defaultRpcConfig,
   getEffectiveRpcConfig,

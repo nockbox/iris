@@ -92,7 +92,10 @@ export async function queryV1Balance(
 
   simpleNotes = simpleResult.status === 'fulfilled' ? simpleResult.value.notes : [];
   coinbaseNotes = coinbaseResult.status === 'fulfilled' ? coinbaseResult.value.notes : [];
-  const blockHeight = simpleResult.status === 'fulfilled' ? simpleResult.value.height : (coinbaseResult as any).value.height;
+  const blockHeight =
+    simpleResult.status === 'fulfilled'
+      ? simpleResult.value.height
+      : (coinbaseResult as any).value.height;
 
   // Sum the total value in nicks
   const totalNicks = [...simpleNotes, ...coinbaseNotes].reduce(
@@ -109,7 +112,7 @@ export async function queryV1Balance(
     simpleNotes,
     coinbaseNotes,
     utxoCount: simpleNotes.length + coinbaseNotes.length,
-    blockHeight
+    blockHeight,
   };
 }
 

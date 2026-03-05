@@ -157,9 +157,7 @@ export async function clearRpcConfig(): Promise<void> {
  * Returns the settings for the largest activation height <= blockHeight.
  * Use directly with wasm.TxBuilder.
  */
-export async function getTxEngineSettingsForHeight(
-  blockHeight: number
-): Promise<TxEngineSettings> {
+export async function getTxEngineSettingsForHeight(blockHeight: number): Promise<TxEngineSettings> {
   const config = await getEffectiveRpcConfig();
   const heights =
     config.txEngineActivationHeights ??
