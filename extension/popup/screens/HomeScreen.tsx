@@ -15,7 +15,7 @@ import { ReceiveArrowIcon } from '../components/icons/ReceiveArrowIcon';
 import { SentArrowIcon } from '../components/icons/SentArrowIcon';
 import { ArrowUpRightIcon } from '../components/icons/ArrowUpRightIcon';
 
-import WalletDropdownArrow from '../assets/wallet-dropdown-arrow.svg';
+import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
 import LockIconAsset from '../assets/lock-icon.svg';
 import SettingsIconAsset from '../assets/settings-icon.svg';
 import TrendUpArrow from '../assets/trend-up-arrow.svg';
@@ -368,7 +368,7 @@ export function HomeScreen() {
                   style={{ color: 'var(--color-text-primary)' }}
                 >
                   {walletName}
-                  <img src={WalletDropdownArrow} alt="" className="h-3 w-3" />
+                  <ChevronDownIcon className="h-3 w-3 shrink-0" />
                 </div>
                 <div
                   className="font-sans text-[13px] leading-[18px] tracking-[0.26px] flex items-center gap-2"
@@ -750,7 +750,7 @@ export function HomeScreen() {
                     {group.items.map((t, i) => (
                       <button
                         key={i}
-                        className="w-full flex items-start gap-3 py-3 rounded-lg px-0 -mx-0 overflow-hidden"
+                        className="w-full flex items-center gap-3 py-3 rounded-lg px-0 -mx-0 overflow-hidden"
                         onClick={() => {
                           setSelectedTransaction(t.originalTx);
                           navigate('tx-details');

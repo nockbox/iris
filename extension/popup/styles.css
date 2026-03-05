@@ -1,11 +1,14 @@
 @import 'tailwindcss';
 
-/* Import custom fonts */
-@import '@fontsource/lora/400.css';
-@import '@fontsource/lora/500.css';
-@import '@fontsource/lora/600.css';
-@import '@fontsource/inter/400.css';
-@import '@fontsource/inter/500.css';
+/* Raveo Display - variable font from https://github.com/jakubfoglar/raveo */
+@font-face {
+  font-family: 'Raveo Display';
+  src: url('https://cdn.jsdelivr.net/gh/jakubfoglar/raveo@v1.1/fonts/variable/RaveoVF-subsetted.woff2')
+    format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
 
 @theme {
   /* ============================================================================
@@ -20,10 +23,10 @@
   --color-red-light: #412322;
 
   /* Dark Mode Greyscale (Default) */
-  --color-bg: #050505;
-  --color-surface-900: #151515;
-  --color-surface-800: #1f1f1f;
-  --color-surface-700: #252525;
+  --color-bg: #0f0f0e;
+  --color-surface-900: #181818;
+  --color-surface-800: #222222;
+  --color-surface-700: #272727;
   --color-text-primary: #ffffff;
   --color-text-secondary: #aaaaaa;
   --color-text-muted: #909090;
@@ -31,16 +34,16 @@
 
   /* Home Screen Specific */
   --color-home-accent: #191919;
-  --color-home-fill: #050505;
+  --color-home-fill: #0f0f0e;
   --color-tx-icon: #222222;
 
   /* Modals */
-  --color-modal-overlay: #05050533;
-  --color-popover: #05050566;
+  --color-modal-overlay: #0f0f0e33;
+  --color-popover: #0f0f0e66;
 
   /* Font Families */
   --font-serif: 'Lora', Georgia, serif;
-  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-sans: 'Raveo Display', system-ui, sans-serif;
 
   /* Font Sizes */
   --font-size-xs: 0.75rem;
@@ -77,18 +80,18 @@
   /* 2% */
 
   /* Shadows */
-  --shadow-xs: 0 0 4px 0 #05050514;
-  --shadow-md: 0 4px 12px 0 #0505051f;
+  --shadow-xs: 0 0 4px 0 #0f0f0e14;
+  --shadow-md: 0 4px 12px 0 #0f0f0e1f;
 
   /* Custom Figma Colors - Light Mode */
-  --color-fn-bg: #ebebe9;
+  --color-fn-bg: #ebeae6;
   --color-fn-card: #ffffff;
   --color-fn-ink: #000000;
-  --color-fn-sub: #707070;
+  --color-fn-sub: #71706d;
   --color-fn-yellow: #ffc413;
   --color-fn-green: #369929;
   --color-fn-line: #e0e0e0;
-  --color-fn-line-muted: #dadad8;
+  --color-fn-line-muted: #dadad6;
   --color-fn-overlay: rgba(0, 0, 0, 0.6);
   --color-fn-overlay-light: rgba(0, 0, 0, 0.2);
 
@@ -100,7 +103,7 @@
   /* Custom Shadows */
   --shadow-card: 0 6px 18px rgba(0, 0, 0, 0.08);
 
-  /* Font Display (Lora) */
+  /* Font Display */
   --font-display: 'Lora', Georgia, serif;
 }
 
@@ -113,12 +116,12 @@ html.light {
   /* Light Mode Greyscale */
   --color-bg: #ffffff;
   --color-surface-900: #f2f2f0;
-  --color-surface-800: #ebebe9;
-  --color-surface-700: #dadad8;
+  --color-surface-800: #ebeae6;
+  --color-surface-700: #dadad6;
   --color-text-primary: #000000;
-  --color-text-secondary: #aaaaaa;
-  --color-text-muted: #707070;
-  --color-divider: #ebebe9;
+  --color-text-secondary: #aaaaa6;
+  --color-text-muted: #71706d;
+  --color-divider: #ebeae6;
 
   /* Light Mode Specific Colors */
   --color-green: #369929;
@@ -127,7 +130,7 @@ html.light {
 
   /* Home Screen Light Mode */
   --color-home-accent: #ffffff;
-  --color-home-fill: #ebebe9;
+  --color-home-fill: #ebeae6;
   --color-tx-icon: #f2f2f0;
 
   /* Modals Light Mode */
