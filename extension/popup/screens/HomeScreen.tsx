@@ -750,7 +750,7 @@ export function HomeScreen() {
                     {group.items.map((t, i) => (
                       <button
                         key={i}
-                        className="w-full flex items-start gap-3 py-3 rounded-lg px-0 -mx-0 overflow-hidden"
+                        className="w-full flex items-center gap-3 py-3 rounded-lg px-0 -mx-0 overflow-hidden"
                         onClick={() => {
                           setSelectedTransaction(t.originalTx);
                           navigate('tx-details');

@@ -154,11 +154,11 @@ export function SendReviewScreen() {
             <div className="relative flex gap-2 items-stretch w-full">
               {/* Sender card */}
               <div
-                className="flex-1 min-w-0 flex flex-col gap-2.5 p-3 rounded-xl"
+                className="flex-1 min-w-0 self-stretch p-3 rounded-xl flex flex-col justify-center items-start gap-2.5"
                 style={{ backgroundColor: 'var(--color-surface-900)' }}
               >
                 <div
-                  className="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+                  className="w-10 h-10 relative rounded-[32px] flex items-center justify-center shrink-0 overflow-hidden"
                   style={{ backgroundColor: 'var(--color-bg)' }}
                 >
                   <AccountIcon
@@ -167,12 +167,15 @@ export function SendReviewScreen() {
                     className="w-6 h-6"
                   />
                 </div>
-                <div className="flex flex-col gap-0.5 min-w-0">
-                  <div className="text-sm font-medium leading-[18px] tracking-[0.14px] truncate">
+                <div className="self-stretch flex flex-col justify-center items-start gap-0.5 min-w-0">
+                  <div
+                    className="text-sm font-medium leading-4 tracking-tight truncate"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
                     {currentAccount?.name ?? 'Wallet'}
                   </div>
                   <div
-                    className="text-[13px] leading-[18px] tracking-[0.26px] truncate"
+                    className="text-xs font-normal leading-4 tracking-tight truncate"
                     style={{ color: 'var(--color-text-muted)' }}
                   >
                     {fromAddress}
@@ -182,43 +185,44 @@ export function SendReviewScreen() {
 
               {/* Circular middle element - "weird circle" from Figma */}
               <div
-                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-10 h-10 rounded-full flex items-center justify-center shrink-0 p-2"
+                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-14 h-14 rounded-full flex items-center justify-center shrink-0 p-2"
                 style={{
                   backgroundColor: 'var(--color-bg)',
                   border: '8px solid var(--color-surface-900)',
                   color: 'var(--color-text-primary)',
                 }}
               >
-                <ChevronRightIcon className="w-4 h-4 shrink-0" />
+                <ChevronRightIcon className="w-6 h-6 shrink-0" />
               </div>
 
               {/* Receiver card */}
               <div
-                className="flex-1 min-w-0 flex flex-col gap-2.5 p-3 rounded-xl items-end"
+                className="flex-1 min-w-0 self-stretch p-3 rounded-xl flex flex-col justify-center items-end gap-2.5"
                 style={{ backgroundColor: 'var(--color-surface-900)' }}
               >
-                <div className="w-10 h-10 rounded-full flex items-center justify-center shrink-0 overflow-hidden">
+                <div
+                  className="w-10 h-10 relative rounded-[32px] flex items-center justify-center shrink-0 overflow-hidden"
+                  style={{ backgroundColor: 'var(--color-bg)' }}
+                >
                   {recipientAccount ? (
-                    <div
-                      className="w-full h-full rounded-full flex items-center justify-center"
-                      style={{ backgroundColor: 'var(--color-bg)' }}
-                    >
-                      <AccountIcon
-                        styleId={recipientAccount.iconStyleId}
-                        color={recipientAccount.iconColor}
-                        className="w-6 h-6"
-                      />
-                    </div>
+                    <AccountIcon
+                      styleId={recipientAccount.iconStyleId}
+                      color={recipientAccount.iconColor}
+                      className="w-6 h-6"
+                    />
                   ) : (
-                    <img src={IrisLogoBlue} alt="" className="w-10 h-10" />
+                    <img src={IrisLogoBlue} alt="" className="w-6 h-6" />
                   )}
                 </div>
-                <div className="flex flex-col gap-0.5 items-end min-w-0">
-                  <div className="text-sm font-medium leading-[18px] tracking-[0.14px] truncate">
+                <div className="self-stretch flex flex-col justify-center items-end gap-0.5 min-w-0">
+                  <div
+                    className="text-sm font-medium leading-4 tracking-tight truncate"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
                     {recipientLabel}
                   </div>
                   <div
-                    className="text-[13px] leading-[18px] tracking-[0.26px] truncate"
+                    className="text-xs font-normal leading-4 tracking-tight truncate"
                     style={{ color: 'var(--color-text-muted)' }}
                   >
                     {toAddress}
