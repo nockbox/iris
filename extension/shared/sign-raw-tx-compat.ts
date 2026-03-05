@@ -1,54 +1,57 @@
 /**
- * Compatibility layer for signRawTx payloads from external dApps (e.g. NockSwap).
- *
- * Accepts protobuf or legacy formats from iris-wasm 0.1.x and converts to the
- * format expected by the extension's WASM (iris-wasm 0.2.x).
- *
- * @deprecated When all dApps migrate to iris-wasm 0.2.x, this module can be
- * removed. The extension will then expect canonical protobuf only.
+ * Protobuf ↔ native conversion for signRawTx at the RPC boundary.
+ * dApps send protobuf; we convert to native in the background, use native in the vault.
  */
 
-import * as guard from '@nockbox/iris-wasm/iris_wasm.guard';
+import * as guard from '@nockbox/iris-sdk/iris_wasm.guard';
 import wasm from './sdk-wasm.js';
 
-/**
- * Convert rawTx from protobuf or legacy format to wasm.RawTx.
- * Remove when all dApps use iris-wasm 0.2.x
- */
+/** Convert protobuf rawTx to native. Used at RPC boundary only. */
 export function toRawTx(rawTx: unknown): wasm.RawTx {
-  if (guard.isRawTx(rawTx)) {
-    return rawTx;
+  if (!guard.isPbCom2RawTransaction(rawTx)) {
+    throw new Error('Raw transaction must be protobuf PbCom2RawTransaction');
   }
-  if (guard.isPbCom2RawTransaction(rawTx)) {
-    return wasm.rawTxFromProtobuf(rawTx);
-  }
-  throw new Error('Raw transaction must be native RawTx or protobuf PbCom2RawTransaction');
+  return wasm.rawTxFromProtobuf(rawTx);
 }
 
-/**
- * Convert note from protobuf or legacy format to wasm.Note.
- * Remove when all dApps use iris-wasm 0.2.x
- */
+/** Convert protobuf note to native. Used at RPC boundary only. */
 export function toNote(note: unknown): wasm.Note {
-  if (guard.isNote(note)) {
-    return note;
+  if (!guard.isPbCom2Note(note)) {
+    throw new Error('Note must be protobuf PbCom2Note');
   }
-  if (guard.isPbCom2Note(note)) {
-    return wasm.note_from_protobuf(note);
-  }
-  throw new Error('Note must be native Note or protobuf PbCom2Note');
+  return wasm.note_from_protobuf(note);
 }
 
-/**
- * Convert spendCondition from protobuf or legacy format to wasm.SpendCondition.
- * Remove when all dApps use iris-wasm 0.2.x
- */
+/** Convert protobuf spendCondition to native. Used at RPC boundary only. */
 export function toSpendCondition(spendCondition: unknown): wasm.SpendCondition {
-  if (guard.isSpendCondition(spendCondition)) {
-    return spendCondition;
+  if (!guard.isPbCom2SpendCondition(spendCondition)) {
+    throw new Error('Spend condition must be protobuf PbCom2SpendCondition');
   }
-  if (guard.isPbCom2SpendCondition(spendCondition)) {
-    return wasm.spendConditionFromProtobuf(spendCondition);
+  return wasm.spendConditionFromProtobuf(spendCondition);
+}
+
+/** Convert native note to protobuf for popup display. */
+export function noteToProtobuf(note: wasm.Note): unknown {
+  return wasm.note_to_protobuf(note);
+}
+
+/** Assert value is native RawTx; throw if not. Use after boundary conversion. */
+export function assertNativeRawTx(rawTx: unknown): asserts rawTx is wasm.RawTx {
+  if (!guard.isRawTx(rawTx)) {
+    throw new Error('Expected native RawTx');
   }
-  throw new Error('Spend condition must be native SpendCondition or protobuf PbCom2SpendCondition');
+}
+
+/** Assert value is native Note; throw if not. */
+export function assertNativeNote(note: unknown): asserts note is wasm.Note {
+  if (!guard.isNote(note)) {
+    throw new Error('Expected native Note');
+  }
+}
+
+/** Assert value is native SpendCondition; throw if not. */
+export function assertNativeSpendCondition(sc: unknown): asserts sc is wasm.SpendCondition {
+  if (!guard.isSpendCondition(sc)) {
+    throw new Error('Expected native SpendCondition');
+  }
 }

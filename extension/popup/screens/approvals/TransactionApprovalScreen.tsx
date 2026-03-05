@@ -22,7 +22,9 @@ export function TransactionApprovalScreen() {
 
   const { id, origin, to, amount } = pendingTransactionRequest;
   const fee = DEFAULT_TRANSACTION_FEE;
-  const total = amount + fee;
+  const amountNum = Number(amount);
+  const feeNum = Number(fee);
+  const totalNum = amountNum + feeNum;
   const displayOrigin = origin.includes('://') ? new URL(origin).hostname : origin;
 
   useAutoRejectOnClose(id, INTERNAL_METHODS.REJECT_TRANSACTION);
@@ -81,10 +83,11 @@ export function TransactionApprovalScreen() {
             {/* Amount */}
             <div className="text-center mb-4">
               <div className="font-[Lora] text-[32px] font-semibold leading-none">
-                {formatNock(amount / NOCK_TO_NICKS)} <span style={{ color: textMuted }}>NOCK</span>
+                {formatNock(amountNum / NOCK_TO_NICKS)}{' '}
+                <span style={{ color: textMuted }}>NOCK</span>
               </div>
               <div className="text-[10px] mt-1" style={{ color: textMuted }}>
-                {formatNick(amount)} nicks
+                {formatNick(amountNum)} nicks
               </div>
             </div>
 
@@ -123,9 +126,9 @@ export function TransactionApprovalScreen() {
                 <div className="flex justify-between text-sm">
                   <span>Network fee</span>
                   <div className="text-right">
-                    <div>{formatNock(fee / NOCK_TO_NICKS)} NOCK</div>
+                    <div>{formatNock(feeNum / NOCK_TO_NICKS)} NOCK</div>
                     <div className="text-[10px]" style={{ color: textMuted }}>
-                      {formatNick(fee)} nicks
+                      {formatNick(feeNum)} nicks
                     </div>
                   </div>
                 </div>
@@ -133,9 +136,9 @@ export function TransactionApprovalScreen() {
                 <div className="flex justify-between text-sm font-semibold">
                   <span>Total</span>
                   <div className="text-right">
-                    <div>{formatNock(total / NOCK_TO_NICKS)} NOCK</div>
+                    <div>{formatNock(totalNum / NOCK_TO_NICKS)} NOCK</div>
                     <div className="text-[10px] font-normal" style={{ color: textMuted }}>
-                      {formatNick(total)} nicks
+                      {formatNick(totalNum)} nicks
                     </div>
                   </div>
                 </div>
@@ -143,7 +146,7 @@ export function TransactionApprovalScreen() {
 
               {/* Balance After */}
               <div className="text-center text-xs py-2" style={{ color: textMuted }}>
-                Balance after: {formatNock(wallet.balance - total / NOCK_TO_NICKS)} NOCK
+                Balance after: {formatNock(wallet.balance - totalNum / NOCK_TO_NICKS)} NOCK
               </div>
             </div>
           </div>

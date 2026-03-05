@@ -106,43 +106,23 @@ export function SignRawTxScreen() {
     window.close();
   }
 
-  // Calculate network fee. Logic based on iris-sdk/vendor/iris-wasm/iris_wasm.d.ts:
-  // - Native: SpendsV1 = ZMap<Name, SpendV1> = [Name, SpendV1][]. SpendV1 = { version, spend } where spend has fee: Nicks (string).
-  //   Path: entry[1].spend.fee
-  // - Protobuf: PbCom2SpendEntry[] with spend.spend_kind.{Witness|Legacy}.fee (PbCom1Nicks = { value: string }).
-  //   Path: spend.spend_kind.Witness.fee.value | spend.spend_kind.Legacy.fee.value
-  //  Double check this
+  // Network fee from native rawTx. RawTxV1: SpendsV1 = [Name, SpendV1][], SpendV1.spend.fee (string).
   let totalFeeNicks = 0;
   try {
-    const spends = rawTx && 'spends' in rawTx ? (rawTx as { spends: unknown[] }).spends : undefined;
+    const spends =
+      rawTx && typeof rawTx === 'object' && 'spends' in rawTx
+        ? (rawTx as { spends: unknown[] }).spends
+        : undefined;
     if (spends && Array.isArray(spends) && spends.length > 0) {
-      const isNative = Array.isArray(spends[0]) && spends[0].length === 2; // the right check?
       totalFeeNicks = spends.reduce((sum: number, entry: unknown) => {
-        let feeValue: string | undefined;
-        if (isNative) {
-          const spendV1 = (entry as [unknown, unknown])[1] as { spend?: { fee?: string } };
-          feeValue = spendV1?.spend?.fee;
-        } else {
-          const spend = (
-            entry as {
-              spend?: {
-                spend_kind?: {
-                  Witness?: { fee?: { value?: string } };
-                  Legacy?: { fee?: { value?: string } };
-                };
-              };
-            }
-          ).spend;
-          feeValue =
-            spend?.spend_kind?.Witness?.fee?.value ?? spend?.spend_kind?.Legacy?.fee?.value;
-        }
+        const spendV1 = (entry as [unknown, unknown])[1] as { spend?: { fee?: string } };
+        const feeValue = spendV1?.spend?.fee;
         const fee = feeValue ? parseInt(feeValue, 10) : 0;
         return sum + (isNaN(fee) ? 0 : fee);
       }, 0);
     }
   } catch (err) {
     console.error('Error calculating fee:', err);
-    // Default to 0 if error
   }
 
   const totalFeeNocks = nickToNock(totalFeeNicks);
