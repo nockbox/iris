@@ -117,12 +117,14 @@ export function TransactionDetailsScreen() {
     selectedTransaction.direction === 'outgoing'
       ? currentAccount
       : wallet.accounts?.find(
-          acc => counterpartyAddress && acc.address.toLowerCase() === counterpartyAddress.toLowerCase()
+          acc =>
+            counterpartyAddress && acc.address.toLowerCase() === counterpartyAddress.toLowerCase()
         );
   const receiverAccount =
     selectedTransaction.direction === 'outgoing'
       ? wallet.accounts?.find(
-          acc => counterpartyAddress && acc.address.toLowerCase() === counterpartyAddress.toLowerCase()
+          acc =>
+            counterpartyAddress && acc.address.toLowerCase() === counterpartyAddress.toLowerCase()
         )
       : currentAccount;
 

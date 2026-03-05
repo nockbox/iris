@@ -23,7 +23,7 @@
   --color-red-light: #412322;
 
   /* Dark Mode Greyscale (Default) */
-  --color-bg: #0F0F0E;
+  --color-bg: #0f0f0e;
   --color-surface-900: #181818;
   --color-surface-800: #222222;
   --color-surface-700: #272727;
@@ -34,12 +34,12 @@
 
   /* Home Screen Specific */
   --color-home-accent: #191919;
-  --color-home-fill: #0F0F0E;
+  --color-home-fill: #0f0f0e;
   --color-tx-icon: #222222;
 
   /* Modals */
-  --color-modal-overlay: #0F0F0E33;
-  --color-popover: #0F0F0E66;
+  --color-modal-overlay: #0f0f0e33;
+  --color-popover: #0f0f0e66;
 
   /* Font Families */
   --font-serif: 'Lora', Georgia, serif;
@@ -80,11 +80,11 @@
   /* 2% */
 
   /* Shadows */
-  --shadow-xs: 0 0 4px 0 #0F0F0E14;
-  --shadow-md: 0 4px 12px 0 #0F0F0E1f;
+  --shadow-xs: 0 0 4px 0 #0f0f0e14;
+  --shadow-md: 0 4px 12px 0 #0f0f0e1f;
 
   /* Custom Figma Colors - Light Mode */
-  --color-fn-bg: #ebeaE6;
+  --color-fn-bg: #ebeae6;
   --color-fn-card: #ffffff;
   --color-fn-ink: #000000;
   --color-fn-sub: #71706d;
@@ -116,12 +116,12 @@ html.light {
   /* Light Mode Greyscale */
   --color-bg: #ffffff;
   --color-surface-900: #f2f2f0;
-  --color-surface-800: #ebeaE6;
+  --color-surface-800: #ebeae6;
   --color-surface-700: #dadad6;
   --color-text-primary: #000000;
   --color-text-secondary: #aaaaa6;
   --color-text-muted: #71706d;
-  --color-divider: #ebeaE6;
+  --color-divider: #ebeae6;
 
   /* Light Mode Specific Colors */
   --color-green: #369929;
@@ -130,7 +130,7 @@ html.light {
 
   /* Home Screen Light Mode */
   --color-home-accent: #ffffff;
-  --color-home-fill: #ebeaE6;
+  --color-home-fill: #ebeae6;
   --color-tx-icon: #f2f2f0;
 
   /* Modals Light Mode */
