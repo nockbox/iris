@@ -48,7 +48,7 @@ import {
 import { txEngineSettings } from './tx-engine-settings.js';
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
-  const rawTx = wasm.nockchainTxToRaw(tx) as wasm.RawTxV1;
+  const rawTx = wasm.nockchainTxToRawTx(tx);
   return wasm.rawTxToProtobuf(rawTx);
 }
 
@@ -1673,6 +1673,8 @@ export class Vault {
       throw new Error('Cannot sign: keys unavailable');
     }
 
+    const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
+
     try {
       // Create RPC client
       const rpcClient = createBrowserClient();
@@ -1698,13 +1700,14 @@ export class Vault {
         to,
         amount,
         accountKey.publicKey,
-        accountKey.privateKey,
+        privateKey,
         fee
       );
 
       // Return constructed transaction (for caller to broadcast)
       return constructedTx.txId;
     } finally {
+      privateKey.free();
       // Clean up WASM memory (don't double-free master key)
       if (currentAccount.derivation !== 'master') {
         accountKey.free();
@@ -1752,6 +1755,8 @@ export class Vault {
         return { error: 'Cannot estimate fee: keys unavailable' };
       }
 
+      const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
+
       try {
         const rpcClient = createBrowserClient();
         const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
@@ -1778,13 +1783,14 @@ export class Vault {
           to,
           amount,
           accountKey.publicKey,
-          accountKey.privateKey,
+          privateKey,
           undefined // let WASM auto-calc
         );
 
         // Get the calculated fee from the builder
         return { fee: constructedTx.feeUsed };
       } finally {
+        privateKey.free();
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
         }
@@ -1843,6 +1849,8 @@ export class Vault {
         return { error: 'Cannot estimate max: keys unavailable' };
       }
 
+      const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
+
       try {
         // Get available (not in-flight) notes from in-memory UTXO store
         const notes = this.getAvailableNotes(currentAccount.address);
@@ -1876,7 +1884,7 @@ export class Vault {
           to,
           String(estimationAmount),
           accountKey.publicKey,
-          accountKey.privateKey,
+          privateKey,
           undefined, // let WASM auto-calc fee
           to // refundPKH = recipient (sweep mode)
         );
@@ -1895,6 +1903,7 @@ export class Vault {
           utxoCount: notes.length,
         };
       } finally {
+        privateKey.free();
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
         }
@@ -1953,6 +1962,8 @@ export class Vault {
         return { error: 'Keys unavailable' };
       }
 
+      const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
+
       try {
         // Create RPC client
         const rpcClient = createBrowserClient();
@@ -1979,7 +1990,7 @@ export class Vault {
           to,
           amount,
           accountKey.publicKey,
-          accountKey.privateKey,
+          privateKey,
           fee
         );
 
@@ -1993,6 +2004,7 @@ export class Vault {
           protobufTx, // Include protobuf for debugging/export
         };
       } finally {
+        privateKey.free();
         // Clean up WASM memory
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
@@ -2062,6 +2074,8 @@ export class Vault {
           masterKey.free();
           return { error: 'Keys unavailable' };
         }
+
+        const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
 
         try {
           // 1. Get available notes from in-memory UTXO store (for state tracking)
@@ -2136,7 +2150,7 @@ export class Vault {
             to,
             amount,
             accountKey.publicKey,
-            accountKey.privateKey,
+            privateKey,
             fee,
             refundAddress
           );
@@ -2161,6 +2175,7 @@ export class Vault {
             broadcasted: true,
           };
         } finally {
+          privateKey.free();
           // Clean up WASM memory
           if (currentAccount.derivation !== 'master') {
             accountKey.free();
@@ -2229,17 +2244,13 @@ export class Vault {
       throw new Error('Cannot sign: no private key available');
     }
 
+    const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
+
     try {
       // rawTx, notes, spendConditions are native (converted at RPC boundary)
       const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, txEngineSettings());
 
-      // Sign: WASM expects exactly 32 bytes (big-endian). Copy to a fresh Uint8Array so we don't pass a view into WASM memory.
-      const pk = accountKey.privateKey;
-      if (!pk || pk.byteLength !== 32) {
-        throw new Error('Signing requires a 32-byte private key');
-      }
-      const signingKeyBytes = new Uint8Array(pk.slice(0, 32));
-      builder.sign(signingKeyBytes);
+      builder.sign(privateKey);
 
       // Validate before build (surfaces missing unlocks, fee, balanced spends)
       builder.validate();
@@ -2252,6 +2263,8 @@ export class Vault {
 
       return protobuf;
     } finally {
+      privateKey.free();
+
       if (currentAccount?.derivation !== 'master') {
         accountKey.free();
       }
@@ -2270,7 +2283,7 @@ export class Vault {
     try {
       assertNativeRawTx(rawTx);
       const outputs = wasm.rawTxOutputs(rawTx);
-      return outputs.map(output => wasm.note_to_protobuf(output));
+      return outputs.map(output => wasm.noteToProtobuf(output));
     } catch (err) {
       console.error('Failed to compute outputs:', err);
       throw err;
