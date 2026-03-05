@@ -35,6 +35,7 @@ import {
 import {
   computeUTXODiff,
   classifyNewUTXO,
+  findFailedTransactions,
   findExpiredTransactions,
   areTransactionInputsSpent,
   matchChangeOutputs,
@@ -431,7 +432,8 @@ export class Vault {
           const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
           utxoStore = accountData.utxoStore || {};
           for (const key in utxoStore) {
-            if (utxoStore[key].blockHeight === undefined) {
+            // 0, null, undefined
+            if (utxoStore[key].blockHeight == null) {
               console.log('[Vault] Clearing old UTXO store with no blockHeight');
               delete utxoStore[key];
             }
@@ -1198,8 +1200,9 @@ export class Vault {
         tx => !areTransactionInputsSpent(tx, diff.nowSpent)
       );
 
+      const currentNotes = this.getAccountNotes(accountAddress);
+
       if (stillPendingTxs.length > 0) {
-        const currentNotes = this.getAccountNotes(accountAddress);
         const spentNoteIds = new Set(
           currentNotes.filter(n => n.state === 'spent').map(n => n.noteId)
         );
@@ -1232,7 +1235,20 @@ export class Vault {
         });
       }
 
-      // 7. Cleanup old spent notes to prevent storage bloat
+      // 7. Handle failed transactions
+      const failedTxs = findFailedTransactions(allTxs, currentNotes);
+
+      for (const failedTx of failedTxs) {
+        if (failedTx.inputNoteIds && failedTx.inputNoteIds.length > 0) {
+          await this.releaseInFlightNotes(accountAddress, failedTx.inputNoteIds);
+        }
+
+        await this.updateWalletTransaction(accountAddress, failedTx.id, {
+          status: 'failed',
+        });
+      }
+
+      // 8. Cleanup old spent notes to prevent storage bloat
       await this.removeSpentNotes(accountAddress);
 
       const confirmedFromNewSpent = pendingTxs.filter(tx =>

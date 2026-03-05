@@ -144,6 +144,46 @@ export function findExpiredNotes(notes: StoredNote[], maxAgeMs: number): StoredN
 }
 
 /**
+ * Find transactions that should be marked as failed
+ *
+ * @param transactions - Wallet transactions to check
+ * @param notes - Current note state, to expire transactions where inputs are lost
+ * @returns Transactions that have exceeded the timeout
+ */
+export function findFailedTransactions(
+  transactions: WalletTransaction[],
+  notes: StoredNote[]
+): WalletTransaction[] {
+  const localMap = new Map<string, StoredNote>();
+  for (const note of notes) {
+    localMap.set(note.noteId, note);
+  }
+
+  const now = Date.now();
+  return transactions.filter(tx => {
+    // Only check pending states
+    if (
+      tx.status !== 'created' &&
+      tx.status !== 'broadcast_pending' &&
+      tx.status !== 'broadcasted_unconfirmed'
+    ) {
+      return false;
+    }
+    for (const i in tx.inputNoteIds) {
+      const id = tx.inputNoteIds[Number(i)];
+      const note = localMap.get(id);
+      if (!note) {
+        return true;
+      }
+      if (note.state !== 'in_flight') {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+/**
  * Find transactions that should be marked as expired
  *
  * @param transactions - Wallet transactions to check
