@@ -4,45 +4,21 @@
  */
 
 import wasm from './sdk-wasm.js';
+import type { Nicks } from './currency.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
 import { DEFAULT_FEE_PER_WORD } from './constants.js';
 import { txEngineSettings } from './tx-engine-settings.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
+import {
+  createSimplePkhCondition,
+  createPkhCoinbaseCondition,
+  createPkhRelativeTimelockCondition,
+  createPkhAbsoluteTimelockCondition,
+} from './spend-conditions.js';
+import { firstNameFromCondition } from './first-name-derivation.js';
 
 type SpendConditionLike = wasm.SpendCondition;
-
-function createPkhOnlyCondition(senderPKH: string): SpendConditionLike {
-  return [{ Pkh: { m: 1, hashes: [senderPKH] } }];
-}
-
-function createPkhCoinbaseCondition(senderPKH: string): SpendConditionLike {
-  return [
-    { Pkh: { m: 1, hashes: [senderPKH] } },
-    { Tim: { rel: { min: 100, max: null }, abs: { min: null, max: null } } },
-  ];
-}
-
-function createPkhRelativeTimelockCondition(senderPKH: string, blocks: bigint): SpendConditionLike {
-  return [
-    { Pkh: { m: 1, hashes: [senderPKH] } },
-    { Tim: { rel: { min: Number(blocks), max: null }, abs: { min: null, max: null } } },
-  ];
-}
-
-function createPkhAbsoluteTimelockCondition(
-  senderPKH: string,
-  minHeight: bigint
-): SpendConditionLike {
-  return [
-    { Pkh: { m: 1, hashes: [senderPKH] } },
-    { Tim: { rel: { min: null, max: null }, abs: { min: Number(minHeight), max: null } } },
-  ];
-}
-
-function deriveFirstName(condition: SpendConditionLike): string {
-  return wasm.spendConditionFirstName(condition);
-}
 
 function noteFromProtobuf(protoNote: any): any {
   return wasm.note_from_protobuf(protoNote);
@@ -86,7 +62,7 @@ export async function discoverSpendConditionForNote(
 
   // 1) PKH only (standard simple note)
   try {
-    const condition = createPkhOnlyCondition(senderPKH);
+    const condition = createSimplePkhCondition(senderPKH);
     candidates.push({ name: 'PKH-only', condition });
   } catch (e) {
     console.warn('[TxBuilder] Failed to create PKH-only condition:', e);
@@ -119,7 +95,7 @@ export async function discoverSpendConditionForNote(
 
   // Find the candidate whose first-name matches note.nameFirst
   for (const candidate of candidates) {
-    const derivedFirstName = deriveFirstName(candidate.condition);
+    const derivedFirstName = firstNameFromCondition(candidate.condition);
     if (derivedFirstName === note.nameFirst) {
       return candidate.condition as wasm.SpendCondition;
     }
@@ -153,10 +129,10 @@ export interface TransactionParams {
   spendCondition: wasm.SpendCondition | wasm.SpendCondition[];
   /** Recipient's PKH as digest string */
   recipientPKH: string;
-  /** Amount to send in nicks */
-  amount: number;
-  /** Transaction fee override in nicks */
-  fee?: number;
+  /** Amount to send in nicks (WASM Nicks = string) */
+  amount: Nicks;
+  /** Transaction fee override in nicks (WASM Nicks = string) */
+  fee?: Nicks;
   /** Your PKH for receiving change (as digest string) */
   refundPKH: string;
   /** Private key for signing (32 bytes) */
@@ -210,10 +186,12 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
 
   // Calculate total available from notes
   const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
+  const amountNum = Number(amount);
+  const feeNum = fee !== undefined ? Number(fee) : 0;
 
-  if (totalAvailable < amount + (fee || 0)) {
+  if (totalAvailable < amountNum + feeNum) {
     throw new Error(
-      `Insufficient funds: have ${totalAvailable} nicks, need ${amount + (fee || 0)} (${amount} amount + ${fee} fee)`
+      `Insufficient funds: have ${totalAvailable} nicks, need ${amountNum + feeNum} (${amount} amount + ${fee ?? '0'} fee)`
     );
   }
 
@@ -250,8 +228,8 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     wasmNotes,
     spendConditions,
     recipientPKH,
-    String(amount),
-    fee !== undefined ? String(fee) : null,
+    amount,
+    fee ?? null,
     refundPKH,
     includeLockData
   );
@@ -291,15 +269,15 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
 export async function buildPayment(
   note: Note,
   recipientPKH: string,
-  amount: number,
+  amount: Nicks,
   senderPublicKey: Uint8Array,
   privateKey: Uint8Array,
-  fee?: number
+  fee?: Nicks
 ): Promise<ConstructedTransaction> {
   // Initialize WASM
   await ensureWasmInitialized();
 
-  const totalNeeded = amount + (fee || 0);
+  const totalNeeded = Number(amount) + Number(fee || '0');
 
   if (note.assets < totalNeeded) {
     throw new Error(`Insufficient funds in note: have ${note.assets} nicks, need ${totalNeeded}`);
@@ -316,7 +294,7 @@ export async function buildPayment(
   });
 
   // Sanity check: verify the derived first-name matches
-  const derivedFirstName = deriveFirstName(spendCondition);
+  const derivedFirstName = firstNameFromCondition(spendCondition);
   if (derivedFirstName !== note.nameFirst) {
     throw new Error(
       `First-name mismatch! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
@@ -356,10 +334,10 @@ export async function buildPayment(
 export async function buildMultiNotePayment(
   notes: Note[],
   recipientPKH: string,
-  amount: number,
+  amount: Nicks,
   senderPublicKey: Uint8Array,
   privateKey: Uint8Array,
-  fee?: number,
+  fee?: Nicks,
   refundPKH?: string
 ): Promise<ConstructedTransaction> {
   // Initialize WASM
@@ -371,7 +349,7 @@ export async function buildMultiNotePayment(
 
   // Calculate total available from all notes
   const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
-  const totalNeeded = amount + (fee || 0);
+  const totalNeeded = Number(amount) + Number(fee || '0');
 
   if (totalAvailable < totalNeeded) {
     throw new Error(
@@ -394,7 +372,7 @@ export async function buildMultiNotePayment(
     });
 
     // Sanity check: verify the derived first-name matches
-    const derivedFirstName = deriveFirstName(spendCondition);
+    const derivedFirstName = firstNameFromCondition(spendCondition);
     if (derivedFirstName !== note.nameFirst) {
       throw new Error(
         `First-name mismatch for note ${i}! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
@@ -436,7 +414,7 @@ export async function createSinglePKHSpendCondition(
   await ensureWasmInitialized();
 
   const pkhDigest = publicKeyToPKHDigest(publicKey);
-  return createPkhOnlyCondition(pkhDigest) as wasm.SpendCondition;
+  return createSimplePkhCondition(pkhDigest) as wasm.SpendCondition;
 }
 
 /**

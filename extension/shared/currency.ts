@@ -10,6 +10,9 @@
 
 import { NOCK_TO_NICKS } from './constants';
 
+/** WASM Nicks type: decimal string for whole-number amounts (matches iris-wasm Nicks). */
+export type Nicks = string;
+
 /**
  * Convert NOCK to whole NICK with proper rounding
  *

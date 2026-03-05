@@ -3,14 +3,7 @@
  */
 
 import { PROVIDER_METHODS, INTERNAL_METHODS, RPC_METHODS, ERROR_CODES } from './constants';
-import type {
-  PbCom2RawTransaction,
-  PbCom2Note,
-  PbCom2SpendCondition,
-  RawTx,
-  Note as WasmNote,
-  SpendCondition,
-} from '@nockbox/iris-wasm/iris_wasm.js';
+import type { Nicks } from './currency';
 
 /**
  * Account information for multi-account wallet
@@ -146,42 +139,24 @@ export interface TransactionRequest {
   origin: string;
   /** Recipient address */
   to: string;
-  /** Amount in nicks */
-  amount: number;
+  /** Amount in nicks (WASM Nicks = string) */
+  amount: Nicks;
   /** Transaction fee in nicks */
-  fee: number;
+  fee: Nicks;
   /** Request timestamp */
   timestamp: number;
 }
 
-/** Protobuf payload (all protobuf, no mixing). */
-export interface LegacySignRawTxRequest {
-  rawTx: PbCom2RawTransaction;
-  notes: PbCom2Note[];
-  spendConditions: PbCom2SpendCondition[];
+/** Pending signRawTx request. Native format (converted from protobuf at RPC boundary). */
+export interface SignRawTxRequest {
+  rawTx: unknown; // wasm.RawTx (native)
+  notes: unknown[]; // wasm.Note[] (native); popup receives protobuf for display
+  spendConditions: unknown[]; // wasm.SpendCondition[] (native)
+  id: string;
+  origin: string;
+  outputs?: unknown[];
+  timestamp: number;
 }
-
-/** Native payload (all native, no mixing). */
-export interface SignRawTxRequestNative {
-  rawTx: RawTx;
-  notes: WasmNote[];
-  spendConditions: SpendCondition[];
-}
-
-/** Pending signRawTx request. Either all native or all protobuf. */
-export type SignRawTxRequest =
-  | (LegacySignRawTxRequest & {
-      id: string;
-      origin: string;
-      outputs?: any[];
-      timestamp: number;
-    })
-  | (SignRawTxRequestNative & {
-      id: string;
-      origin: string;
-      outputs?: any[];
-      timestamp: number;
-    });
 
 /**
  * Nockchain note (UTXO) structure
