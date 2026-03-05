@@ -16,6 +16,7 @@ import {
   assertNativeSpendCondition,
 } from '../shared/sign-raw-tx-compat';
 import { isLegacySignRawTxRequest } from '@nockbox/iris-sdk';
+import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
 import type { Nicks } from '../shared/currency';
 import {
   PROVIDER_METHODS,
@@ -641,7 +642,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-
         const nativeRawTx = toRawTx(rawTxParams.rawTx);
         const nativeNotes = rawTxParams.notes.map((n: unknown) => toNote(n));
         const nativeSpendConditions = rawTxParams.spendConditions.map((sc: unknown) =>
@@ -1077,7 +1077,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           req.notes.forEach(assertNativeNote);
           const forPopup = {
             ...req,
-            notes: req.notes.map((n: unknown) => noteToProtobuf(n)),
+            notes: req.notes.map((n) => noteToProtobuf(n as Note)),
           };
           sendResponse(forPopup);
         } else {
@@ -1207,8 +1207,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             signRawTxRequest.spendConditions.forEach(assertNativeSpendCondition);
             const signature = await vault.signRawTx({
               rawTx: signRawTxRequest.rawTx,
-              notes: signRawTxRequest.notes,
-              spendConditions: signRawTxRequest.spendConditions,
+              notes: signRawTxRequest.notes as Note[],
+              spendConditions: signRawTxRequest.spendConditions as SpendCondition[],
             });
             approveSignRawTxPending.sendResponse(signature);
             cancelPendingRequest(approveSignRawTxId);
@@ -1345,11 +1345,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         try {
-          const txid = await vault.signTransaction(
-            signTo,
-            signAmountNicks,
-            signFeeNicks
-          );
+          const txid = await vault.signTransaction(signTo, signAmountNicks, signFeeNicks);
           sendResponse({ txid });
         } catch (error) {
           console.error('[Background] Transaction signing failed:', error);
@@ -1509,11 +1505,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         try {
-          const result = await vault.sendTransaction(
-            sendTo,
-            sendAmountNicks,
-            sendFeeNicks
-          );
+          const result = await vault.sendTransaction(sendTo, sendAmountNicks, sendFeeNicks);
 
           if ('error' in result) {
             sendResponse({ error: result.error });
