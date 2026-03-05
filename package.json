@@ -26,7 +26,6 @@
     "vite": "^5.3.3"
   },
   "dependencies": {
-    "@fontsource/inter": "^5.2.8",
     "@fontsource/lora": "^5.2.8",
     "@nockbox/iris-sdk": "github:nockbox/iris-sdk#feat/wasm-module-version-bump",
     "@scure/base": "^2.0.0",
