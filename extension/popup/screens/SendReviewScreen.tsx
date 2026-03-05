@@ -4,11 +4,9 @@ import { truncateAddress } from '../utils/format';
 import { AccountIcon } from '../components/AccountIcon';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS } from '../../shared/constants';
-import { formatNock, nockToNick } from '../../shared/currency';
+import { nockToNick, formatNock, formatNick } from '../../shared/currency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
-import IrisLogo40 from '../assets/iris-logo-40.svg';
-import IrisLogoBlue from '../assets/iris-logo-blue.svg';
 
 export function SendReviewScreen() {
   const { navigate, wallet, lastTransaction, priceUsd } = useStore();
@@ -23,17 +21,16 @@ export function SendReviewScreen() {
 
   // Format amounts for display
   const amount = formatNock(lastTransaction.amount);
+  const amountInNicks = nockToNick(lastTransaction.amount);
   const feeInNocks = formatNock(lastTransaction.fee);
+  const feeInNicks = nockToNick(lastTransaction.fee);
+  const total = formatNock(lastTransaction.amount + lastTransaction.fee);
+  const totalInNicks = nockToNick(lastTransaction.amount + lastTransaction.fee);
+  const remainingBalance = formatNock(
+    wallet.balance - lastTransaction.amount - lastTransaction.fee
+  );
   const fromAddress = truncateAddress(lastTransaction.from);
   const toAddress = truncateAddress(lastTransaction.to);
-
-  // Resolve recipient: internal account name or "Receiving address"
-  const recipientAccount = wallet.accounts?.find(
-    acc => acc.address.toLowerCase() === (lastTransaction.to || '').toLowerCase()
-  );
-  const recipientLabel = recipientAccount?.name ?? 'Receiving address';
-
-  const usdValue = lastTransaction.amount * (priceUsd || 0);
 
   const [isSending, setIsSending] = useState(false);
   const [error, setError] = useState('');
@@ -119,9 +116,7 @@ export function SendReviewScreen() {
         >
           <ChevronLeftIcon className="w-5 h-5" />
         </button>
-        <h1 className="m-0 text-base font-medium leading-[22px] tracking-[0.16px]">
-          Review Transfer
-        </h1>
+        <h1 className="m-0 text-base font-medium leading-[22px] tracking-[0.16px]">Review</h1>
         <div className="w-8 h-8" />
       </header>
 
@@ -131,117 +126,114 @@ export function SendReviewScreen() {
         style={{ backgroundColor: 'var(--color-bg)' }}
       >
         <div className="flex flex-col gap-8 px-4 py-2">
-          {/* Amount Section - Figma: logo, amount, USD */}
+          {/* Amount Section */}
           <div className="flex flex-col items-center gap-3 w-full">
-            <img src={IrisLogo40} alt="" className="w-10 h-10 shrink-0" />
+            <div
+              className="w-10 h-10 rounded-lg grid place-items-center"
+              style={{ backgroundColor: 'var(--color-surface-800)' }}
+            >
+              <AccountIcon
+                styleId={currentAccount?.iconStyleId}
+                color={currentAccount?.iconColor}
+                className="w-6 h-6"
+              />
+            </div>
             <div className="flex flex-col items-center gap-0.5 w-full text-center">
-              <h2 className="m-0 font-display text-[36px] font-semibold leading-10 tracking-[-0.72px]">
+              <h2 className="m-0 font-[Lora] text-[36px] font-semibold leading-10 tracking-[-0.72px]">
                 {amount} <span style={{ color: 'var(--color-text-muted)' }}>NOCK</span>
               </h2>
               <p
-                className="m-0 text-[13px] leading-[18px] tracking-[0.26px]"
-                style={{ color: 'var(--color-text-primary)' }}
+                className="m-0 text-[10px] leading-3 tracking-[0.02em]"
+                style={{ color: 'var(--color-text-muted)' }}
               >
-                {usdValue > 0
-                  ? `$${usdValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-                  : '—'}
+                {formatNick(amountInNicks)} nicks
               </p>
             </div>
           </div>
 
-          {/* Wallet cards with circular middle - Figma layout */}
+          {/* Details */}
           <div className="flex flex-col gap-2 w-full">
-            <div className="relative flex gap-2 items-stretch w-full">
-              {/* Sender card */}
-              <div
-                className="flex-1 min-w-0 self-stretch p-3 rounded-xl flex flex-col justify-center items-start gap-2.5"
-                style={{ backgroundColor: 'var(--color-surface-900)' }}
-              >
+            {/* From/To */}
+            <div
+              className="rounded-lg p-3 flex items-center gap-2.5"
+              style={{ backgroundColor: 'var(--color-surface-800)' }}
+            >
+              <div className="flex-1 flex flex-col gap-1 min-w-0">
+                <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">From</div>
                 <div
-                  className="w-10 h-10 relative rounded-[32px] flex items-center justify-center shrink-0 overflow-hidden"
-                  style={{ backgroundColor: 'var(--color-bg)' }}
+                  className="text-[13px] leading-[18px] tracking-[0.26px] truncate"
+                  style={{ color: 'var(--color-text-muted)' }}
                 >
-                  <AccountIcon
-                    styleId={currentAccount?.iconStyleId}
-                    color={currentAccount?.iconColor}
-                    className="w-6 h-6"
-                  />
-                </div>
-                <div className="self-stretch flex flex-col justify-center items-start gap-0.5 min-w-0">
-                  <div
-                    className="text-sm font-medium leading-4 tracking-tight truncate"
-                    style={{ color: 'var(--color-text-primary)' }}
-                  >
-                    {currentAccount?.name ?? 'Wallet'}
-                  </div>
-                  <div
-                    className="text-xs font-normal leading-4 tracking-tight truncate"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
-                    {fromAddress}
-                  </div>
+                  {fromAddress}
                 </div>
               </div>
-
-              {/* Circular middle element - "weird circle" from Figma */}
-              <div
-                className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-14 h-14 rounded-full flex items-center justify-center shrink-0 p-2"
-                style={{
-                  backgroundColor: 'var(--color-bg)',
-                  border: '8px solid var(--color-surface-900)',
-                  color: 'var(--color-text-primary)',
-                }}
-              >
-                <ChevronRightIcon className="w-6 h-6 shrink-0" />
+              <div className="p-1 shrink-0">
+                <ChevronRightIcon className="w-4 h-4" />
               </div>
-
-              {/* Receiver card */}
-              <div
-                className="flex-1 min-w-0 self-stretch p-3 rounded-xl flex flex-col justify-center items-end gap-2.5"
-                style={{ backgroundColor: 'var(--color-surface-900)' }}
-              >
+              <div className="flex-1 flex flex-col gap-1 min-w-0">
+                <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">To</div>
                 <div
-                  className="w-10 h-10 relative rounded-[32px] flex items-center justify-center shrink-0 overflow-hidden"
-                  style={{ backgroundColor: 'var(--color-bg)' }}
+                  className="text-[13px] leading-[18px] tracking-[0.26px] truncate"
+                  style={{ color: 'var(--color-text-muted)' }}
                 >
-                  {recipientAccount ? (
-                    <AccountIcon
-                      styleId={recipientAccount.iconStyleId}
-                      color={recipientAccount.iconColor}
-                      className="w-6 h-6"
-                    />
-                  ) : (
-                    <img src={IrisLogoBlue} alt="" className="w-6 h-6" />
-                  )}
+                  {toAddress}
                 </div>
-                <div className="self-stretch flex flex-col justify-center items-end gap-0.5 min-w-0">
-                  <div
-                    className="text-sm font-medium leading-4 tracking-tight truncate"
-                    style={{ color: 'var(--color-text-primary)' }}
-                  >
-                    {recipientLabel}
+              </div>
+            </div>
+
+            {/* Network fee & Total */}
+            <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--color-surface-800)' }}>
+              <div className="flex flex-col gap-2.5 w-full">
+                {/* Fee row */}
+                <div className="flex items-center justify-between w-full">
+                  <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">
+                    Network fee
                   </div>
-                  <div
-                    className="text-xs font-normal leading-4 tracking-tight truncate"
-                    style={{ color: 'var(--color-text-muted)' }}
-                  >
-                    {toAddress}
+                  <div className="flex flex-col items-end">
+                    <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">
+                      {feeInNocks} NOCK
+                    </div>
+                    <div
+                      className="text-[10px] leading-3 tracking-[0.02em]"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      {formatNick(feeInNicks)} nicks
+                    </div>
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div
+                  className="w-full h-px"
+                  style={{ backgroundColor: 'var(--color-surface-700)' }}
+                />
+
+                {/* Total row */}
+                <div className="flex items-center justify-between w-full">
+                  <div className="text-sm font-semibold leading-[18px] tracking-[0.14px]">
+                    Total
+                  </div>
+                  <div className="flex flex-col items-end">
+                    <div className="text-sm font-semibold leading-[18px] tracking-[0.14px]">
+                      {total} NOCK
+                    </div>
+                    <div
+                      className="text-[10px] leading-3 tracking-[0.02em]"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      {formatNick(totalInNicks)} nicks
+                    </div>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Network fee - single row per Figma */}
+            {/* Remaining balance */}
             <div
-              className="rounded-lg px-3 py-5 flex items-center justify-between w-full"
-              style={{ backgroundColor: 'var(--color-surface-900)' }}
+              className="text-center text-[12px] leading-4 font-medium tracking-[0.02em] mt-3"
+              style={{ color: 'var(--color-text-muted)' }}
             >
-              <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">
-                Network fee
-              </div>
-              <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">
-                {feeInNocks} NOCK
-              </div>
+              Balance after: {remainingBalance} NOCK
             </div>
           </div>
 
@@ -277,35 +269,37 @@ export function SendReviewScreen() {
           </div>
         )} */}
 
-        {/* Actions - Figma: gap-12, rounded-8 */}
+        {/* Actions */}
         <div
-          className="flex gap-3 px-4 py-3 shrink-0"
+          className="flex flex-col gap-2 px-4 py-3"
           style={{ borderTop: '1px solid var(--color-divider)' }}
         >
-          <button
-            type="button"
-            onClick={handleCancel}
-            className="flex-1 h-12 inline-flex items-center justify-center rounded-lg text-sm font-medium leading-[18px] tracking-[0.14px] transition-opacity focus:outline-none focus-visible:ring-2"
-            style={{
-              backgroundColor: 'var(--color-surface-800)',
-              color: 'var(--color-text-primary)',
-            }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
-            onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={isSending}
-            className="flex-1 h-12 inline-flex items-center justify-center rounded-lg text-sm font-medium leading-[18px] tracking-[0.14px] transition-opacity focus:outline-none focus-visible:ring-2"
-            style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
-            onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
-          >
-            {isSending ? 'Sending...' : 'Send'}
-          </button>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={handleCancel}
+              className="flex-1 h-12 inline-flex items-center justify-center rounded-lg text-sm font-medium leading-[18px] tracking-[0.14px] transition-opacity focus:outline-none focus-visible:ring-2"
+              style={{
+                backgroundColor: 'var(--color-surface-800)',
+                color: 'var(--color-text-primary)',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
+              onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleSend}
+              disabled={isSending}
+              className="flex-1 h-12 inline-flex items-center justify-center rounded-lg text-sm font-medium leading-[18px] tracking-[0.14px] transition-opacity focus:outline-none focus-visible:ring-2"
+              style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
+              onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
+              onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
+            >
+              {isSending ? 'Sending...' : 'Send'}
+            </button>
+          </div>
         </div>
       </div>
     </div>

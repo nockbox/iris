@@ -32,20 +32,9 @@ export function WalletPermissionsScreen() {
     }
   }
 
-  async function handleDisconnectAll() {
-    try {
-      for (const origin of approvedOrigins) {
-        await send(INTERNAL_METHODS.REVOKE_ORIGIN, [{ origin }]);
-      }
-      await loadApprovedOrigins();
-    } catch (error) {
-      console.error('Failed to disconnect all:', error);
-    }
-  }
-
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col overflow-hidden"
+      className="w-[357px] h-[600px] flex flex-col overflow-y-auto"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}
@@ -72,8 +61,8 @@ export function WalletPermissionsScreen() {
         </button>
       </header>
 
-      {/* Content - scrollable */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
+      {/* Content */}
+      <div className="flex flex-col gap-2 h-[536px] overflow-y-auto">
         <div className="flex flex-col gap-2 px-4 py-2">
           {approvedOrigins && approvedOrigins.length > 0 ? (
             approvedOrigins.map(origin => (
@@ -125,31 +114,6 @@ export function WalletPermissionsScreen() {
           )}
         </div>
       </div>
-
-      {/* Bottom button - pinned like other screens */}
-      {approvedOrigins && approvedOrigins.length > 0 && (
-        <div
-          className="border-t px-4 py-3 shrink-0"
-          style={{
-            borderColor: 'var(--color-surface-800)',
-            backgroundColor: 'var(--color-bg)',
-          }}
-        >
-          <button
-            type="button"
-            onClick={handleDisconnectAll}
-            className="w-full h-12 px-5 py-[15px] rounded-lg inline-flex items-center justify-center text-center text-sm font-medium leading-4 tracking-tight transition-opacity focus:outline-none focus-visible:ring-2"
-            style={{
-              backgroundColor: '#000000',
-              color: '#ffffff',
-            }}
-            onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
-            onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
-          >
-            Disconnect all
-          </button>
-        </div>
-      )}
     </div>
   );
 }

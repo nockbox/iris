@@ -82,7 +82,7 @@ export function TransactionApprovalScreen() {
 
             {/* Amount */}
             <div className="text-center mb-4">
-              <div className="font-display text-[32px] font-semibold leading-none">
+              <div className="font-[Lora] text-[32px] font-semibold leading-none">
                 {formatNock(amountNum / NOCK_TO_NICKS)}{' '}
                 <span style={{ color: textMuted }}>NOCK</span>
               </div>

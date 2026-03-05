@@ -479,8 +479,7 @@ export function SendScreen() {
             </div>
             {accounts.length > 1 && (
               <ChevronDownIcon
-                className={`w-4 h-4 shrink-0 transition-transform ${walletDropdownOpen ? 'rotate-180' : ''}`}
-                style={{ color: 'var(--color-text-primary)' }}
+                className={`w-4 h-4 transition-transform ${walletDropdownOpen ? 'rotate-180' : ''}`}
               />
             )}
           </button>

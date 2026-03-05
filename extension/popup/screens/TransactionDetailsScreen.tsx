@@ -3,10 +3,8 @@ import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import { CheckIcon } from '../components/icons/CheckIcon';
-import { AccountIcon } from '../components/AccountIcon';
 import IrisLogo40 from '../assets/iris-logo-40.svg';
-import IrisLogoBlue from '../assets/iris-logo-blue.svg';
-import { truncateAddress } from '../utils/format';
+import { truncateAddress, formatUTCTimestamp } from '../utils/format';
 import { NOCK_TO_NICKS } from '../../shared/constants';
 
 export function TransactionDetailsScreen() {
@@ -14,7 +12,6 @@ export function TransactionDetailsScreen() {
     navigate,
     selectedTransaction,
     wallet,
-    priceUsd,
     fetchWalletTransactions,
     walletTransactions,
     setSelectedTransaction,
@@ -72,10 +69,10 @@ export function TransactionDetailsScreen() {
     maximumFractionDigits: 2,
   });
 
-  const usdValue =
-    priceUsd && priceUsd > 0
-      ? `$${(amountNock * priceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      : null;
+  // Only show USD value if we have historical price stored
+  const usdValue = selectedTransaction.priceUsdAtTime
+    ? `$${(amountNock * selectedTransaction.priceUsdAtTime).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : null;
 
   // Determine status display
   let statusText: string;
@@ -105,43 +102,21 @@ export function TransactionDetailsScreen() {
       statusColor = 'var(--color-text-muted)';
   }
 
-  const currentAccount = wallet.currentAccount;
-  const currentAddress = currentAccount?.address || '';
+  const currentAddress = wallet.currentAccount?.address || '';
   const counterpartyAddress =
     selectedTransaction.direction === 'outgoing'
       ? selectedTransaction.recipient
       : selectedTransaction.sender;
 
-  // Resolve sender and receiver for wallet cards (like review screen)
-  const senderAccount =
-    selectedTransaction.direction === 'outgoing'
-      ? currentAccount
-      : wallet.accounts?.find(
-          acc =>
-            counterpartyAddress && acc.address.toLowerCase() === counterpartyAddress.toLowerCase()
-        );
-  const receiverAccount =
-    selectedTransaction.direction === 'outgoing'
-      ? wallet.accounts?.find(
-          acc =>
-            counterpartyAddress && acc.address.toLowerCase() === counterpartyAddress.toLowerCase()
-        )
-      : currentAccount;
-
-  const senderLabel = senderAccount?.name ?? 'Unknown wallet';
-  const receiverLabel = receiverAccount?.name ?? 'Receiving address';
-
-  const senderAddress =
+  const fromAddress =
     selectedTransaction.direction === 'outgoing'
       ? truncateAddress(currentAddress)
       : counterpartyAddress
         ? truncateAddress(counterpartyAddress)
         : 'Unknown';
-  const receiverAddress =
+  const toAddress =
     selectedTransaction.direction === 'outgoing'
-      ? counterpartyAddress
-        ? truncateAddress(counterpartyAddress)
-        : 'Unknown'
+      ? truncateAddress(counterpartyAddress || '')
       : truncateAddress(currentAddress);
 
   // For incoming transactions, we don't have fee info
@@ -153,11 +128,13 @@ export function TransactionDetailsScreen() {
     selectedTransaction.direction === 'outgoing' ? amountNock + feeNock : amountNock;
   const total = `${totalNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`;
 
-  const totalUsd =
-    priceUsd && priceUsd > 0
-      ? `$${(totalNock * priceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-      : null;
+  // Only show total USD if we have historical price stored
+  const totalUsd = selectedTransaction.priceUsdAtTime
+    ? `$${(totalNock * selectedTransaction.priceUsdAtTime).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : null;
   const transactionId = selectedTransaction.txHash || selectedTransaction.id;
+  const transactionTimeUTC = formatUTCTimestamp(selectedTransaction.createdAt);
+
   function handleBack() {
     navigate('home');
   }
@@ -216,7 +193,7 @@ export function TransactionDetailsScreen() {
             <img src={IrisLogo40} alt="Iris" className="w-10 h-10" />
             <div className="flex flex-col items-center gap-0.5 text-center">
               <h2
-                className="m-0 font-display text-[36px] font-semibold leading-10 tracking-[-0.72px]"
+                className="m-0 font-[Lora] text-[36px] font-semibold leading-10 tracking-[-0.72px]"
                 style={{ color: 'var(--color-text-primary)' }}
               >
                 {transactionType === 'sent' && '-'}
@@ -238,7 +215,7 @@ export function TransactionDetailsScreen() {
             {/* Status */}
             <div
               className="rounded-lg px-3 py-5"
-              style={{ backgroundColor: 'var(--color-surface-900)' }}
+              style={{ backgroundColor: 'var(--color-surface-800)' }}
             >
               <div className="flex items-center justify-between text-sm font-medium leading-[18px] tracking-[0.14px]">
                 <div style={{ color: 'var(--color-text-primary)' }}>Status</div>
@@ -248,133 +225,70 @@ export function TransactionDetailsScreen() {
               </div>
             </div>
 
-            {/* Wallet cards with circular middle - same as Review screen */}
-            <div className="flex flex-col gap-2 w-full">
-              <div className="relative flex gap-2 items-stretch w-full">
-                {/* Sender card */}
+            {/* Transaction Time */}
+            <div
+              className="rounded-lg px-3 py-5"
+              style={{ backgroundColor: 'var(--color-surface-800)' }}
+            >
+              <div className="flex items-center justify-between text-sm font-medium leading-[18px] tracking-[0.14px]">
+                <div style={{ color: 'var(--color-text-primary)' }}>Time</div>
                 <div
-                  className="flex-1 min-w-0 self-stretch p-3 rounded-xl flex flex-col justify-center items-start gap-2.5"
-                  style={{ backgroundColor: 'var(--color-surface-900)' }}
+                  className="text-right text-[13px] leading-[18px] tracking-[0.26px]"
+                  style={{ color: 'var(--color-text-muted)' }}
                 >
+                  {transactionTimeUTC}
+                </div>
+              </div>
+            </div>
+
+            {/* From / To */}
+            <div className="rounded-lg p-3" style={{ backgroundColor: 'var(--color-surface-800)' }}>
+              <div className="flex items-center gap-2.5">
+                <div className="flex-1 flex flex-col gap-1 min-w-0">
+                  <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">From</div>
                   <div
-                    className="w-10 h-10 relative rounded-[32px] flex items-center justify-center shrink-0 overflow-hidden"
-                    style={{ backgroundColor: 'var(--color-bg)' }}
+                    className="text-[13px] leading-[18px] tracking-[0.26px] truncate"
+                    style={{ color: 'var(--color-text-muted)' }}
                   >
-                    {senderAccount ? (
-                      <AccountIcon
-                        styleId={senderAccount.iconStyleId}
-                        color={senderAccount.iconColor}
-                        className="w-6 h-6"
-                      />
-                    ) : (
-                      <img src={IrisLogoBlue} alt="" className="w-6 h-6" />
-                    )}
-                  </div>
-                  <div className="self-stretch flex flex-col justify-center items-start gap-0.5 min-w-0">
-                    <div
-                      className="text-sm font-medium leading-4 tracking-tight truncate"
-                      style={{ color: 'var(--color-text-primary)' }}
-                    >
-                      {senderLabel}
-                    </div>
-                    <div
-                      className="text-xs font-normal leading-4 tracking-tight truncate"
-                      style={{ color: 'var(--color-text-muted)' }}
-                    >
-                      {senderAddress}
-                    </div>
+                    {fromAddress}
                   </div>
                 </div>
-
-                {/* Circular middle element */}
-                <div
-                  className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-10 w-14 h-14 rounded-full flex items-center justify-center shrink-0 p-2"
-                  style={{
-                    backgroundColor: 'var(--color-bg)',
-                    border: '8px solid var(--color-surface-900)',
-                    color: 'var(--color-text-primary)',
-                  }}
-                >
-                  <ChevronRightIcon className="w-6 h-6 shrink-0" />
+                <div className="p-1 shrink-0">
+                  <ChevronRightIcon className="w-4 h-4" />
                 </div>
-
-                {/* Receiver card */}
-                <div
-                  className="flex-1 min-w-0 self-stretch p-3 rounded-xl flex flex-col justify-center items-end gap-2.5"
-                  style={{ backgroundColor: 'var(--color-surface-900)' }}
-                >
+                <div className="flex-1 flex flex-col gap-1 min-w-0">
+                  <div className="text-sm font-medium leading-[18px] tracking-[0.14px]">To</div>
                   <div
-                    className="w-10 h-10 relative rounded-[32px] flex items-center justify-center shrink-0 overflow-hidden"
-                    style={{ backgroundColor: 'var(--color-bg)' }}
+                    className="text-[13px] leading-[18px] tracking-[0.26px] truncate"
+                    style={{ color: 'var(--color-text-muted)' }}
                   >
-                    {receiverAccount ? (
-                      <AccountIcon
-                        styleId={receiverAccount.iconStyleId}
-                        color={receiverAccount.iconColor}
-                        className="w-6 h-6"
-                      />
-                    ) : (
-                      <img src={IrisLogoBlue} alt="" className="w-6 h-6" />
-                    )}
-                  </div>
-                  <div className="self-stretch flex flex-col justify-center items-end gap-0.5 min-w-0">
-                    <div
-                      className="text-sm font-medium leading-4 tracking-tight truncate"
-                      style={{ color: 'var(--color-text-primary)' }}
-                    >
-                      {receiverLabel}
-                    </div>
-                    <div
-                      className="text-xs font-normal leading-4 tracking-tight truncate"
-                      style={{ color: 'var(--color-text-muted)' }}
-                    >
-                      {receiverAddress}
-                    </div>
+                    {toAddress}
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Fee and Total - Figma 1357-4155 */}
+            {/* Fee and Total */}
             <div
-              className="self-stretch py-3 rounded-lg flex flex-col justify-center items-start gap-3"
-              style={{ backgroundColor: 'var(--color-surface-900)' }}
+              className="rounded-lg px-3 py-3 flex flex-col gap-3"
+              style={{ backgroundColor: 'var(--color-surface-800)' }}
             >
-              <div className="self-stretch px-3 flex justify-between items-center">
-                <div
-                  className="flex-1 text-sm font-medium leading-4 tracking-tight"
-                  style={{ color: 'var(--color-text-muted)' }}
-                >
-                  Network fee
-                </div>
-                <div
-                  className="text-sm font-medium leading-4 tracking-tight"
-                  style={{ color: 'var(--color-text-muted)' }}
-                >
+              <div className="flex items-center justify-between text-sm font-medium leading-[18px] tracking-[0.14px]">
+                <div style={{ color: 'var(--color-text-primary)', opacity: 0.7 }}>Network fee</div>
+                <div className="whitespace-nowrap" style={{ color: 'var(--color-text-muted)' }}>
                   {networkFee}
                 </div>
               </div>
-              <div
-                className="self-stretch h-0 outline outline-1 outline-offset-[-0.5px]"
-                style={{ outlineColor: 'var(--color-divider)' }}
-              />
-              <div className="self-stretch px-3 flex justify-between items-start">
-                <div
-                  className="flex-1 text-sm font-medium leading-4 tracking-tight"
-                  style={{ color: 'var(--color-text-primary)' }}
-                >
-                  Total
-                </div>
-                <div className="flex flex-col items-end gap-1 text-right shrink-0">
-                  <div
-                    className="text-sm font-medium leading-4 tracking-tight"
-                    style={{ color: 'var(--color-text-primary)' }}
-                  >
+              <div className="h-px w-full" style={{ backgroundColor: 'var(--color-divider)' }} />
+              <div className="flex items-center justify-between text-sm font-medium leading-[18px] tracking-[0.14px]">
+                <div style={{ color: 'var(--color-text-primary)' }}>Total</div>
+                <div className="flex flex-col items-end gap-1 w-[75px]">
+                  <div className="whitespace-nowrap" style={{ color: 'var(--color-text-primary)' }}>
                     {total}
                   </div>
                   {totalUsd && (
                     <div
-                      className="text-xs font-normal leading-4 tracking-tight"
+                      className="text-[13px] leading-[18px] tracking-[0.26px] whitespace-nowrap"
                       style={{ color: 'var(--color-text-muted)' }}
                     >
                       {totalUsd}
@@ -397,7 +311,7 @@ export function TransactionDetailsScreen() {
                 }}
                 onMouseEnter={e => {
                   if (!e.currentTarget.disabled) {
-                    e.currentTarget.style.backgroundColor = 'var(--color-surface-900)';
+                    e.currentTarget.style.backgroundColor = 'var(--color-surface-800)';
                   }
                 }}
                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
@@ -415,7 +329,7 @@ export function TransactionDetailsScreen() {
                 }}
                 onMouseEnter={e => {
                   if (!copiedTxId) {
-                    e.currentTarget.style.backgroundColor = 'var(--color-surface-900)';
+                    e.currentTarget.style.backgroundColor = 'var(--color-surface-800)';
                   }
                 }}
                 onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
