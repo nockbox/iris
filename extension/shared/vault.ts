@@ -62,7 +62,7 @@ async function txEngineSettings(blockHeight?: number): Promise<wasm.TxEngineSett
 }
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
-  const rawTx = wasm.nockchainTxToRaw(tx) as wasm.RawTxV1;
+  const rawTx = wasm.nockchainTxToRawTx(tx);
   return wasm.rawTxToProtobuf(rawTx);
 }
 
@@ -523,9 +523,13 @@ export class Vault {
   > {
     const stored = await chrome.storage.local.get([
       STORAGE_KEYS.ENCRYPTED_VAULT,
+      STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA,
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
     ]);
     const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
+    const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as
+      | EncryptedAccountDataBlob
+      | undefined;
     const currentAccountIndex =
       (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
 
@@ -546,8 +550,35 @@ export class Vault {
     const payload = JSON.parse(pt) as VaultPayload;
     const accounts = payload.accounts;
 
+    // Load account data (same as password unlock) so transaction history displays
+    let utxoStore: UTXOStore = {};
+    let walletTxStore: WalletTxStore = {};
+    let cachedBalances: Record<string, number> = {};
+    let loadedFromEncrypted = false;
+
+    if (encAccountData) {
+      const accountDataPt = await decryptGCM(
+        key,
+        new Uint8Array(encAccountData.cipher.iv),
+        new Uint8Array(encAccountData.cipher.ct)
+      ).catch(() => null);
+
+      if (accountDataPt) {
+        const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
+        utxoStore = accountData.utxoStore || {};
+        walletTxStore = accountData.walletTxStore || {};
+        cachedBalances = accountData.cachedBalances || {};
+        loadedFromEncrypted = true;
+      }
+    }
+
+    // Key is only cached after unlock() runs, so migration has always happened.
+    // No legacy fallback needed.
     this.mnemonic = payload.mnemonic;
     this.encryptionKey = key;
+    this.utxoStore = utxoStore;
+    this.walletTxStore = walletTxStore;
+    this.cachedBalances = cachedBalances;
 
     this.state = {
       locked: false,
@@ -1132,22 +1163,8 @@ export class Vault {
           storedNote.pendingTxId = walletTxId;
           newChange++;
         } else {
-          // Incoming transaction - create a WalletTransaction record
-          const incomingTxId = crypto.randomUUID();
-          const now = Date.now();
-
-          await this.addWalletTransaction({
-            id: incomingTxId,
-            txHash: newUTXO.sourceHash,
-            accountAddress,
-            direction: 'incoming',
-            createdAt: now,
-            updatedAt: now,
-            status: 'confirmed',
-            amount: newUTXO.assets,
-            receivedNoteIds: [newUTXO.noteId],
-          });
-
+          // Don't create WalletTransaction records for incoming UTXOs.
+          // Only outgoing transactions appear in history. Balance still updates correctly.
           newIncoming++;
         }
 
@@ -1687,6 +1704,8 @@ export class Vault {
       throw new Error('Cannot sign: keys unavailable');
     }
 
+    const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
+
     try {
       const endpoint = await getEffectiveRpcEndpoint();
       const rpcClient = createBrowserClient(endpoint);
@@ -1716,7 +1735,7 @@ export class Vault {
         to,
         amount,
         accountKey.publicKey,
-        accountKey.privateKey,
+        privateKey,
         fee,
         undefined,
         blockHeight
@@ -1725,6 +1744,7 @@ export class Vault {
       // Return constructed transaction (for caller to broadcast)
       return constructedTx.txId;
     } finally {
+      privateKey.free();
       // Clean up WASM memory (don't double-free master key)
       if (currentAccount.derivation !== 'master') {
         accountKey.free();
@@ -1772,6 +1792,8 @@ export class Vault {
         return { error: 'Cannot estimate fee: keys unavailable' };
       }
 
+      const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
+
       try {
         const endpoint = await getEffectiveRpcEndpoint();
         const rpcClient = createBrowserClient(endpoint);
@@ -1803,7 +1825,7 @@ export class Vault {
           to,
           amount,
           accountKey.publicKey,
-          accountKey.privateKey,
+          privateKey,
           undefined, // let WASM auto-calc
           undefined,
           blockHeight
@@ -1812,6 +1834,7 @@ export class Vault {
         // Get the calculated fee from the builder
         return { fee: constructedTx.feeUsed };
       } finally {
+        privateKey.free();
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
         }
@@ -1870,6 +1893,8 @@ export class Vault {
         return { error: 'Cannot estimate max: keys unavailable' };
       }
 
+      const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
+
       try {
         // Get available (not in-flight) notes from in-memory UTXO store
         const notes = this.getAvailableNotes(currentAccount.address);
@@ -1906,7 +1931,7 @@ export class Vault {
           to,
           String(estimationAmount),
           accountKey.publicKey,
-          accountKey.privateKey,
+          privateKey,
           undefined, // let WASM auto-calc fee
           to, // refundPKH = recipient (sweep mode)
           blockHeight
@@ -1926,6 +1951,7 @@ export class Vault {
           utxoCount: notes.length,
         };
       } finally {
+        privateKey.free();
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
         }
@@ -1984,6 +2010,8 @@ export class Vault {
         return { error: 'Keys unavailable' };
       }
 
+      const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
+
       try {
         const endpoint = await getEffectiveRpcEndpoint();
         const rpcClient = createBrowserClient(endpoint);
@@ -2014,7 +2042,7 @@ export class Vault {
           to,
           amount,
           accountKey.publicKey,
-          accountKey.privateKey,
+          privateKey,
           fee,
           undefined,
           blockHeight
@@ -2030,6 +2058,7 @@ export class Vault {
           protobufTx, // Include protobuf for debugging/export
         };
       } finally {
+        privateKey.free();
         // Clean up WASM memory
         if (currentAccount.derivation !== 'master') {
           accountKey.free();
@@ -2099,6 +2128,8 @@ export class Vault {
           masterKey.free();
           return { error: 'Keys unavailable' };
         }
+
+        const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
 
         try {
           // 1. Get available notes from in-memory UTXO store (for state tracking)
@@ -2179,7 +2210,7 @@ export class Vault {
             to,
             amount,
             accountKey.publicKey,
-            accountKey.privateKey,
+            privateKey,
             fee,
             refundAddress,
             blockHeight
@@ -2205,6 +2236,7 @@ export class Vault {
             broadcasted: true,
           };
         } finally {
+          privateKey.free();
           // Clean up WASM memory
           if (currentAccount.derivation !== 'master') {
             accountKey.free();
@@ -2273,6 +2305,8 @@ export class Vault {
       throw new Error('Cannot sign: no private key available');
     }
 
+    const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
+
     try {
       // Use block height from latest balance (max originPage of current account's notes)
       const accountNotes = currentAccount
@@ -2286,13 +2320,7 @@ export class Vault {
       const settings = await txEngineSettings(blockHeight);
       const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, settings);
 
-      // Sign: WASM expects exactly 32 bytes (big-endian). Copy to a fresh Uint8Array so we don't pass a view into WASM memory.
-      const pk = accountKey.privateKey;
-      if (!pk || pk.byteLength !== 32) {
-        throw new Error('Signing requires a 32-byte private key');
-      }
-      const signingKeyBytes = new Uint8Array(pk.slice(0, 32));
-      builder.sign(signingKeyBytes);
+      await builder.sign(privateKey);
 
       // Validate before build (surfaces missing unlocks, fee, balanced spends)
       builder.validate();
@@ -2305,6 +2333,8 @@ export class Vault {
 
       return protobuf;
     } finally {
+      privateKey.free();
+
       if (currentAccount?.derivation !== 'master') {
         accountKey.free();
       }
@@ -2323,7 +2353,7 @@ export class Vault {
     try {
       assertNativeRawTx(rawTx);
       const outputs = wasm.rawTxOutputs(rawTx);
-      return outputs.map(output => wasm.note_to_protobuf(output));
+      return outputs.map(output => wasm.noteToProtobuf(output));
     } catch (err) {
       console.error('Failed to compute outputs:', err);
       throw err;

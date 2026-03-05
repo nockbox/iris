@@ -19,7 +19,7 @@ import { firstNameFromCondition } from './first-name-derivation.js';
 
 type SpendConditionLike = wasm.SpendCondition;
 function noteFromProtobuf(protoNote: any): any {
-  return wasm.note_from_protobuf(protoNote);
+  return wasm.noteFromProtobuf(protoNote);
 }
 
 async function createTxBuilder(blockHeight?: number): Promise<wasm.TxBuilder> {
@@ -140,7 +140,7 @@ export interface TransactionParams {
   /** Your PKH for receiving change (as digest string) */
   refundPKH: string;
   /** Private key for signing (32 bytes) */
-  privateKey: Uint8Array;
+  privateKey: wasm.PrivateKey;
   /** Whether to include lock data or not */
   includeLockData: boolean;
   /** Current block height (for tx engine selection by activation height). If omitted, uses tx-engine-1. */
@@ -186,9 +186,6 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   // Validate inputs
   if (notes.length === 0) {
     throw new Error('At least one note (UTXO) is required');
-  }
-  if (privateKey.length !== 32) {
-    throw new Error('Private key must be 32 bytes');
   }
 
   // Calculate total available from notes
@@ -242,7 +239,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   );
 
   // Sign and validate the transaction
-  builder.sign(privateKey);
+  await builder.sign(privateKey);
   builder.validate();
 
   // Get the fee before building (for return value)
@@ -260,69 +257,6 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
 }
 
 /**
- * Create a simple payment transaction (single recipient)
- *
- * This is a convenience wrapper around buildTransaction for the common case
- * of sending a payment to one recipient with change back to yourself.
- *
- * @param note - UTXO to spend
- * @param recipientPKH - Recipient's PKH digest string
- * @param amount - Amount to send in nicks
- * @param senderPublicKey - Your public key (97 bytes, for creating spend condition)
- * @param fee - Transaction fee in nicks
- * @param privateKey - Your private key (32 bytes)
- * @returns Constructed transaction
- */
-export async function buildPayment(
-  note: Note,
-  recipientPKH: string,
-  amount: Nicks,
-  senderPublicKey: Uint8Array,
-  privateKey: Uint8Array,
-  fee?: Nicks
-): Promise<ConstructedTransaction> {
-  // Initialize WASM
-  await ensureWasmInitialized();
-
-  const totalNeeded = Number(amount) + Number(fee || '0');
-
-  if (note.assets < totalNeeded) {
-    throw new Error(`Insufficient funds in note: have ${note.assets} nicks, need ${totalNeeded}`);
-  }
-
-  // Create sender's PKH digest string for change
-  const senderPKH = publicKeyToPKHDigest(senderPublicKey);
-
-  // Discover the correct spend condition by matching lock-root to note.nameFirst
-  // the spend condition MUST match what was locked on the note
-  const spendCondition = await discoverSpendConditionForNote(senderPKH, {
-    nameFirst: note.nameFirst,
-    originPage: note.originPage,
-  });
-
-  // Sanity check: verify the derived first-name matches
-  const derivedFirstName = firstNameFromCondition(spendCondition);
-  if (derivedFirstName !== note.nameFirst) {
-    throw new Error(
-      `First-name mismatch! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
-        `Expected: ${note.nameFirst.slice(0, 20)}...`
-    );
-  }
-
-  return buildTransaction({
-    notes: [note],
-    spendCondition,
-    recipientPKH,
-    amount,
-    fee,
-    refundPKH: senderPKH,
-    privateKey,
-    // include_lock_data: false for lower fees (0.5 NOCK per word saved)
-    includeLockData: false,
-  });
-}
-
-/**
  * Create a payment transaction using multiple notes (UTXOs)
  *
  * This allows spending from multiple UTXOs when a single UTXO doesn't have
@@ -332,7 +266,7 @@ export async function buildPayment(
  * @param recipientPKH - Recipient's PKH digest string
  * @param amount - Amount to send in nicks
  * @param senderPublicKey - Your public key (97 bytes, for creating spend condition)
- * @param privateKey - Your private key (32 bytes)
+ * @param privateKey - Your private key (wasm object)
  * @param fee - Transaction fee in nicks (optional, WASM will auto-calculate if not provided)
  * @param refundPKH - Override for change address (optional, defaults to sender's PKH).
  *                    Set to recipientPKH for "send max" to sweep all funds to recipient.
@@ -344,7 +278,7 @@ export async function buildMultiNotePayment(
   recipientPKH: string,
   amount: Nicks,
   senderPublicKey: Uint8Array,
-  privateKey: Uint8Array,
+  privateKey: wasm.PrivateKey,
   fee?: Nicks,
   refundPKH?: string,
   blockHeight?: number

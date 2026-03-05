@@ -19,7 +19,7 @@ export function toNote(note: unknown): wasm.Note {
   if (!guard.isPbCom2Note(note)) {
     throw new Error('Note must be protobuf PbCom2Note');
   }
-  return wasm.note_from_protobuf(note);
+  return wasm.noteFromProtobuf(note);
 }
 
 /** Convert protobuf spendCondition to native. Used at RPC boundary only. */
@@ -32,7 +32,7 @@ export function toSpendCondition(spendCondition: unknown): wasm.SpendCondition {
 
 /** Convert native note to protobuf for popup display. */
 export function noteToProtobuf(note: wasm.Note): unknown {
-  return wasm.note_to_protobuf(note);
+  return wasm.noteToProtobuf(note);
 }
 
 /** Assert value is native RawTx; throw if not. Use after boundary conversion. */
