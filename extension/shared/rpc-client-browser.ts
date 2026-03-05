@@ -50,7 +50,6 @@ export class NockchainBrowserRPCClient {
     }
 
     await ensureWasmInitialized();
-    console.log(this.endpoint);
     this.client = new wasm.GrpcClient(this.endpoint);
     return this.client;
   }
