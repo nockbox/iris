@@ -39,7 +39,12 @@ import {
   matchChangeOutputs,
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
-import { toRawTx, toNote, toSpendCondition } from './sign-raw-tx-compat';
+import type { Nicks } from './currency';
+import {
+  assertNativeRawTx,
+  assertNativeNote,
+  assertNativeSpendCondition,
+} from './sign-raw-tx-compat';
 import { txEngineSettings } from './tx-engine-settings.js';
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
@@ -1638,7 +1643,7 @@ export class Vault {
    * @param fee - Transaction fee in nicks
    * @returns Transaction ID as digest string
    */
-  async signTransaction(to: string, amount: number, fee?: number): Promise<string> {
+  async signTransaction(to: string, amount: Nicks, fee?: Nicks): Promise<string> {
     if (this.state.locked || !this.mnemonic) {
       throw new Error('Wallet is locked');
     }
@@ -1718,7 +1723,7 @@ export class Vault {
    */
   async estimateTransactionFee(
     to: string,
-    amount: number
+    amount: Nicks
   ): Promise<{ fee: number } | { error: string }> {
     if (this.state.locked || !this.mnemonic) {
       return { error: ERROR_CODES.LOCKED };
@@ -1869,7 +1874,7 @@ export class Vault {
         const constructedTx = await buildMultiNotePayment(
           txBuilderNotes,
           to,
-          estimationAmount,
+          String(estimationAmount),
           accountKey.publicKey,
           accountKey.privateKey,
           undefined, // let WASM auto-calc fee
@@ -1915,8 +1920,8 @@ export class Vault {
    */
   async sendTransaction(
     to: string,
-    amount: number,
-    fee?: number
+    amount: Nicks,
+    fee?: Nicks
   ): Promise<{ txId: string; broadcasted: boolean; protobufTx?: any } | { error: string }> {
     if (this.state.locked || !this.mnemonic) {
       return { error: ERROR_CODES.LOCKED };
@@ -2018,8 +2023,8 @@ export class Vault {
    */
   async sendTransactionV2(
     to: string,
-    amount: number,
-    fee?: number,
+    amount: Nicks,
+    fee?: Nicks,
     sendMax?: boolean,
     priceUsdAtTime?: number
   ): Promise<
@@ -2069,7 +2074,7 @@ export class Vault {
           const totalAvailable = availableStoredNotes.reduce((sum, n) => sum + n.assets, 0);
 
           // 2. Estimate fee if not provided (rough estimate: 2 NOCK should cover most cases)
-          const estimatedFee = fee ?? 2 * NOCK_TO_NICKS;
+          const estimatedFeeNum = fee !== undefined ? Number(fee) : 2 * NOCK_TO_NICKS;
 
           let selectedStoredNotes: typeof availableStoredNotes;
           let expectedChange: number;
@@ -2080,7 +2085,7 @@ export class Vault {
             expectedChange = 0; // All goes to recipient (minus fee)
           } else {
             // NORMAL: Select only notes needed for amount + fee
-            const targetAmount = amount + estimatedFee;
+            const targetAmount = Number(amount) + estimatedFeeNum;
             const selected = selectNotesForAmount(availableStoredNotes, targetAmount);
 
             if (!selected) {
@@ -2091,7 +2096,7 @@ export class Vault {
 
             selectedStoredNotes = selected;
             const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
-            expectedChange = selectedTotal - amount - estimatedFee;
+            expectedChange = selectedTotal - Number(amount) - estimatedFeeNum;
           }
 
           selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
@@ -2111,8 +2116,8 @@ export class Vault {
             status: 'created',
             inputNoteIds: selectedNoteIds,
             recipient: to,
-            amount,
-            fee: estimatedFee,
+            amount: Number(amount),
+            fee: estimatedFeeNum,
             expectedChange: expectedChange > 0 ? expectedChange : 0,
           };
           await this.addWalletTransaction(walletTx);
@@ -2192,9 +2197,9 @@ export class Vault {
    * @returns Hex-encoded signed transaction jam
    */
   async signRawTx(params: {
-    rawTx: any; // Protobuf wasm.RawTx object
-    notes: any[]; // Protobuf Note objects
-    spendConditions: any[]; // Protobuf SpendCondition objects
+    rawTx: wasm.RawTx;
+    notes: wasm.Note[];
+    spendConditions: wasm.SpendCondition[];
   }): Promise<any> {
     // Returns protobuf wasm.RawTx
     if (this.state.locked || !this.mnemonic) {
@@ -2205,6 +2210,9 @@ export class Vault {
     await initWasmModules();
 
     const { rawTx, notes, spendConditions } = params;
+    assertNativeRawTx(rawTx);
+    notes.forEach(assertNativeNote);
+    spendConditions.forEach(assertNativeSpendCondition);
 
     // Derive the account's private key
     const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
@@ -2222,22 +2230,8 @@ export class Vault {
     }
 
     try {
-      // Deserialize wasm.RawTx from protobuf (notes and spend conditions come as protobuf)
-      const irisRawTx = toRawTx(rawTx);
-
-      // Notes are already in protobuf format from the SDK
-      const irisNotes = notes.map(n => toNote(n));
-
-      // SpendConditions are in protobuf format
-      const irisSpendConditions = spendConditions.map(sc => toSpendCondition(sc));
-
-      // Reconstruct the transaction builder
-      const builder = wasm.TxBuilder.fromTx(
-        irisRawTx,
-        irisNotes,
-        irisSpendConditions,
-        txEngineSettings()
-      );
+      // rawTx, notes, spendConditions are native (converted at RPC boundary)
+      const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, txEngineSettings());
 
       // Sign: WASM expects exactly 32 bytes (big-endian). Copy to a fresh Uint8Array so we don't pass a view into WASM memory.
       const pk = accountKey.privateKey;
@@ -2265,7 +2259,7 @@ export class Vault {
     }
   }
 
-  async computeOutputs(rawTx: any): Promise<any[]> {
+  async computeOutputs(rawTx: wasm.RawTx): Promise<any[]> {
     if (this.state.locked || !this.mnemonic) {
       throw new Error('Wallet is locked');
     }
@@ -2274,8 +2268,8 @@ export class Vault {
     await initWasmModules();
 
     try {
-      const irisRawTx = toRawTx(rawTx);
-      const outputs = wasm.rawTxOutputs(irisRawTx);
+      assertNativeRawTx(rawTx);
+      const outputs = wasm.rawTxOutputs(rawTx);
       return outputs.map(output => wasm.note_to_protobuf(output));
     } catch (err) {
       console.error('Failed to compute outputs:', err);

@@ -8,20 +8,10 @@
 
 import wasm from './sdk-wasm.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
+import { createSimplePkhCondition, createPkhCoinbaseCondition } from './spend-conditions.js';
 
-function createPkhCondition(pkhBase58: string): wasm.SpendCondition {
-  return [{ Pkh: { m: 1, hashes: [pkhBase58] } }];
-}
-
-function createCoinbaseCondition(pkhBase58: string): wasm.SpendCondition {
-  // In v1 semantics coinbase uses a relative timelock (100 blocks).
-  return [
-    { Pkh: { m: 1, hashes: [pkhBase58] } },
-    { Tim: { rel: { min: 100, max: null }, abs: { min: null, max: null } } },
-  ];
-}
-
-function firstNameFromCondition(condition: wasm.SpendCondition): string {
+/** Derives first-name (base58) from a spend condition. */
+export function firstNameFromCondition(condition: wasm.SpendCondition): string {
   return wasm.spendConditionFirstName(condition);
 }
 
@@ -49,7 +39,7 @@ export async function deriveSimpleFirstName(pkhBase58: string): Promise<string> 
     throw new Error('PKH must be a non-empty base58 string');
   }
 
-  const firstNameBase58 = firstNameFromCondition(createPkhCondition(pkhBase58));
+  const firstNameBase58 = firstNameFromCondition(createSimplePkhCondition(pkhBase58));
 
   // Verify it's the right length (40 bytes → ~55 chars base58)
   if (firstNameBase58.length < 50 || firstNameBase58.length > 60) {
@@ -85,7 +75,7 @@ export async function deriveCoinbaseFirstName(pkhBase58: string): Promise<string
     throw new Error('PKH must be a non-empty base58 string');
   }
 
-  const firstNameBase58 = firstNameFromCondition(createCoinbaseCondition(pkhBase58));
+  const firstNameBase58 = firstNameFromCondition(createPkhCoinbaseCondition(pkhBase58));
 
   // Verify it's the right length (40 bytes → ~55 chars base58)
   if (firstNameBase58.length < 50 || firstNameBase58.length > 60) {
