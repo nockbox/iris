@@ -1114,7 +1114,8 @@ export class Vault {
       throw new Error('Vault is locked');
     }
 
-    const rpcClient = createBrowserClient();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
 
     return withAccountLock(accountAddress, async () => {
       // 1. Fetch current UTXOs from chain
@@ -1282,7 +1283,8 @@ export class Vault {
       throw new Error('Vault is locked');
     }
 
-    const rpcClient = createBrowserClient();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
 
     return withAccountLock(accountAddress, async () => {
       // Check if already initialized
@@ -1318,7 +1320,8 @@ export class Vault {
       throw new Error('Vault is locked');
     }
 
-    const rpcClient = createBrowserClient();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
 
     return withAccountLock(accountAddress, async () => {
       // Fetch current UTXOs from chain (first-name only)
