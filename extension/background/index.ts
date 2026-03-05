@@ -315,6 +315,18 @@ function isTransactionRequest(
   return 'to' in request;
 }
 
+async function createPopupWithFallback(opts: any): Promise<any> {
+  // First try: with left/top
+  try {
+    return await chrome.windows.create(opts);
+  } catch (e) {
+    // Retry: remove left/top
+    const { left, top, ...rest } = opts;
+
+    return await chrome.windows.create(rest);
+  }
+}
+
 /**
  * Create an approval popup window (or reuse existing one)
  * Uses MetaMask pattern: single popup window for all approval requests
@@ -406,7 +418,7 @@ async function createApprovalPopup(
       console.warn('Could not determine window position, using defaults');
     }
 
-    const newWindow = await chrome.windows.create({
+    const newWindow = await createPopupWithFallback({
       url: popupUrl,
       type: 'popup',
       width,

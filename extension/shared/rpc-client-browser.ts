@@ -106,7 +106,8 @@ export class NockchainBrowserRPCClient {
     try {
       const client = await this.ensureClient();
       // Use a dummy address to get chain info
-      const dummyAddress = '1'.repeat(132);
+      // Now needs to be on curve for the RPC to respond in kind.
+      const dummyAddress = '3rqbwFMg8Gz1zQQrq4PdmnDotoW3jdiEgAXedknEjbmZJNJousQFEBQYDDtPiAX9iUAeqHqkye1qsS3JiiwPBnH3Do9NsxshkEv4tcvedmKXkTzFxnbbzsUPHZUzf35n3Wn8';
       const response = await client.getBalanceByAddress(dummyAddress);
 
       if (response.height?.value) {

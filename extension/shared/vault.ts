@@ -1620,14 +1620,15 @@ export class Vault {
 
     // Keep legacy payload format: old WASM exposed c/s as little-endian bytes.
     // New WASM exposes hex strings, so reverse byte order to preserve legacy compatibility.
-    const toLegacyHex = (v: string | Uint8Array): string => {
-      if (typeof v !== 'string') {
-        return Array.from(v)
-          .map(b => b.toString(16).padStart(2, '0'))
-          .join('');
+    const toLegacyHex = (v: string | Uint8Array): number[] => {
+      if (typeof v === 'string') {
+        let bytes = [];
+        for (let i = 0; i < v.length; i += 2) {
+          bytes.push(parseInt(v.substr(i, 2), 16));
+        }
+        return bytes.reverse();
       }
-      const hex = v.length % 2 === 0 ? v : `0${v}`;
-      return hex.match(/.{2}/g)?.reverse().join('') ?? '';
+      return [...v];
     };
     const signatureJson = JSON.stringify({
       c: toLegacyHex(signature.c),
