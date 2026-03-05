@@ -259,6 +259,8 @@ export interface UTXOStore {
     notes: StoredNote[];
     /** Version for optimistic locking / conflict detection */
     version: number;
+    /** Block height of this result */
+    blockHeight: number;
   };
 }
 

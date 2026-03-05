@@ -9,6 +9,11 @@ import { ensureWasmInitialized } from './wasm-utils.js';
 import { RPC_ENDPOINT, INTERNAL_METHODS } from './constants.js';
 import wasm from './sdk-wasm.js';
 
+export interface Balance {
+  notes: Note[],
+  height: number,
+}
+
 /**
  * Report RPC connection status to background service worker
  * This updates the connection indicator (green/red dot) in the UI
@@ -58,7 +63,7 @@ export class NockchainBrowserRPCClient {
    * Get balance (UTXOs/notes) for an address
    * @param address - Base58-encoded V1 address
    */
-  async getBalance(address: string): Promise<Note[]> {
+  async getBalance(address: string): Promise<Balance> {
     try {
       const client = await this.ensureClient();
       const response = await client.getBalanceByAddress(address);
@@ -79,7 +84,7 @@ export class NockchainBrowserRPCClient {
    * @param firstNameBase58 - Base58-encoded first-name hash (~55 characters)
    * @returns Array of notes with matching first-name
    */
-  async getNotesByFirstName(firstNameBase58: string): Promise<Note[]> {
+  async getNotesByFirstName(firstNameBase58: string): Promise<Balance> {
     try {
       const client = await this.ensureClient();
       const response = await client.getBalanceByFirstName(firstNameBase58);
@@ -102,7 +107,7 @@ export class NockchainBrowserRPCClient {
   /**
    * Get current block height from balance query
    */
-  async getCurrentBlockHeight(address?: string): Promise<bigint> {
+  async getCurrentBlockHeight(): Promise<number> {
     try {
       const client = await this.ensureClient();
       // Use a dummy address to get chain info
@@ -111,13 +116,13 @@ export class NockchainBrowserRPCClient {
       const response = await client.getBalanceByAddress(dummyAddress);
 
       if (response.height?.value) {
-        return BigInt(response.height.value);
+        return Number(response.height.value);
       }
 
-      return BigInt(0);
+      return 0;
     } catch (error) {
       console.error('[RPC Browser] Error getting block height:', error);
-      return BigInt(0);
+      return 0;
     }
   }
 
@@ -167,9 +172,9 @@ export class NockchainBrowserRPCClient {
   /**
    * Convert proto Balance format to our Note[] interface
    */
-  private convertBalanceToNotes(balance: any): Note[] {
-    if (!balance.notes || balance.notes.length === 0) {
-      return [];
+  private convertBalanceToNotes(balance: wasm.PbCom2Balance): Balance {
+    if (!balance.notes || balance.notes.length === 0 || !balance.height) {
+      return { notes: [], height: 0 };
     }
 
     const notes: Note[] = [];
@@ -185,7 +190,7 @@ export class NockchainBrowserRPCClient {
       }
     }
 
-    return notes;
+    return { notes, height: Number(balance.height.value) };
   }
 
   /**

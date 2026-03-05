@@ -46,19 +46,10 @@ import {
   assertNativeNote,
   assertNativeSpendCondition,
 } from './sign-raw-tx-compat';
-import { getTxEngineSettingsForHeight, DEFAULT_TX_ENGINE_SETTINGS } from './rpc-config';
+import { getTxEngineSettingsForHeight } from './rpc-config';
 
-async function txEngineSettings(blockHeight?: number): Promise<wasm.TxEngineSettings> {
-  try {
-    if (blockHeight === undefined) {
-      const endpoint = await getEffectiveRpcEndpoint();
-      const rpcClient = createBrowserClient(endpoint);
-      blockHeight = Number(await rpcClient.getCurrentBlockHeight());
-    }
-    return getTxEngineSettingsForHeight(blockHeight);
-  } catch {
-    return DEFAULT_TX_ENGINE_SETTINGS;
-  }
+async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
+  return getTxEngineSettingsForHeight(blockHeight);
 }
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
@@ -439,6 +430,12 @@ export class Vault {
         if (accountDataPt) {
           const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
           utxoStore = accountData.utxoStore || {};
+          for (const key in utxoStore) {
+            if (utxoStore[key].blockHeight === undefined) {
+              console.log('[Vault] Clearing old UTXO store with no blockHeight');
+              delete utxoStore[key];
+            }
+          }
           walletTxStore = accountData.walletTxStore || {};
           cachedBalances = accountData.cachedBalances || {};
           loadedFromEncrypted = true;
@@ -760,6 +757,13 @@ export class Vault {
   }
 
   /**
+   * Get the last block height from the in-memory store
+   */
+  getAccountBlockHeight(accountAddress: string): number {
+    return this.utxoStore[accountAddress]?.blockHeight || 0;
+  }
+
+  /**
    * Get only available (spendable) notes for an account
    */
   getAvailableNotes(accountAddress: string): StoredNote[] {
@@ -825,9 +829,9 @@ export class Vault {
    * Save/merge notes for an account
    * Automatically persists to encrypted storage
    */
-  async saveNotes(accountAddress: string, newNotes: StoredNote[]): Promise<void> {
+  async saveNotes(accountAddress: string, newNotes: StoredNote[], blockHeight: number): Promise<void> {
     if (!this.utxoStore[accountAddress]) {
-      this.utxoStore[accountAddress] = { notes: [], version: 0 };
+      this.utxoStore[accountAddress] = { notes: [], version: 0, blockHeight: 0 };
     }
 
     const existingMap = new Map(this.utxoStore[accountAddress].notes.map(n => [n.noteId, n]));
@@ -838,6 +842,7 @@ export class Vault {
 
     this.utxoStore[accountAddress].notes = Array.from(existingMap.values());
     this.utxoStore[accountAddress].version += 1;
+    this.utxoStore[accountAddress].blockHeight = blockHeight;
 
     await this.saveAccountData();
   }
@@ -952,13 +957,14 @@ export class Vault {
    * Used for force resync operations
    * Automatically persists to encrypted storage
    */
-  async replaceAccountNotes(accountAddress: string, notes: StoredNote[]): Promise<void> {
+  async replaceAccountNotes(accountAddress: string, notes: StoredNote[], blockHeight: number): Promise<void> {
     if (!this.utxoStore[accountAddress]) {
-      this.utxoStore[accountAddress] = { notes: [], version: 0 };
+      this.utxoStore[accountAddress] = { notes: [], version: 0, blockHeight: 0 };
     }
 
     this.utxoStore[accountAddress].notes = notes;
     this.utxoStore[accountAddress].version += 1;
+    this.utxoStore[accountAddress].blockHeight = blockHeight;
 
     await this.saveAccountData();
   }
@@ -1120,6 +1126,7 @@ export class Vault {
     return withAccountLock(accountAddress, async () => {
       // 1. Fetch current UTXOs from chain
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
+      const blockHeight = balanceResult.blockHeight;
       const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
       const fetchedUTXOs = chainNotes.map(n => this.noteToFetchedUTXO(n));
 
@@ -1174,7 +1181,7 @@ export class Vault {
 
       // Save new notes
       if (newStoredNotes.length > 0) {
-        await this.saveNotes(accountAddress, newStoredNotes);
+        await this.saveNotes(accountAddress, newStoredNotes, blockHeight);
       }
 
       // 5b. Check for pending transactions whose inputs are ALREADY spent
@@ -1295,6 +1302,7 @@ export class Vault {
 
       // Fetch current UTXOs from chain
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
+      const blockHeight = balanceResult.blockHeight;
       const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
 
       // Convert to stored notes (all available, no incoming tx records on first init)
@@ -1304,7 +1312,7 @@ export class Vault {
 
       // Save notes
       if (storedNotes.length > 0) {
-        await this.saveNotes(accountAddress, storedNotes);
+        await this.saveNotes(accountAddress, storedNotes, blockHeight);
       }
     });
   }
@@ -1326,6 +1334,7 @@ export class Vault {
     return withAccountLock(accountAddress, async () => {
       // Fetch current UTXOs from chain (first-name only)
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
+      const blockHeight = balanceResult.blockHeight;
       const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
       const fetchedUTXOs = chainNotes.map(n => this.noteToFetchedUTXO(n));
 
@@ -1362,7 +1371,7 @@ export class Vault {
 
       // Replace all notes (but keep pending state)
       // Note: Full replacement, not a merge - clears notes not on chain
-      await this.replaceAccountNotes(accountAddress, newStoredNotes);
+      await this.replaceAccountNotes(accountAddress, newStoredNotes, blockHeight);
     });
   }
 
@@ -1721,10 +1730,7 @@ export class Vault {
 
       // Combine simple and coinbase notes
       const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
-      const blockHeight =
-        notes.length > 0
-          ? Math.max(...notes.map(n => Number(n.originPage)))
-          : 0;
+      const blockHeight = balanceResult.blockHeight;
 
       // Convert ALL notes to transaction builder format
       // WASM will automatically select the minimum number needed
@@ -1808,10 +1814,7 @@ export class Vault {
         }
 
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
-        const blockHeight =
-          notes.length > 0
-            ? Math.max(...notes.map(n => Number(n.originPage)))
-            : 0;
+        const blockHeight = balanceResult.blockHeight;
 
         // Sort UTXOs largest to smallest (WASM will select which ones to use)
         const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
@@ -1902,6 +1905,7 @@ export class Vault {
       try {
         // Get available (not in-flight) notes from in-memory UTXO store
         const notes = this.getAvailableNotes(currentAccount.address);
+        const blockHeight = this.getAccountBlockHeight(currentAccount.address);
 
         if (notes.length === 0) {
           return { error: 'No spendable UTXOs available.' };
@@ -1926,9 +1930,6 @@ export class Vault {
         if (estimationAmount <= 0) {
           return { error: 'Balance too low to send. Need more than fee amount.' };
         }
-
-        const blockHeight =
-          notes.length > 0 ? Math.max(...notes.map(n => n.originPage)) : 0;
 
         const constructedTx = await buildMultiNotePayment(
           txBuilderNotes,
@@ -2027,10 +2028,7 @@ export class Vault {
 
         // Combine simple and coinbase notes
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
-        const blockHeight =
-          notes.length > 0
-            ? Math.max(...notes.map(n => Number(n.originPage)))
-            : 0;
+        const blockHeight = balanceResult.blockHeight;
         const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
 
         // Convert ALL notes to transaction builder format
@@ -2138,6 +2136,7 @@ export class Vault {
         try {
           // 1. Get available notes from in-memory UTXO store (for state tracking)
           const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
+          const blockHeight = this.getAccountBlockHeight(currentAccount.address);
 
           if (availableStoredNotes.length === 0) {
             return { error: 'No available UTXOs.' };
@@ -2197,11 +2196,6 @@ export class Vault {
           // 6. Convert stored notes to transaction builder format
           const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
           const txBuilderNotes = sortedStoredNotes.map(convertStoredNoteForTxBuilder);
-
-          const blockHeight =
-            selectedStoredNotes.length > 0
-              ? Math.max(...selectedStoredNotes.map(n => n.originPage))
-              : 0;
 
           const endpoint = await getEffectiveRpcEndpoint();
           const rpcClient = createBrowserClient(endpoint);
@@ -2311,15 +2305,17 @@ export class Vault {
 
     const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
 
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
+
     try {
       // Use block height from latest balance (max originPage of current account's notes)
       const accountNotes = currentAccount
         ? this.getAccountNotes(currentAccount.address)
         : [];
-      const blockHeight =
-        accountNotes.length > 0
-          ? Math.max(...accountNotes.map(n => n.originPage))
-          : undefined;
+      const blockHeight = currentAccount
+        ? this.getAccountBlockHeight(currentAccount.address)
+        : await rpcClient.getCurrentBlockHeight();
 
       const settings = await txEngineSettings(blockHeight);
       const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, settings);

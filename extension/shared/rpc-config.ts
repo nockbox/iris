@@ -47,15 +47,12 @@ export const BLOCK_EXPLORER_OPTIONS = [
 
 const DEFAULT_BLOCK_EXPLORER_URL = NOCKSCAN_URL;
 
-/** Fee per word (8-byte unit) for tx size calculation in nicks. 32,768 nicks = 0.5 NOCK per word. */
-export const DEFAULT_FEE_PER_WORD = 1 << 14;
-
-/** Default tx engine settings (mainnet: v1 from genesis). Export for fallback use. */
-export const DEFAULT_TX_ENGINE_SETTINGS: TxEngineSettings = {
+/** Default V1 tx engine settings (mainnet: v1 from 39000). */
+const V1_TX_ENGINE_SETTINGS: TxEngineSettings = {
   tx_engine_version: 1,
   tx_engine_patch: 0,
-  min_fee: '0',
-  cost_per_word: String(DEFAULT_FEE_PER_WORD),
+  min_fee: '256',
+  cost_per_word: String(1 << 15),
   witness_word_div: 1,
 };
 
@@ -64,12 +61,13 @@ const BYTHOS_TX_ENGINE_SETTINGS: TxEngineSettings = {
   tx_engine_version: 1,
   tx_engine_patch: 1,
   min_fee: '256',
-  cost_per_word: String(DEFAULT_FEE_PER_WORD),
+  cost_per_word: String(1 << 14),
   witness_word_div: 4,
 };
 
+// Intentionally don't have a tx engine at block 0, because we do not support v0 just yet.
 const DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS: TxEngineActivationHeights = {
-  0: DEFAULT_TX_ENGINE_SETTINGS,
+  39000: V1_TX_ENGINE_SETTINGS,
   54000: BYTHOS_TX_ENGINE_SETTINGS,
 };
 

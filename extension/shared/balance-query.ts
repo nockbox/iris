@@ -6,7 +6,7 @@
  * the gRPC API.
  */
 
-import { NockchainBrowserRPCClient } from './rpc-client-browser';
+import { NockchainBrowserRPCClient, Balance } from './rpc-client-browser';
 import { getBothFirstNames } from './first-name-derivation';
 import { NOCK_TO_NICKS } from './constants';
 import type { Note } from './types';
@@ -25,6 +25,8 @@ export interface BalanceResult {
   coinbaseNotes: Note[];
   /** Total number of UTXOs/notes */
   utxoCount: number;
+  /** Block height of this result */
+  blockHeight: number;
 }
 
 /**
@@ -88,8 +90,9 @@ export async function queryV1Balance(
     throw new Error(`Failed balance query by first-name (${simpleError}; ${coinbaseError})`);
   }
 
-  simpleNotes = simpleResult.status === 'fulfilled' ? simpleResult.value : [];
-  coinbaseNotes = coinbaseResult.status === 'fulfilled' ? coinbaseResult.value : [];
+  simpleNotes = simpleResult.status === 'fulfilled' ? simpleResult.value.notes : [];
+  coinbaseNotes = coinbaseResult.status === 'fulfilled' ? coinbaseResult.value.notes : [];
+  const blockHeight = simpleResult.status === 'fulfilled' ? simpleResult.value.height : (coinbaseResult as any).value.height;
 
   // Sum the total value in nicks
   const totalNicks = [...simpleNotes, ...coinbaseNotes].reduce(
@@ -106,6 +109,7 @@ export async function queryV1Balance(
     simpleNotes,
     coinbaseNotes,
     utxoCount: simpleNotes.length + coinbaseNotes.length,
+    blockHeight
   };
 }
 
@@ -121,7 +125,7 @@ export async function queryV1Balance(
 export async function querySimpleNotes(
   pkhBase58: string,
   rpcClient: NockchainBrowserRPCClient
-): Promise<Note[]> {
+): Promise<Balance> {
   const { simple } = await getBothFirstNames(pkhBase58);
   return rpcClient.getNotesByFirstName(simple);
 }
@@ -141,7 +145,7 @@ export async function querySimpleNotes(
 export async function queryCoinbaseNotes(
   pkhBase58: string,
   rpcClient: NockchainBrowserRPCClient
-): Promise<Note[]> {
+): Promise<Balance> {
   const { coinbase } = await getBothFirstNames(pkhBase58);
   return rpcClient.getNotesByFirstName(coinbase);
 }
