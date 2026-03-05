@@ -497,9 +497,13 @@ export class Vault {
   > {
     const stored = await chrome.storage.local.get([
       STORAGE_KEYS.ENCRYPTED_VAULT,
+      STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA,
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
     ]);
     const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
+    const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as
+      | EncryptedAccountDataBlob
+      | undefined;
     const currentAccountIndex =
       (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
 
@@ -520,8 +524,35 @@ export class Vault {
     const payload = JSON.parse(pt) as VaultPayload;
     const accounts = payload.accounts;
 
+    // Load account data (same as password unlock) so transaction history displays
+    let utxoStore: UTXOStore = {};
+    let walletTxStore: WalletTxStore = {};
+    let cachedBalances: Record<string, number> = {};
+    let loadedFromEncrypted = false;
+
+    if (encAccountData) {
+      const accountDataPt = await decryptGCM(
+        key,
+        new Uint8Array(encAccountData.cipher.iv),
+        new Uint8Array(encAccountData.cipher.ct)
+      ).catch(() => null);
+
+      if (accountDataPt) {
+        const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
+        utxoStore = accountData.utxoStore || {};
+        walletTxStore = accountData.walletTxStore || {};
+        cachedBalances = accountData.cachedBalances || {};
+        loadedFromEncrypted = true;
+      }
+    }
+
+    // Key is only cached after unlock() runs, so migration has always happened.
+    // No legacy fallback needed.
     this.mnemonic = payload.mnemonic;
     this.encryptionKey = key;
+    this.utxoStore = utxoStore;
+    this.walletTxStore = walletTxStore;
+    this.cachedBalances = cachedBalances;
 
     this.state = {
       locked: false,
