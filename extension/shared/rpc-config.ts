@@ -138,7 +138,10 @@ export function getTxEngineNameForHeight(
     .filter(h => h <= currentHeight)
     .sort((a, b) => b - a);
   const best = heights[0];
-  return best !== undefined ? activationHeights[best] : 'tx-engine-1';
+  if (best === undefined) {
+    throw new Error(`No tx engine available for height ${currentHeight}`);
+  }
+  return activationHeights[best];
 }
 
 /**
@@ -148,7 +151,7 @@ export function getTxEngineNameForHeight(
 export function parseTxEngineName(name: string): { version: 0 | 1 | 2; patch: number } {
   const trimmed = (name || '').trim().toLowerCase();
   if (trimmed === 'tx-engine-bythos') {
-    return { version: 2, patch: 0 };
+    return { version: 1, patch: 1 };
   }
   const match = trimmed.match(/^tx-engine-(\d+)(?:\.(\d+))?$/);
   if (match) {
@@ -166,9 +169,18 @@ export function parseTxEngineName(name: string): { version: 0 | 1 | 2; patch: nu
 export async function getTxEngineSettingsForHeight(
   blockHeight: number,
   costPerWord: number
-): Promise<{ tx_engine_version: 0 | 1 | 2; tx_engine_patch: number; min_fee: string; cost_per_word: string; witness_word_div: number }> {
+): Promise<{
+  tx_engine_version: 0 | 1 | 2;
+  tx_engine_patch: number;
+  min_fee: string;
+  cost_per_word: string;
+  witness_word_div: number;
+}> {
   const config = await getEffectiveRpcConfig();
-  const heights = config.txEngineActivationHeights ?? defaultRpcConfig.txEngineActivationHeights ?? DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS;
+  const heights =
+    config.txEngineActivationHeights ??
+    defaultRpcConfig.txEngineActivationHeights ??
+    DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS;
   const engineName = getTxEngineNameForHeight(heights, blockHeight);
   const { version, patch } = parseTxEngineName(engineName);
   return {
