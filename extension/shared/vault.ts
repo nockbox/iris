@@ -16,7 +16,6 @@ import {
   ACCOUNT_COLORS,
   PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
-  DEFAULT_FEE_PER_WORD,
 } from './constants';
 import { Account } from './types';
 import { buildMultiNotePayment, type Note } from './transaction-builder';
@@ -47,22 +46,18 @@ import {
   assertNativeNote,
   assertNativeSpendCondition,
 } from './sign-raw-tx-compat';
-import { getTxEngineSettingsForHeight } from './rpc-config';
+import { getTxEngineSettingsForHeight, DEFAULT_TX_ENGINE_SETTINGS } from './rpc-config';
 
-async function txEngineSettings(): Promise<wasm.TxEngineSettings> {
+async function txEngineSettings(blockHeight?: number): Promise<wasm.TxEngineSettings> {
   try {
-    const endpoint = await getEffectiveRpcEndpoint();
-    const rpcClient = createBrowserClient(endpoint);
-    const blockHeight = Number(await rpcClient.getCurrentBlockHeight());
-    return getTxEngineSettingsForHeight(blockHeight, DEFAULT_FEE_PER_WORD);
+    if (blockHeight === undefined) {
+      const endpoint = await getEffectiveRpcEndpoint();
+      const rpcClient = createBrowserClient(endpoint);
+      blockHeight = Number(await rpcClient.getCurrentBlockHeight());
+    }
+    return getTxEngineSettingsForHeight(blockHeight);
   } catch {
-    return {
-      tx_engine_version: 1,
-      tx_engine_patch: 0,
-      min_fee: '0',
-      cost_per_word: String(DEFAULT_FEE_PER_WORD),
-      witness_word_div: 1,
-    };
+    return DEFAULT_TX_ENGINE_SETTINGS;
   }
 }
 
@@ -1695,10 +1690,7 @@ export class Vault {
     try {
       const endpoint = await getEffectiveRpcEndpoint();
       const rpcClient = createBrowserClient(endpoint);
-      const [balanceResult, blockHeight] = await Promise.all([
-        queryV1Balance(currentAccount.address, rpcClient),
-        rpcClient.getCurrentBlockHeight(),
-      ]);
+      const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
       if (balanceResult.utxoCount === 0) {
         throw new Error('No UTXOs available. Your wallet may have zero balance.');
@@ -1706,6 +1698,10 @@ export class Vault {
 
       // Combine simple and coinbase notes
       const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+      const blockHeight =
+        notes.length > 0
+          ? Math.max(...notes.map(n => Number(n.originPage)))
+          : 0;
 
       // Convert ALL notes to transaction builder format
       // WASM will automatically select the minimum number needed
@@ -1723,7 +1719,7 @@ export class Vault {
         accountKey.privateKey,
         fee,
         undefined,
-        Number(blockHeight)
+        blockHeight
       );
 
       // Return constructed transaction (for caller to broadcast)
@@ -1779,16 +1775,17 @@ export class Vault {
       try {
         const endpoint = await getEffectiveRpcEndpoint();
         const rpcClient = createBrowserClient(endpoint);
-        const [balanceResult, blockHeight] = await Promise.all([
-          queryV1Balance(currentAccount.address, rpcClient),
-          rpcClient.getCurrentBlockHeight(),
-        ]);
+        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
         if (balanceResult.utxoCount === 0) {
           return { error: 'No UTXOs available. Your wallet may have zero balance.' };
         }
 
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+        const blockHeight =
+          notes.length > 0
+            ? Math.max(...notes.map(n => Number(n.originPage)))
+            : 0;
 
         // Sort UTXOs largest to smallest (WASM will select which ones to use)
         const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
@@ -1809,7 +1806,7 @@ export class Vault {
           accountKey.privateKey,
           undefined, // let WASM auto-calc
           undefined,
-          Number(blockHeight)
+          blockHeight
         );
 
         // Get the calculated fee from the builder
@@ -1901,9 +1898,8 @@ export class Vault {
           return { error: 'Balance too low to send. Need more than fee amount.' };
         }
 
-        const endpoint = await getEffectiveRpcEndpoint();
-        const rpcClient = createBrowserClient(endpoint);
-        const blockHeight = Number(await rpcClient.getCurrentBlockHeight());
+        const blockHeight =
+          notes.length > 0 ? Math.max(...notes.map(n => n.originPage)) : 0;
 
         const constructedTx = await buildMultiNotePayment(
           txBuilderNotes,
@@ -1991,10 +1987,7 @@ export class Vault {
       try {
         const endpoint = await getEffectiveRpcEndpoint();
         const rpcClient = createBrowserClient(endpoint);
-        const [balanceResult, blockHeight] = await Promise.all([
-          queryV1Balance(currentAccount.address, rpcClient),
-          rpcClient.getCurrentBlockHeight(),
-        ]);
+        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
         if (balanceResult.utxoCount === 0) {
           return { error: 'No UTXOs available. Your wallet may have zero balance.' };
@@ -2002,6 +1995,10 @@ export class Vault {
 
         // Combine simple and coinbase notes
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+        const blockHeight =
+          notes.length > 0
+            ? Math.max(...notes.map(n => Number(n.originPage)))
+            : 0;
         const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
 
         // Convert ALL notes to transaction builder format
@@ -2020,7 +2017,7 @@ export class Vault {
           accountKey.privateKey,
           fee,
           undefined,
-          Number(blockHeight)
+          blockHeight
         );
 
         // Convert to protobuf format for gRPC and broadcast
@@ -2166,9 +2163,13 @@ export class Vault {
           const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
           const txBuilderNotes = sortedStoredNotes.map(convertStoredNoteForTxBuilder);
 
+          const blockHeight =
+            selectedStoredNotes.length > 0
+              ? Math.max(...selectedStoredNotes.map(n => n.originPage))
+              : 0;
+
           const endpoint = await getEffectiveRpcEndpoint();
           const rpcClient = createBrowserClient(endpoint);
-          const blockHeight = Number(await rpcClient.getCurrentBlockHeight());
 
           // For sendMax: set refundPKH = recipient so all funds go to recipient (sweep)
           const refundAddress = sendMax ? to : undefined;
@@ -2273,8 +2274,16 @@ export class Vault {
     }
 
     try {
-      // rawTx, notes, spendConditions are native (converted at RPC boundary)
-      const settings = await txEngineSettings();
+      // Use block height from latest balance (max originPage of current account's notes)
+      const accountNotes = currentAccount
+        ? this.getAccountNotes(currentAccount.address)
+        : [];
+      const blockHeight =
+        accountNotes.length > 0
+          ? Math.max(...accountNotes.map(n => n.originPage))
+          : undefined;
+
+      const settings = await txEngineSettings(blockHeight);
       const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, settings);
 
       // Sign: WASM expects exactly 32 bytes (big-endian). Copy to a fresh Uint8Array so we don't pass a view into WASM memory.

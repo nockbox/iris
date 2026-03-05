@@ -5,7 +5,10 @@ import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
 import NockBlocksFrame from '../assets/NockBlocksFrame.svg';
 import NockScanFrame from '../assets/NockScanFrame.svg';
-import type { TxEngineActivationHeights } from '../../shared/rpc-config';
+import type {
+  TxEngineActivationHeights,
+  TxEngineSettings,
+} from '../../shared/rpc-config';
 import {
   defaultRpcConfig,
   getEffectiveRpcConfig,
@@ -18,24 +21,35 @@ import {
 
 function txEngineHeightsToJson(heights: TxEngineActivationHeights | undefined): string {
   if (!heights || Object.keys(heights).length === 0) {
-    return '{\n  0: "tx-engine-1"\n}';
+    return '{\n  "0": { "tx_engine_version": 1, "tx_engine_patch": 0, "min_fee": "0", "cost_per_word": "32768", "witness_word_div": 1 }\n}';
   }
   const entries = Object.entries(heights)
     .sort(([a], [b]) => Number(a) - Number(b))
-    .map(([h, name]) => `  ${h}: "${name}"`);
+    .map(([h, s]) => `  "${h}": ${JSON.stringify(s)}`);
   return `{\n${entries.join(',\n')}\n}`;
 }
 
 function parseTxEngineHeightsJson(json: string): TxEngineActivationHeights | null {
   try {
-    // Support both { 0: "x" } (invalid JSON) and { "0": "x" } (valid JSON)
-    const normalized = json.replace(/(\d+)\s*:/g, '"$1":');
-    const parsed = JSON.parse(normalized) as Record<string, string>;
+    const parsed = JSON.parse(json) as Record<string, TxEngineSettings>;
     const result: TxEngineActivationHeights = {};
     for (const [k, v] of Object.entries(parsed)) {
       const h = parseInt(k, 10);
-      if (!Number.isNaN(h) && typeof v === 'string' && v.trim()) {
-        result[h] = v.trim();
+      if (Number.isNaN(h) || v == null || typeof v !== 'object') continue;
+      if (
+        typeof v.tx_engine_version === 'number' &&
+        typeof v.tx_engine_patch === 'number' &&
+        typeof v.min_fee === 'string' &&
+        typeof v.cost_per_word === 'string' &&
+        typeof v.witness_word_div === 'number'
+      ) {
+        result[h] = {
+          tx_engine_version: Math.min(2, Math.max(0, v.tx_engine_version)) as 0 | 1 | 2,
+          tx_engine_patch: v.tx_engine_patch,
+          min_fee: String(v.min_fee),
+          cost_per_word: String(v.cost_per_word),
+          witness_word_div: v.witness_word_div,
+        };
       }
     }
     return Object.keys(result).length > 0 ? result : null;
@@ -94,7 +108,9 @@ export function RpcSettingsScreen() {
   async function handleSave() {
     const parsed = parseTxEngineHeightsJson(txEngineConfig);
     if (!parsed) {
-      setTxEngineError('Invalid format. Use: { 0: "tx-engine-0", 24000: "tx-engine-1" }');
+      setTxEngineError(
+        'Invalid format. Use: { "0": { "tx_engine_version": 1, "tx_engine_patch": 0, "min_fee": "0", "cost_per_word": "32768", "witness_word_div": 1 } }'
+      );
       return;
     }
     setTxEngineError(null);
@@ -127,9 +143,7 @@ export function RpcSettingsScreen() {
     setRpcUrl(defaultRpcConfig.rpcUrl);
     setBlockExplorerUrl(defaultRpcConfig.blockExplorerUrl);
     setTxEngineConfig(txEngineHeightsToJson(defaultRpcConfig.txEngineActivationHeights));
-    setCoinbaseTimelockBlocks(
-      String(defaultRpcConfig.coinbaseTimelockBlocks ?? 100)
-    );
+    setCoinbaseTimelockBlocks(String(defaultRpcConfig.coinbaseTimelockBlocks ?? 100));
     setTxEngineError(null);
     await clearRpcConfig();
   }
@@ -217,11 +231,7 @@ export function RpcSettingsScreen() {
               <span className="flex items-center gap-2 min-w-0">
                 {BLOCK_EXPLORER_ICONS[blockExplorerUrl] && (
                   <span className="w-10 h-10 rounded-lg bg-white flex items-center justify-center shrink-0">
-                    <img
-                      src={BLOCK_EXPLORER_ICONS[blockExplorerUrl]}
-                      alt=""
-                      className="w-6 h-6"
-                    />
+                    <img src={BLOCK_EXPLORER_ICONS[blockExplorerUrl]} alt="" className="w-6 h-6" />
                   </span>
                 )}
                 <span className="truncate">
@@ -262,7 +272,9 @@ export function RpcSettingsScreen() {
                         (e.currentTarget.style.backgroundColor = 'var(--color-surface-900)')
                       }
                       onMouseLeave={e =>
-                        (e.currentTarget.style.backgroundColor = selected ? 'var(--color-surface-900)' : 'transparent')
+                        (e.currentTarget.style.backgroundColor = selected
+                          ? 'var(--color-surface-900)'
+                          : 'transparent')
                       }
                       onClick={() => {
                         setBlockExplorerUrl(opt.value);
@@ -272,11 +284,7 @@ export function RpcSettingsScreen() {
                       <span className="flex items-center gap-2 text-sm font-medium leading-[18px] tracking-[0.14px] flex-1 min-w-0">
                         {BLOCK_EXPLORER_ICONS[opt.value] && (
                           <span className="w-10 h-10 rounded-lg bg-white flex items-center justify-center shrink-0">
-                            <img
-                              src={BLOCK_EXPLORER_ICONS[opt.value]}
-                              alt=""
-                              className="w-6 h-6"
-                            />
+                            <img src={BLOCK_EXPLORER_ICONS[opt.value]} alt="" className="w-6 h-6" />
                           </span>
                         )}
                         {opt.label}
@@ -289,7 +297,10 @@ export function RpcSettingsScreen() {
                         }}
                       >
                         {selected && (
-                          <span className="w-3 h-3 rounded-full" style={{ backgroundColor: '#000' }} />
+                          <span
+                            className="w-3 h-3 rounded-full"
+                            style={{ backgroundColor: '#000' }}
+                          />
                         )}
                       </span>
                     </button>
@@ -316,7 +327,9 @@ export function RpcSettingsScreen() {
               e.currentTarget.style.color = 'var(--color-text-primary)';
             }}
             onMouseLeave={e => {
-              e.currentTarget.style.backgroundColor = advancedOpen ? 'var(--color-surface-900)' : 'transparent';
+              e.currentTarget.style.backgroundColor = advancedOpen
+                ? 'var(--color-surface-900)'
+                : 'transparent';
               e.currentTarget.style.color = 'var(--color-text-muted)';
             }}
           >
@@ -347,7 +360,9 @@ export function RpcSettingsScreen() {
                     setTxEngineConfig(e.target.value);
                     setTxEngineError(null);
                   }}
-                  placeholder={'{\n  0: "tx-engine-0",\n  24000: "tx-engine-1",\n  54000: "tx-engine-bythos"\n}'}
+                  placeholder={
+                    '{\n  "0": { "tx_engine_version": 1, "tx_engine_patch": 0, "min_fee": "0", "cost_per_word": "32768", "witness_word_div": 1 },\n  "24000": { "tx_engine_version": 1, "tx_engine_patch": 1, "min_fee": "256", "cost_per_word": "32768", "witness_word_div": 4 }\n}'
+                  }
                   onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
                   onBlur={e =>
                     (e.currentTarget.style.borderColor = txEngineError
@@ -361,10 +376,9 @@ export function RpcSettingsScreen() {
                   </span>
                 )}
                 <span className="text-xs block" style={labelStyle}>
-                  Block height → tx engine name. At height H, use the engine for the largest key ≤ H.
-                </span>
-                <span className="text-xs block" style={labelStyle}>
-                  Engine: <code>tx-engine-N</code> (vN patch 0) or <code>tx-engine-N.M</code> (vN patch M). e.g. <code>tx-engine-2.1</code>, <code>tx-engine-bythos</code>.
+                  Block height → tx engine settings. At height H, use the settings for the largest
+                  key ≤ H. Fields: tx_engine_version (0–2), tx_engine_patch, min_fee, cost_per_word,
+                  witness_word_div.
                 </span>
               </div>
 

@@ -1080,7 +1080,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           req.notes.forEach(assertNativeNote);
           const forPopup = {
             ...req,
-            notes: req.notes.map((n) => noteToProtobuf(n as Note)),
+            notes: req.notes.map(n => noteToProtobuf(n as Note)),
           };
           sendResponse(forPopup);
         } else {

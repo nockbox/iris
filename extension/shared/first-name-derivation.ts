@@ -16,7 +16,6 @@ export function firstNameFromCondition(condition: wasm.SpendCondition): string {
   return wasm.spendConditionFirstName(condition);
 }
 
-
 /**
  * Derives the first-name for a simple PKH-locked note
  *

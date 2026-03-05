@@ -7,7 +7,6 @@ import wasm from './sdk-wasm.js';
 import type { Nicks } from './currency.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
-import { DEFAULT_FEE_PER_WORD } from './constants.js';
 import { getEffectiveRpcConfig, getTxEngineSettingsForHeight } from './rpc-config.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
 import {
@@ -23,20 +22,9 @@ function noteFromProtobuf(protoNote: any): any {
   return wasm.note_from_protobuf(protoNote);
 }
 
-async function createTxBuilder(
-  feePerWord: number,
-  blockHeight?: number
-): Promise<wasm.TxBuilder> {
-  const settings: wasm.TxEngineSettings =
-    blockHeight !== undefined
-      ? await getTxEngineSettingsForHeight(blockHeight, feePerWord)
-      : {
-          tx_engine_version: 1,
-          tx_engine_patch: 0,
-          min_fee: '0',
-          cost_per_word: String(feePerWord),
-          witness_word_div: 1,
-        };
+async function createTxBuilder(blockHeight?: number): Promise<wasm.TxBuilder> {
+  const height = blockHeight ?? 0;
+  const settings = await getTxEngineSettingsForHeight(height);
   return new wasm.TxBuilder(settings);
 }
 
@@ -240,7 +228,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   }
 
   // New WASM API: constructor takes fee_per_word; blockHeight selects tx engine by activation height
-  const builder = await createTxBuilder(DEFAULT_FEE_PER_WORD, blockHeight);
+  const builder = await createTxBuilder(blockHeight);
 
   // New API: Nicks values are strings and digest values are strings.
   builder.simpleSpend(

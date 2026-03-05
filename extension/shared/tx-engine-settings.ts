@@ -4,7 +4,7 @@
  */
 
 import wasm from './sdk-wasm.js';
-import { DEFAULT_FEE_PER_WORD } from './constants.js';
+import { DEFAULT_FEE_PER_WORD } from './rpc-config.js';
 
 export function txEngineSettings(costPerWord = DEFAULT_FEE_PER_WORD): wasm.TxEngineSettings {
   return {

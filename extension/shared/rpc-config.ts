@@ -5,18 +5,26 @@
 
 import { STORAGE_KEYS, RPC_ENDPOINT } from './constants';
 
+/** Tx engine settings (matches wasm.TxEngineSettings). Stored directly, used as-is. */
+export interface TxEngineSettings {
+  tx_engine_version: 0 | 1 | 2;
+  tx_engine_patch: number;
+  min_fee: string;
+  cost_per_word: string;
+  witness_word_div: number;
+}
+
 /**
- * Activation heights for tx engine versions.
- * Keys are block heights; at that height and above, use the corresponding engine.
- * Example: { 0: "tx-engine-0", 24000: "tx-engine-1", 54000: "tx-engine-bythos" }
+ * Activation heights for tx engine settings.
+ * Keys are block heights; at that height and above, use the corresponding settings.
  */
-export type TxEngineActivationHeights = Record<number, string>;
+export type TxEngineActivationHeights = Record<number, TxEngineSettings>;
 
 export interface RpcConfig {
   rpcUrl: string;
   networkName: string;
   blockExplorerUrl: string;
-  /** Block height -> tx engine name. At height H, use the engine for the largest key <= H. */
+  /** Block height -> tx engine settings. At height H, use the settings for the largest key <= H. */
   txEngineActivationHeights?: TxEngineActivationHeights;
   /** Coinbase maturity in blocks (e.g. 100 for mainnet, different for testnet). */
   coinbaseTimelockBlocks?: number;
@@ -39,9 +47,30 @@ export const BLOCK_EXPLORER_OPTIONS = [
 
 const DEFAULT_BLOCK_EXPLORER_URL = NOCKSCAN_URL;
 
-/** Default tx engine activation (mainnet: v1 from genesis) */
+/** Fee per word (8-byte unit) for tx size calculation in nicks. 32,768 nicks = 0.5 NOCK per word. */
+export const DEFAULT_FEE_PER_WORD = 1 << 14;
+
+/** Default tx engine settings (mainnet: v1 from genesis). Export for fallback use. */
+export const DEFAULT_TX_ENGINE_SETTINGS: TxEngineSettings = {
+  tx_engine_version: 1,
+  tx_engine_patch: 0,
+  min_fee: '0',
+  cost_per_word: String(DEFAULT_FEE_PER_WORD),
+  witness_word_div: 1,
+};
+
+/** Bythos tx engine (v1 patch 1): witness_word_div 4, min_fee 256 */
+const BYTHOS_TX_ENGINE_SETTINGS: TxEngineSettings = {
+  tx_engine_version: 1,
+  tx_engine_patch: 1,
+  min_fee: '256',
+  cost_per_word: String(DEFAULT_FEE_PER_WORD),
+  witness_word_div: 4,
+};
+
 const DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS: TxEngineActivationHeights = {
-  0: 'tx-engine-1',
+  0: DEFAULT_TX_ENGINE_SETTINGS,
+  54000: BYTHOS_TX_ENGINE_SETTINGS,
 };
 
 /** Default coinbase timelock (mainnet maturity) */
@@ -126,68 +155,25 @@ export async function clearRpcConfig(): Promise<void> {
 }
 
 /**
- * Resolve which tx engine to use at a given block height.
- * Returns the engine name for the largest activation height <= currentHeight.
- */
-export function getTxEngineNameForHeight(
-  activationHeights: TxEngineActivationHeights,
-  currentHeight: number
-): string {
-  const heights = Object.keys(activationHeights)
-    .map(Number)
-    .filter(h => h <= currentHeight)
-    .sort((a, b) => b - a);
-  const best = heights[0];
-  if (best === undefined) {
-    throw new Error(`No tx engine available for height ${currentHeight}`);
-  }
-  return activationHeights[best];
-}
-
-/**
- * Parse tx engine name to (version, patch).
- * Supports: tx-engine-0, tx-engine-1, tx-engine-2, tx-engine-bythos, etc.
- */
-export function parseTxEngineName(name: string): { version: 0 | 1 | 2; patch: number } {
-  const trimmed = (name || '').trim().toLowerCase();
-  if (trimmed === 'tx-engine-bythos') {
-    return { version: 1, patch: 1 };
-  }
-  const match = trimmed.match(/^tx-engine-(\d+)(?:\.(\d+))?$/);
-  if (match) {
-    const version = Math.min(2, Math.max(0, parseInt(match[1], 10))) as 0 | 1 | 2;
-    const patch = match[2] ? parseInt(match[2], 10) : 0;
-    return { version, patch };
-  }
-  return { version: 1, patch: 0 };
-}
-
-/**
  * Resolve TxEngineSettings for a given block height.
- * Returns settings suitable for wasm.TxBuilder constructor.
+ * Returns the settings for the largest activation height <= blockHeight.
+ * Use directly with wasm.TxBuilder.
  */
 export async function getTxEngineSettingsForHeight(
-  blockHeight: number,
-  costPerWord: number
-): Promise<{
-  tx_engine_version: 0 | 1 | 2;
-  tx_engine_patch: number;
-  min_fee: string;
-  cost_per_word: string;
-  witness_word_div: number;
-}> {
+  blockHeight: number
+): Promise<TxEngineSettings> {
   const config = await getEffectiveRpcConfig();
   const heights =
     config.txEngineActivationHeights ??
     defaultRpcConfig.txEngineActivationHeights ??
     DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS;
-  const engineName = getTxEngineNameForHeight(heights, blockHeight);
-  const { version, patch } = parseTxEngineName(engineName);
-  return {
-    tx_engine_version: version,
-    tx_engine_patch: patch,
-    min_fee: '0',
-    cost_per_word: String(costPerWord),
-    witness_word_div: 1,
-  };
+  const sorted = Object.keys(heights)
+    .map(Number)
+    .filter(h => h <= blockHeight)
+    .sort((a, b) => b - a);
+  const best = sorted[0];
+  if (best === undefined) {
+    throw new Error(`No tx engine available for height ${blockHeight}`);
+  }
+  return heights[best];
 }
