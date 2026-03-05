@@ -1,6 +1,7 @@
 import { useStore } from '../store';
 import IrisLogo from '../assets/iris-logo.svg';
 import ThemeIcon from '../assets/theme-icon.svg';
+import RpcSettingsIcon from '../assets/rpc-settings-icon.svg';
 import KeyIcon from '../assets/key-icon.svg';
 import ClockIcon from '../assets/clock-icon.svg';
 import { CloseIcon } from '../components/icons/CloseIcon';
@@ -19,6 +20,9 @@ export function SettingsScreen() {
   }
   function handleKeySettings() {
     navigate('key-settings');
+  }
+  function handleRPCSettings() {
+    navigate('rpc-settings');
   }
   function handleLockTime() {
     navigate('lock-time');
@@ -88,6 +92,7 @@ export function SettingsScreen() {
         <div className="flex flex-col gap-2 px-3 py-2">
           <Row icon={ThemeIcon} label="Theme settings" onClick={handleThemeSettings} />
           <Row icon={KeyIcon} label="Key settings" onClick={handleKeySettings} />
+          <Row icon={RpcSettingsIcon} label="RPC settings" onClick={handleRPCSettings} />
           <Row icon={ClockIcon} label="Lock time" onClick={handleLockTime} />
           <Row icon={AboutIcon} label="About" onClick={handleAbout} />
         </div>

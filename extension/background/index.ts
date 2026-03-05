@@ -29,8 +29,9 @@ import {
   USER_ACTIVITY_METHODS,
   UI_CONSTANTS,
   APPROVAL_CONSTANTS,
-  RPC_ENDPOINT,
+  CHAIN_ID,
 } from '../shared/constants';
+import { getEffectiveRpcEndpoint } from '../shared/rpc-config';
 import type {
   TransactionRequest,
   SignRequest,
@@ -579,13 +580,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         // Origin approved - return address
+        const connectEndpoint = await getEffectiveRpcEndpoint();
         sendResponse({
           pkh: vault.getAddress(),
-          grpcEndpoint: RPC_ENDPOINT,
+          grpcEndpoint: connectEndpoint,
         });
 
         // Emit connect event when dApp connects successfully
-        await emitWalletEvent('connect', { chainId: 'nockchain-1' });
+        await emitWalletEvent('connect', { chainId: CHAIN_ID });
         return;
 
       case PROVIDER_METHODS.SIGN_MESSAGE:
@@ -739,9 +741,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
+        const stateEndpoint = await getEffectiveRpcEndpoint();
         sendResponse({
           pkh: vault.getAddress(),
-          grpcEndpoint: RPC_ENDPOINT,
+          grpcEndpoint: stateEndpoint,
         });
         return;
 
@@ -776,7 +779,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           manuallyLocked = false;
           await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
           await persistUnlockSession();
-          await emitWalletEvent('connect', { chainId: 'nockchain-1' });
+          await emitWalletEvent('connect', { chainId: CHAIN_ID });
         }
         return;
 
@@ -1077,7 +1080,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           req.notes.forEach(assertNativeNote);
           const forPopup = {
             ...req,
-            notes: req.notes.map((n) => noteToProtobuf(n as Note)),
+            notes: req.notes.map(n => noteToProtobuf(n as Note)),
           };
           sendResponse(forPopup);
         } else {
@@ -1266,16 +1269,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           await approveOrigin(connectRequest.origin);
 
           // Return wallet info
+          const approveEndpoint = await getEffectiveRpcEndpoint();
           approveConnectPending.sendResponse({
             pkh: vault.getAddress(),
-            grpcEndpoint: RPC_ENDPOINT,
+            grpcEndpoint: approveEndpoint,
           });
           cancelPendingRequest(approveConnectId);
           processNextRequest();
           sendResponse({ success: true });
 
           // Emit connect event
-          await emitWalletEvent('connect', { chainId: 'nockchain-1' });
+          await emitWalletEvent('connect', { chainId: CHAIN_ID });
         } else {
           sendResponse({ error: ERROR_CODES.NOT_FOUND });
         }

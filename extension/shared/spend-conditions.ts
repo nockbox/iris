@@ -10,11 +10,14 @@ export function createSimplePkhCondition(pkhBase58: string): wasm.SpendCondition
   return [{ Pkh: { m: 1, hashes: [pkhBase58] } }];
 }
 
-/** PKH + coinbase timelock (100 blocks): [(pkh), (tim, rel.min=100)]. */
-export function createPkhCoinbaseCondition(pkhBase58: string): wasm.SpendCondition {
+/** PKH + coinbase timelock: [(pkh), (tim, rel.min=timelockBlocks)]. Default 100 blocks. */
+export function createPkhCoinbaseCondition(
+  pkhBase58: string,
+  timelockBlocks = 100
+): wasm.SpendCondition {
   return [
     { Pkh: { m: 1, hashes: [pkhBase58] } },
-    { Tim: { rel: { min: 100, max: null }, abs: { min: null, max: null } } },
+    { Tim: { rel: { min: timelockBlocks, max: null }, abs: { min: null, max: null } } },
   ];
 }
 

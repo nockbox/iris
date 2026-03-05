@@ -248,6 +248,9 @@ export const STORAGE_KEYS = {
 
   /** Whether the user manually locked the wallet (survives SW restarts) */
   MANUALLY_LOCKED: 'manuallyLocked',
+
+  /** User RPC/network config (endpoint, network name, block explorer); falls back to defaults if unset */
+  RPC_CONFIG: 'rpcConfig',
 } as const;
 
 /**
@@ -284,7 +287,10 @@ export const MESSAGE_TARGETS = {
 export const AUTOLOCK_MINUTES = 0;
 
 /** Default RPC endpoint URL */
-export const RPC_ENDPOINT = 'https://rpc.nockbox.org';
+export const RPC_ENDPOINT = 'rpc.nockbox.org';
+
+/** Default Chain ID */
+export const CHAIN_ID = 'nockchain-1';
 
 /**
  * Nockchain Currency Conversion
@@ -298,9 +304,6 @@ export const NOCK_TO_NICKS = 65_536;
  * This is just a reasonable starting point for the fee input field.
  */
 export const DEFAULT_TRANSACTION_FEE = 3_407_872;
-
-/** Fee per word (8-byte unit) for transaction size calculation in nicks */
-export const DEFAULT_FEE_PER_WORD = 1 << 14; // 32,768 nicks = 0.5 NOCK per word
 
 /**
  * User Activity Methods - Methods that count as user activity for auto-lock timer

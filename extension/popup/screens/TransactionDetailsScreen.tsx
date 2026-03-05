@@ -15,6 +15,7 @@ export function TransactionDetailsScreen() {
     fetchWalletTransactions,
     walletTransactions,
     setSelectedTransaction,
+    blockExplorerUrl,
   } = useStore();
 
   const [copiedTxId, setCopiedTxId] = useState(false);
@@ -139,10 +140,10 @@ export function TransactionDetailsScreen() {
     navigate('home');
   }
   function handleViewExplorer() {
-    // Open transaction on nockscan.net (only if we have a txHash)
     const txHash = selectedTransaction?.txHash;
     if (txHash) {
-      window.open(`https://nockscan.net/tx/${txHash}`, '_blank');
+      const base = blockExplorerUrl.replace(/\/$/, '');
+      window.open(`${base}/tx/${txHash}`, '_blank');
     }
   }
   async function handleCopyTransactionId() {

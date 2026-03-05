@@ -35,8 +35,10 @@ export class NockchainBrowserRPCClient {
   private client: InstanceType<typeof wasm.GrpcClient> | null = null;
   private endpoint: string;
 
-  constructor(endpoint: string = RPC_ENDPOINT) {
-    this.endpoint = endpoint;
+  constructor(endpoint: string) {
+    this.endpoint = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(endpoint)
+      ? endpoint
+      : `https://${endpoint}`;
   }
 
   /**
@@ -48,6 +50,7 @@ export class NockchainBrowserRPCClient {
     }
 
     await ensureWasmInitialized();
+    console.log(this.endpoint);
     this.client = new wasm.GrpcClient(this.endpoint);
     return this.client;
   }
@@ -308,6 +311,6 @@ export class NockchainBrowserRPCClient {
  * Create a browser client instance
  * @param endpoint - gRPC-web endpoint URL (defaults to RPC_ENDPOINT)
  */
-export function createBrowserClient(endpoint = RPC_ENDPOINT): NockchainBrowserRPCClient {
+export function createBrowserClient(endpoint: string): NockchainBrowserRPCClient {
   return new NockchainBrowserRPCClient(endpoint);
 }

@@ -22,6 +22,7 @@ import { buildMultiNotePayment, type Note } from './transaction-builder';
 import wasm from './sdk-wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
+import { getEffectiveRpcEndpoint } from './rpc-config';
 import type { Note as BalanceNote, UTXOStore, WalletTxStore } from './types';
 import { base58 } from '@scure/base';
 import { initWasmModules } from './wasm-utils';
@@ -45,7 +46,20 @@ import {
   assertNativeNote,
   assertNativeSpendCondition,
 } from './sign-raw-tx-compat';
-import { txEngineSettings } from './tx-engine-settings.js';
+import { getTxEngineSettingsForHeight, DEFAULT_TX_ENGINE_SETTINGS } from './rpc-config';
+
+async function txEngineSettings(blockHeight?: number): Promise<wasm.TxEngineSettings> {
+  try {
+    if (blockHeight === undefined) {
+      const endpoint = await getEffectiveRpcEndpoint();
+      const rpcClient = createBrowserClient(endpoint);
+      blockHeight = Number(await rpcClient.getCurrentBlockHeight());
+    }
+    return getTxEngineSettingsForHeight(blockHeight);
+  } catch {
+    return DEFAULT_TX_ENGINE_SETTINGS;
+  }
+}
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
   const rawTx = wasm.nockchainTxToRawTx(tx);
@@ -1100,7 +1114,8 @@ export class Vault {
       throw new Error('Vault is locked');
     }
 
-    const rpcClient = createBrowserClient();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
 
     return withAccountLock(accountAddress, async () => {
       // 1. Fetch current UTXOs from chain
@@ -1268,7 +1283,8 @@ export class Vault {
       throw new Error('Vault is locked');
     }
 
-    const rpcClient = createBrowserClient();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
 
     return withAccountLock(accountAddress, async () => {
       // Check if already initialized
@@ -1304,7 +1320,8 @@ export class Vault {
       throw new Error('Vault is locked');
     }
 
-    const rpcClient = createBrowserClient();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
 
     return withAccountLock(accountAddress, async () => {
       // Fetch current UTXOs from chain (first-name only)
@@ -1693,8 +1710,8 @@ export class Vault {
     const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
 
     try {
-      // Create RPC client
-      const rpcClient = createBrowserClient();
+      const endpoint = await getEffectiveRpcEndpoint();
+      const rpcClient = createBrowserClient(endpoint);
       const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
       if (balanceResult.utxoCount === 0) {
@@ -1703,6 +1720,10 @@ export class Vault {
 
       // Combine simple and coinbase notes
       const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+      const blockHeight =
+        notes.length > 0
+          ? Math.max(...notes.map(n => Number(n.originPage)))
+          : 0;
 
       // Convert ALL notes to transaction builder format
       // WASM will automatically select the minimum number needed
@@ -1718,7 +1739,9 @@ export class Vault {
         amount,
         accountKey.publicKey,
         privateKey,
-        fee
+        fee,
+        undefined,
+        blockHeight
       );
 
       // Return constructed transaction (for caller to broadcast)
@@ -1775,7 +1798,8 @@ export class Vault {
       const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
 
       try {
-        const rpcClient = createBrowserClient();
+        const endpoint = await getEffectiveRpcEndpoint();
+        const rpcClient = createBrowserClient(endpoint);
         const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
         if (balanceResult.utxoCount === 0) {
@@ -1783,6 +1807,10 @@ export class Vault {
         }
 
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+        const blockHeight =
+          notes.length > 0
+            ? Math.max(...notes.map(n => Number(n.originPage)))
+            : 0;
 
         // Sort UTXOs largest to smallest (WASM will select which ones to use)
         const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
@@ -1801,7 +1829,9 @@ export class Vault {
           amount,
           accountKey.publicKey,
           privateKey,
-          undefined // let WASM auto-calc
+          undefined, // let WASM auto-calc
+          undefined,
+          blockHeight
         );
 
         // Get the calculated fee from the builder
@@ -1896,6 +1926,9 @@ export class Vault {
           return { error: 'Balance too low to send. Need more than fee amount.' };
         }
 
+        const blockHeight =
+          notes.length > 0 ? Math.max(...notes.map(n => n.originPage)) : 0;
+
         const constructedTx = await buildMultiNotePayment(
           txBuilderNotes,
           to,
@@ -1903,7 +1936,8 @@ export class Vault {
           accountKey.publicKey,
           privateKey,
           undefined, // let WASM auto-calc fee
-          to // refundPKH = recipient (sweep mode)
+          to, // refundPKH = recipient (sweep mode)
+          blockHeight
         );
 
         const fee = constructedTx.feeUsed;
@@ -1982,8 +2016,8 @@ export class Vault {
       const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
 
       try {
-        // Create RPC client
-        const rpcClient = createBrowserClient();
+        const endpoint = await getEffectiveRpcEndpoint();
+        const rpcClient = createBrowserClient(endpoint);
         const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
 
         if (balanceResult.utxoCount === 0) {
@@ -1992,6 +2026,10 @@ export class Vault {
 
         // Combine simple and coinbase notes
         const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+        const blockHeight =
+          notes.length > 0
+            ? Math.max(...notes.map(n => Number(n.originPage)))
+            : 0;
         const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
 
         // Convert ALL notes to transaction builder format
@@ -2008,7 +2046,9 @@ export class Vault {
           amount,
           accountKey.publicKey,
           privateKey,
-          fee
+          fee,
+          undefined,
+          blockHeight
         );
 
         // Convert to protobuf format for gRPC and broadcast
@@ -2157,7 +2197,13 @@ export class Vault {
           const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
           const txBuilderNotes = sortedStoredNotes.map(convertStoredNoteForTxBuilder);
 
-          const rpcClient = createBrowserClient();
+          const blockHeight =
+            selectedStoredNotes.length > 0
+              ? Math.max(...selectedStoredNotes.map(n => n.originPage))
+              : 0;
+
+          const endpoint = await getEffectiveRpcEndpoint();
+          const rpcClient = createBrowserClient(endpoint);
 
           // For sendMax: set refundPKH = recipient so all funds go to recipient (sweep)
           const refundAddress = sendMax ? to : undefined;
@@ -2169,7 +2215,8 @@ export class Vault {
             accountKey.publicKey,
             privateKey,
             fee,
-            refundAddress
+            refundAddress,
+            blockHeight
           );
 
           // 7. Broadcast transaction
@@ -2264,8 +2311,17 @@ export class Vault {
     const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
 
     try {
-      // rawTx, notes, spendConditions are native (converted at RPC boundary)
-      const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, txEngineSettings());
+      // Use block height from latest balance (max originPage of current account's notes)
+      const accountNotes = currentAccount
+        ? this.getAccountNotes(currentAccount.address)
+        : [];
+      const blockHeight =
+        accountNotes.length > 0
+          ? Math.max(...accountNotes.map(n => n.originPage))
+          : undefined;
+
+      const settings = await txEngineSettings(blockHeight);
+      const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, settings);
 
       await builder.sign(privateKey);
 

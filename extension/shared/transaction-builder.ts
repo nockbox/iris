@@ -7,8 +7,7 @@ import wasm from './sdk-wasm.js';
 import type { Nicks } from './currency.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
-import { DEFAULT_FEE_PER_WORD } from './constants.js';
-import { txEngineSettings } from './tx-engine-settings.js';
+import { getEffectiveRpcConfig, getTxEngineSettingsForHeight } from './rpc-config.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
 import {
   createSimplePkhCondition,
@@ -19,13 +18,14 @@ import {
 import { firstNameFromCondition } from './first-name-derivation.js';
 
 type SpendConditionLike = wasm.SpendCondition;
-
 function noteFromProtobuf(protoNote: any): any {
   return wasm.noteFromProtobuf(protoNote);
 }
 
-function createTxBuilder(feePerWord: number): wasm.TxBuilder {
-  return new wasm.TxBuilder(txEngineSettings(feePerWord));
+async function createTxBuilder(blockHeight?: number): Promise<wasm.TxBuilder> {
+  const height = blockHeight ?? 0;
+  const settings = await getTxEngineSettingsForHeight(height);
+  return new wasm.TxBuilder(settings);
 }
 
 function getFeeFromBuilder(builder: wasm.TxBuilder): number {
@@ -58,6 +58,10 @@ export async function discoverSpendConditionForNote(
 ): Promise<wasm.SpendCondition> {
   await ensureWasmInitialized();
 
+  const config = await getEffectiveRpcConfig();
+  const timelock = config.coinbaseTimelockBlocks ?? 100;
+  const timelockBigInt = BigInt(timelock);
+
   const candidates: Array<{ name: string; condition: SpendConditionLike }> = [];
 
   // 1) PKH only (standard simple note)
@@ -70,27 +74,27 @@ export async function discoverSpendConditionForNote(
 
   // 2) PKH ∧ TIM (coinbase helper)
   try {
-    const condition = createPkhCoinbaseCondition(senderPKH);
+    const condition = createPkhCoinbaseCondition(senderPKH, timelock);
     candidates.push({ name: 'PKH+TIM(coinbase)', condition });
   } catch (e) {
     console.warn('[TxBuilder] Failed to create PKH+TIM(coinbase) condition:', e);
   }
 
-  // 3) PKH ∧ TIM (relative 100 blocks - common coinbase maturity)
+  // 3) PKH ∧ TIM (relative blocks - common coinbase maturity)
   try {
-    const condition = createPkhRelativeTimelockCondition(senderPKH, 100n);
-    candidates.push({ name: 'PKH+TIM(rel:100)', condition });
+    const condition = createPkhRelativeTimelockCondition(senderPKH, timelockBigInt);
+    candidates.push({ name: `PKH+TIM(rel:${timelock})`, condition });
   } catch (e) {
-    console.warn('[TxBuilder] Failed to create PKH+TIM(rel:100) condition:', e);
+    console.warn('[TxBuilder] Failed to create PKH+TIM(rel) condition:', e);
   }
 
-  // 4) PKH ∧ TIM (absolute = originPage + 100)
+  // 4) PKH ∧ TIM (absolute = originPage + timelock)
   try {
-    const absMin = BigInt(note.originPage) + 100n;
+    const absMin = BigInt(note.originPage) + timelockBigInt;
     const condition = createPkhAbsoluteTimelockCondition(senderPKH, absMin);
-    candidates.push({ name: 'PKH+TIM(abs:origin+100)', condition });
+    candidates.push({ name: `PKH+TIM(abs:origin+${timelock})`, condition });
   } catch (e) {
-    console.warn('[TxBuilder] Failed to create PKH+TIM(abs:origin+100) condition:', e);
+    console.warn('[TxBuilder] Failed to create PKH+TIM(abs) condition:', e);
   }
 
   // Find the candidate whose first-name matches note.nameFirst
@@ -139,6 +143,8 @@ export interface TransactionParams {
   privateKey: wasm.PrivateKey;
   /** Whether to include lock data or not */
   includeLockData: boolean;
+  /** Current block height (for tx engine selection by activation height). If omitted, uses tx-engine-1. */
+  blockHeight?: number;
 }
 
 /**
@@ -174,6 +180,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     refundPKH,
     privateKey,
     includeLockData,
+    blockHeight,
   } = params;
 
   // Validate inputs
@@ -217,8 +224,8 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     );
   }
 
-  // New WASM API: constructor takes fee_per_word
-  const builder = createTxBuilder(DEFAULT_FEE_PER_WORD);
+  // New WASM API: constructor takes fee_per_word; blockHeight selects tx engine by activation height
+  const builder = await createTxBuilder(blockHeight);
 
   // New API: Nicks values are strings and digest values are strings.
   builder.simpleSpend(
@@ -263,6 +270,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
  * @param fee - Transaction fee in nicks (optional, WASM will auto-calculate if not provided)
  * @param refundPKH - Override for change address (optional, defaults to sender's PKH).
  *                    Set to recipientPKH for "send max" to sweep all funds to recipient.
+ * @param blockHeight - Current block height for tx engine selection (optional).
  * @returns Constructed transaction
  */
 export async function buildMultiNotePayment(
@@ -272,7 +280,8 @@ export async function buildMultiNotePayment(
   senderPublicKey: Uint8Array,
   privateKey: wasm.PrivateKey,
   fee?: Nicks,
-  refundPKH?: string
+  refundPKH?: string,
+  blockHeight?: number
 ): Promise<ConstructedTransaction> {
   // Initialize WASM
   await ensureWasmInitialized();
@@ -332,6 +341,7 @@ export async function buildMultiNotePayment(
     privateKey,
     // include_lock_data: false for lower fees (0.5 NOCK per word saved)
     includeLockData: false,
+    blockHeight,
   });
 }
 
