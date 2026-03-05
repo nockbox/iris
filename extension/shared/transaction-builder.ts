@@ -232,7 +232,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   );
 
   // Sign and validate the transaction
-  builder.sign(privateKey);
+  await builder.sign(privateKey);
   builder.validate();
 
   // Get the fee before building (for return value)

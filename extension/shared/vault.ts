@@ -2250,7 +2250,7 @@ export class Vault {
       // rawTx, notes, spendConditions are native (converted at RPC boundary)
       const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, txEngineSettings());
 
-      builder.sign(privateKey);
+      await builder.sign(privateKey);
 
       // Validate before build (surfaces missing unlocks, fee, balanced spends)
       builder.validate();
