@@ -9,7 +9,8 @@ import { CheckIcon } from '../../components/icons/CheckIcon';
 import lockIcon from '../../assets/lock-icon.svg';
 
 export function BackupScreen() {
-  const { onboardingMnemonic, navigate } = useStore();
+  const { onboardingMnemonic, navigate, currentScreen } = useStore();
+  const isAddWalletFlow = currentScreen === 'wallet-add-backup';
   const [isRevealed, setIsRevealed] = useState(false);
   const [hasConfirmed, setHasConfirmed] = useState(false);
   const [copiedAll, setCopiedAll] = useState(false);
@@ -39,7 +40,7 @@ export function BackupScreen() {
 
   function handleContinue() {
     if (hasConfirmed) {
-      navigate('onboarding-verify');
+      navigate(isAddWalletFlow ? 'wallet-add-verify' : 'onboarding-verify');
     }
   }
 
@@ -48,7 +49,7 @@ export function BackupScreen() {
       {/* Header with back button */}
       <div className="flex items-center justify-between h-16 px-4 py-3 border-b border-[var(--color-divider)] shrink-0">
         <button
-          onClick={() => navigate('onboarding-create')}
+          onClick={() => navigate(isAddWalletFlow ? 'wallet-add-create' : 'onboarding-create')}
           className="p-2 -ml-2 hover:opacity-70 transition-opacity"
           aria-label="Go back"
         >
