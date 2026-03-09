@@ -42,13 +42,10 @@ export const INTERNAL_METHODS = {
   /** Create external seed source (e.g. Ledger) */
   CREATE_EXTERNAL_SEED_SOURCE: 'wallet:createExternalSeedSource',
 
-  /** LEGACY: Switch account by flat account-list index */
+  /** Switch to a different account (by address) */
   SWITCH_ACCOUNT: 'wallet:switchAccount',
 
-  /** Switch to a top-level seed source (selects master account) */
-  SWITCH_SEED_SOURCE: 'wallet:switchSeedSource',
-
-  /** LEGACY: Get flattened account list (for compatibility with old UI flows) */
+  /** Get flattened account list */
   GET_ACCOUNTS: 'wallet:getAccounts',
 
   /** Get all top-level seed/external account sources */
@@ -339,7 +336,6 @@ export const USER_ACTIVITY_METHODS = new Set([
   INTERNAL_METHODS.CREATE_CHILD_ACCOUNT,
   INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE,
   INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE,
-  INTERNAL_METHODS.SWITCH_SEED_SOURCE,
   INTERNAL_METHODS.RENAME_ACCOUNT,
   INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING,
   INTERNAL_METHODS.HIDE_ACCOUNT,

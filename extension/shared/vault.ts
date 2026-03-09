@@ -1010,27 +1010,6 @@ export class Vault {
   }
 
   /**
-   * Switch current account to the master account of a seed source
-   */
-  async switchSeedSource(
-    seedAccountId: string
-  ): Promise<{ ok: boolean; account: Account } | { error: string }> {
-    if (this.state.locked) {
-      return { error: ERROR_CODES.LOCKED };
-    }
-
-    const targetIndex = this.state.accounts.findIndex(
-      acc => acc.seedAccountId === seedAccountId && (acc.derivation === 'master' || acc.index === 0)
-    );
-
-    if (targetIndex < 0) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
-    }
-
-    return this.switchAccount(targetIndex);
-  }
-
-  /**
    * Gets the address safely (even when locked, from storage)
    * NOTE: Accounts are encrypted, so this only works when unlocked
    * This is intentional - better privacy, addresses not accessible without password
@@ -1783,18 +1762,18 @@ export class Vault {
   }
 
   /**
-   * LEGACY: Switches account by flat list index.
-   * Prefer switchSeedSource(seedAccountId) for top-level source switching.
+   * Switch current account by address
    */
   async switchAccount(
-    index: number
+    address: string
   ): Promise<{ ok: boolean; account: Account } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
     this.state.currentAccountIndex = index;
@@ -1810,13 +1789,14 @@ export class Vault {
   /**
    * Renames an account
    */
-  async renameAccount(index: number, name: string): Promise<{ ok: boolean } | { error: string }> {
+  async renameAccount(address: string, name: string): Promise<{ ok: boolean } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
     this.state.accounts[index].name = name;
@@ -1831,7 +1811,7 @@ export class Vault {
    * Updates account styling (icon and color)
    */
   async updateAccountStyling(
-    index: number,
+    address: string,
     iconStyleId: number,
     iconColor: string
   ): Promise<{ ok: boolean } | { error: string }> {
@@ -1839,8 +1819,9 @@ export class Vault {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
     this.state.accounts[index].iconStyleId = iconStyleId;
@@ -1858,14 +1839,15 @@ export class Vault {
    * - Prevents hiding if it's the last visible account
    */
   async hideAccount(
-    index: number
-  ): Promise<{ ok: boolean; switchedTo?: number } | { error: string }> {
+    address: string
+  ): Promise<{ ok: boolean; switchedTo?: string } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
     // Check if this is the last visible account
@@ -1877,7 +1859,7 @@ export class Vault {
     // Mark account as hidden
     this.state.accounts[index].hidden = true;
 
-    let switchedTo: number | undefined;
+    let switchedTo: string | undefined;
 
     // If hiding the current account, switch to first visible account
     if (this.state.currentAccountIndex === index) {
@@ -1885,7 +1867,7 @@ export class Vault {
       if (firstVisibleIndex !== -1) {
         this.state.currentAccountIndex = firstVisibleIndex;
         this.mnemonic = this.getSigningMnemonicForCurrentAccount();
-        switchedTo = firstVisibleIndex;
+        switchedTo = this.state.accounts[firstVisibleIndex].address;
         await chrome.storage.local.set({
           [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: firstVisibleIndex,
         });

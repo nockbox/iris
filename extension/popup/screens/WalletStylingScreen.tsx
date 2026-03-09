@@ -89,14 +89,12 @@ export function WalletStylingScreen() {
   // Persist styling changes
   async function handleStyleChange(styleId: number) {
     if (!currentAccount) return;
-    const flatIndex = wallet.accounts.findIndex(acc => acc.address === currentAccount.address);
-    if (flatIndex < 0) return;
 
     setSelectedStyle(styleId);
 
     const result = await send<{ ok?: boolean; error?: string }>(
       INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING,
-      [flatIndex, styleId, selectedColor]
+      [currentAccount.address, styleId, selectedColor]
     );
 
     if (result?.ok) {
@@ -124,14 +122,12 @@ export function WalletStylingScreen() {
 
   async function handleColorChange(color: string) {
     if (!currentAccount) return;
-    const flatIndex = wallet.accounts.findIndex(acc => acc.address === currentAccount.address);
-    if (flatIndex < 0) return;
 
     setSelectedColor(color);
 
     const result = await send<{ ok?: boolean; error?: string }>(
       INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING,
-      [flatIndex, selectedStyle, color]
+      [currentAccount.address, selectedStyle, color]
     );
 
     if (result?.ok) {

@@ -883,7 +883,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case INTERNAL_METHODS.HIDE_ACCOUNT:
-        // params: [accountIndex]
+        // params: [accountAddress]
         const hideResult = await vault.hideAccount(payload.params?.[0]);
         sendResponse(hideResult);
 
@@ -935,15 +935,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse(createExternalResult);
         if ('ok' in createExternalResult && createExternalResult.ok) {
           await emitWalletEvent('accountsChanged', [createExternalResult.account.address]);
-        }
-        return;
-
-      case INTERNAL_METHODS.SWITCH_SEED_SOURCE:
-        // params: [seedAccountId]
-        const switchSeedResult = await vault.switchSeedSource(payload.params?.[0]);
-        sendResponse(switchSeedResult);
-        if ('ok' in switchSeedResult && switchSeedResult.ok) {
-          await emitWalletEvent('accountsChanged', [switchSeedResult.account.address]);
         }
         return;
 

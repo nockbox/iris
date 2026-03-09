@@ -111,7 +111,6 @@ interface AppStore {
     sourceRef?: string;
     accountRef?: string;
   }) => Promise<any>;
-  switchSeedSource: (seedAccountId: string) => Promise<any>;
   createChildAccount: (seedAccountId: string, name?: string) => Promise<any>;
 
   // Temporary onboarding state (cleared after completion)
@@ -318,17 +317,6 @@ export const useStore = create<AppStore>((set, get) => ({
     if (result?.ok) {
       await get().refreshWalletAccounts();
       // Non-blocking refresh to keep wallet actions snappy.
-      void get().fetchBalance();
-      void get().fetchWalletTransactions();
-    }
-    return result;
-  },
-
-  switchSeedSource: async (seedAccountId: string) => {
-    const result = await send<any>(INTERNAL_METHODS.SWITCH_SEED_SOURCE, [seedAccountId]);
-    if (result?.ok) {
-      await get().refreshWalletAccounts();
-      // Non-blocking refresh to keep switching immediate.
       void get().fetchBalance();
       void get().fetchWalletTransactions();
     }

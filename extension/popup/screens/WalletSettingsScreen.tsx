@@ -66,15 +66,9 @@ export function WalletSettingsScreen() {
       setIsEditingName(false);
       return;
     }
-    const flatIndex = wallet.accounts.findIndex(acc => acc.address === currentAccount.address);
-    if (flatIndex < 0) {
-      setIsEditingName(false);
-      return;
-    }
 
-    // Call the vault to rename the account
     const result = await send<{ ok?: boolean; error?: string }>(INTERNAL_METHODS.RENAME_ACCOUNT, [
-      flatIndex,
+      currentAccount.address,
       editedName.trim(),
     ]);
 
@@ -128,12 +122,10 @@ export function WalletSettingsScreen() {
 
   async function confirmRemoveWallet() {
     if (!currentAccount) return;
-    const flatIndex = wallet.accounts.findIndex(acc => acc.address === currentAccount.address);
-    if (flatIndex < 0) return;
 
-    const result = await send<{ ok?: boolean; switchedTo?: number; error?: string }>(
+    const result = await send<{ ok?: boolean; switchedTo?: string; error?: string }>(
       INTERNAL_METHODS.HIDE_ACCOUNT,
-      [flatIndex]
+      [currentAccount.address]
     );
 
     if (result?.ok) {
@@ -145,7 +137,8 @@ export function WalletSettingsScreen() {
       // Keep current account stable unless vault switched it
       let updatedCurrentAccount = wallet.currentAccount;
       if (result.switchedTo !== undefined) {
-        updatedCurrentAccount = updatedAccounts[result.switchedTo] || wallet.currentAccount;
+        updatedCurrentAccount =
+          updatedAccounts.find(acc => acc.address === result.switchedTo) || wallet.currentAccount;
       }
       if (updatedCurrentAccount?.hidden) {
         updatedCurrentAccount = updatedAccounts.find(acc => !acc.hidden) || null;

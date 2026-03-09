@@ -37,12 +37,9 @@ export function AccountSelector() {
   );
 
   async function handleSwitchAccount(accountAddress: string) {
-    const flatIndex = wallet.accounts.findIndex(acc => acc.address === accountAddress);
-    if (flatIndex < 0) return;
-
     const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
       INTERNAL_METHODS.SWITCH_ACCOUNT,
-      [flatIndex]
+      [accountAddress]
     );
 
     if (result?.ok && result.account) {
@@ -101,8 +98,14 @@ export function AccountSelector() {
       return;
     }
 
+    const account = wallet.accounts[editingIndex];
+    if (!account) {
+      cancelEditing();
+      return;
+    }
+
     const result = await send<{ ok?: boolean; error?: string }>(INTERNAL_METHODS.RENAME_ACCOUNT, [
-      editingIndex,
+      account.address,
       editingName.trim(),
     ]);
 
