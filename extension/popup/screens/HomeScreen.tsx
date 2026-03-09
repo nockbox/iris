@@ -154,15 +154,29 @@ export function HomeScreen() {
 
   // Get accounts from vault (filter out hidden accounts)
   const accounts = (wallet.accounts || []).filter(acc => !acc.hidden);
-  const groupedBySeed = (wallet.seedSources || [])
-    .map(seed => ({
-      seed,
-      accounts: accounts.filter(acc => acc.seedAccountId === seed.id),
-    }))
-    .filter(group => group.accounts.length > 0);
-  const seedGroups =
-    groupedBySeed.length > 0
-      ? groupedBySeed
+  const seedGroups = useMemo(() => {
+    const bySeed = new Map<string, typeof accounts>();
+    for (const acc of accounts) {
+      const id = acc.seedAccountId || 'unknown';
+      if (!bySeed.has(id)) bySeed.set(id, []);
+      bySeed.get(id)!.push(acc);
+    }
+    const grouped = Array.from(bySeed.entries()).map(([id, groupAccounts]) => {
+      const master =
+        groupAccounts.find(a => a.index === 0 || a.derivation === 'master') || groupAccounts[0];
+      return {
+        seed: {
+          id,
+          name: master.name,
+          type: master.keySource === 'external' ? 'external' : 'mnemonic',
+          createdAt: master.createdAt ?? 0,
+          accounts: [],
+        },
+        accounts: groupAccounts,
+      };
+    });
+    return grouped.length > 0
+      ? grouped
       : accounts.length > 0
         ? [
             {
@@ -177,10 +191,11 @@ export function HomeScreen() {
             },
           ]
         : [];
+  }, [accounts, wallet.activeSeedSourceId]);
 
   // Sync UI display order from vault seed order; append new seeds when added
   useEffect(() => {
-    const ids = (wallet.seedSources || []).map(s => s.id);
+    const ids = seedGroups.map(g => g.seed.id);
     if (ids.length === 0) return;
     setSeedDisplayOrder(prev => {
       if (prev.length === 0) return ids;
@@ -190,7 +205,7 @@ export function HomeScreen() {
       });
       return next;
     });
-  }, [wallet.seedSources]);
+  }, [seedGroups]);
 
   /** Seed groups in UI display order (draggable order). */
   const sortedSeedGroups = useMemo(() => {

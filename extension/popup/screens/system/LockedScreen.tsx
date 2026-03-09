@@ -66,9 +66,6 @@ export function LockedScreen() {
       const balanceResp = await send<{ ok?: boolean; balances?: Record<string, number> }>(
         IM.GET_CACHED_BALANCES
       );
-      const seedSourceResp = await send<{
-        seedSources?: Array<Omit<SeedAccount, 'mnemonic'>>;
-      }>(IM.GET_SEED_SOURCES);
       const cachedBalances = balanceResp?.balances || {};
       const cachedBalance = currentAccount ? (cachedBalances[currentAccount.address] ?? 0) : 0;
 
@@ -78,7 +75,6 @@ export function LockedScreen() {
         address: result.address || null,
         accounts,
         currentAccount,
-        seedSources: seedSourceResp?.seedSources || [],
         activeSeedSourceId: currentAccount?.seedAccountId || null,
         balance: cachedBalance,
         availableBalance: cachedBalance,

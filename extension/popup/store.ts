@@ -8,7 +8,6 @@ import { hasIncompleteOnboarding } from '../shared/onboarding';
 import {
   Account,
   AccountBalance,
-  SeedAccount,
   TransactionDetails,
   SignRequest,
   SignRawTxRequest,
@@ -76,7 +75,6 @@ interface WalletState {
   address: string | null;
   accounts: Account[];
   currentAccount: Account | null;
-  seedSources: Array<Omit<SeedAccount, 'mnemonic'>>;
   activeSeedSourceId: string | null;
   balance: number;
   availableBalance: number;
@@ -102,7 +100,6 @@ interface AppStore {
   wallet: WalletState;
   syncWallet: (state: WalletState) => void;
   refreshWalletAccounts: () => Promise<void>;
-  fetchSeedSources: () => Promise<void>;
   createMnemonicSeedSource: (mnemonic?: string, name?: string) => Promise<any>;
   createExternalSeedSource: (params: {
     address: string;
@@ -191,7 +188,6 @@ export const useStore = create<AppStore>((set, get) => ({
     address: null,
     accounts: [],
     currentAccount: null,
-    seedSources: [],
     activeSeedSourceId: null,
     balance: 0,
     availableBalance: 0,
@@ -258,46 +254,24 @@ export const useStore = create<AppStore>((set, get) => ({
 
   refreshWalletAccounts: async () => {
     try {
-      const [accountsResult, seedSourcesResult] = await Promise.all([
-        send<{
-          accounts: Account[];
-          currentAccount: Account | null;
-        }>(INTERNAL_METHODS.GET_ACCOUNTS),
-        send<{
-          seedSources: Array<Omit<SeedAccount, 'mnemonic'>>;
-        }>(INTERNAL_METHODS.GET_SEED_SOURCES),
-      ]);
+      const accountsResult = await send<{
+        accounts: Account[];
+        currentAccount: Account | null;
+      }>(INTERNAL_METHODS.GET_ACCOUNTS);
+
+      const accounts = accountsResult.accounts || [];
 
       set({
         wallet: {
           ...get().wallet,
-          accounts: accountsResult.accounts || [],
+          accounts,
           currentAccount: accountsResult.currentAccount || null,
           address: accountsResult.currentAccount?.address || null,
-          seedSources: seedSourcesResult.seedSources || [],
           activeSeedSourceId: accountsResult.currentAccount?.seedAccountId || null,
         },
       });
     } catch (error) {
-      console.error('[Store] Failed to refresh wallet accounts/seed sources:', error);
-    }
-  },
-
-  fetchSeedSources: async () => {
-    try {
-      const result = await send<{
-        seedSources: Array<Omit<SeedAccount, 'mnemonic'>>;
-      }>(INTERNAL_METHODS.GET_SEED_SOURCES);
-
-      set({
-        wallet: {
-          ...get().wallet,
-          seedSources: result.seedSources || [],
-          activeSeedSourceId: get().wallet.currentAccount?.seedAccountId || null,
-        },
-      });
-    } catch (error) {
-      console.error('[Store] Failed to fetch seed sources:', error);
+      console.error('[Store] Failed to refresh wallet accounts:', error);
     }
   },
 
@@ -385,18 +359,13 @@ export const useStore = create<AppStore>((set, get) => ({
         hash.startsWith(APPROVAL_CONSTANTS.SIGN_MESSAGE_HASH_PREFIX);
 
       // Get current vault state from service worker
-      const [state, seedSourcesResult] = await Promise.all([
-        send<{
-          locked: boolean;
-          hasVault: boolean;
-          address: string;
-          accounts: Account[];
-          currentAccount: Account | null;
-        }>(INTERNAL_METHODS.GET_STATE),
-        send<{
-          seedSources: Array<Omit<SeedAccount, 'mnemonic'>>;
-        }>(INTERNAL_METHODS.GET_SEED_SOURCES),
-      ]);
+      const state = await send<{
+        locked: boolean;
+        hasVault: boolean;
+        address: string;
+        accounts: Account[];
+        currentAccount: Account | null;
+      }>(INTERNAL_METHODS.GET_STATE);
 
       // Load cached balances from encrypted storage (only if unlocked)
       let cachedBalances: Record<string, number> = {};
@@ -413,12 +382,12 @@ export const useStore = create<AppStore>((set, get) => ({
       const confirmedBalance = state.currentAccount
         ? cachedBalances[state.currentAccount.address] || 0
         : 0;
+      const accounts = state.accounts || [];
       const walletState: WalletState = {
         locked: state.locked,
         address: state.address || null,
-        accounts: state.accounts || [],
+        accounts,
         currentAccount: state.currentAccount || null,
-        seedSources: seedSourcesResult.seedSources || [],
         activeSeedSourceId: state.currentAccount?.seedAccountId || null,
         balance: confirmedBalance,
         availableBalance: confirmedBalance, // Will be recalculated after fetching transactions
