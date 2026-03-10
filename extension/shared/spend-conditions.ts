@@ -11,7 +11,12 @@ export function createSimplePkhCondition(pkhBase58: string): wasm.SpendCondition
   return wasm.spendConditionNewPkh(pkh);
 }
 
-function timPrimitive(relMin: number | null, relMax: number | null, absMin: number | null, absMax: number | null): wasm.LockPrimitive {
+function timPrimitive(
+  relMin: number | null,
+  relMax: number | null,
+  absMin: number | null,
+  absMax: number | null
+): wasm.LockPrimitive {
   return { tag: 'tim', rel: { min: relMin, max: relMax }, abs: { min: absMin, max: absMax } };
 }
 

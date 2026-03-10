@@ -228,7 +228,7 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   const builder = await createTxBuilder(blockHeight);
 
   // New API: simpleSpend expects TxLock[] (lock + lock_sp_index), not SpendCondition[]
-  const locks: wasm.TxLock[] = spendConditions.map((sc) => ({
+  const locks: wasm.TxLock[] = spendConditions.map(sc => ({
     lock: sc,
     lock_sp_index: 0,
   }));
