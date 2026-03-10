@@ -227,10 +227,14 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   // New WASM API: constructor takes fee_per_word; blockHeight selects tx engine by activation height
   const builder = await createTxBuilder(blockHeight);
 
-  // New API: Nicks values are strings and digest values are strings.
+  // New API: simpleSpend expects TxLock[] (lock + lock_sp_index), not SpendCondition[]
+  const locks: wasm.TxLock[] = spendConditions.map((sc) => ({
+    lock: sc,
+    lock_sp_index: 0,
+  }));
   builder.simpleSpend(
     wasmNotes,
-    spendConditions,
+    locks,
     recipientPKH,
     amount,
     fee ?? null,

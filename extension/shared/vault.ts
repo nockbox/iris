@@ -2340,7 +2340,7 @@ export class Vault {
         : await rpcClient.getCurrentBlockHeight();
 
       const settings = await txEngineSettings(blockHeight);
-      const builder = wasm.TxBuilder.fromTx(rawTx, notes, spendConditions, settings);
+      const builder = wasm.TxBuilder.fromTx(rawTx, notes, null, settings);
 
       await builder.sign(privateKey);
 
