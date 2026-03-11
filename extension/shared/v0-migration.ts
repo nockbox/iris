@@ -2,111 +2,60 @@
  * v0-to-v1 migration - delegates discovery and build to SDK.
  */
 
-import { NOCK_TO_NICKS, RPC_ENDPOINT } from './constants';
 import { ensureWasmInitialized } from './wasm-utils';
+import { getEffectiveRpcEndpoint } from './rpc-config';
 import {
-  buildV0MigrationTransaction as sdkBuildFromV0Notes,
-  deriveV0AddressFromMnemonic as sdkDeriveV0Address,
-  queryV0BalanceFromMnemonic as sdkQueryV0Balance,
+  buildV0MigrationTx as sdkBuildV0MigrationTx,
+  queryV0Balance as sdkQueryV0Balance,
+  type BuildV0MigrationTxResult,
+  type V0BalanceResult,
 } from '@nockbox/iris-sdk';
 import wasm from './sdk-wasm.js';
-import { txEngineSettings } from './tx-engine-settings.js';
 import { createBrowserClient } from './rpc-client-browser';
 
-export interface V0DiscoveryResult {
-  sourceAddress: string;
-  v0Notes: any[];
-  totalNicks: string;
-  totalNock: number;
-  /** Raw notes count from RPC (for debugging when v0Notes is empty) */
-  rawNotesFromRpc?: number;
-}
-
-export interface BuiltV0MigrationResult {
-  txId: string;
-  feeNicks: string;
-  feeNock: number;
-  migratedNicks: string;
-  migratedNock: number;
-  selectedNoteNicks: string;
-  selectedNoteNock: number;
-  signRawTxPayload: {
-    rawTx: any;
-    notes: any[];
-    spendConditions: any[];
-  };
-}
-
-export async function deriveV0AddressFromMnemonic(
-  mnemonic: string,
-  passphrase = ''
-): Promise<{ sourceAddress: string }> {
-  await ensureWasmInitialized();
-  const derived = sdkDeriveV0Address(mnemonic, passphrase);
-  return { sourceAddress: derived.sourceAddress };
-}
-
-export async function queryV0BalanceFromMnemonic(
-  mnemonic: string,
-  grpcEndpoint = RPC_ENDPOINT
-): Promise<V0DiscoveryResult> {
-  await ensureWasmInitialized();
-  const discovery = await sdkQueryV0Balance(mnemonic, grpcEndpoint);
-  const rawNotesCount = discovery.balance?.notes?.length ?? 0;
-  const legacyCount = discovery.v0Notes.length;
-  console.log('[V0 Migration] Discovery result:', {
-    sourceAddress: discovery.sourceAddress,
-    rawNotesFromRpc: rawNotesCount,
-    legacyV0Notes: legacyCount,
-    totalNicks: discovery.totalNicks,
-  });
-  if (legacyCount === 0 && rawNotesCount > 0) {
-    const first = discovery.balance?.notes?.[0];
-    const nv = first?.note?.note_version;
-    const nvKeys = nv && typeof nv === 'object' ? Object.keys(nv) : [];
-    console.warn('[V0 Migration] RPC returned', rawNotesCount, 'notes but none are Legacy (v0). Check note_version structure.');
-    console.warn('[V0 Migration] First entry note_version keys:', nvKeys, 'sample:', nv ? JSON.stringify(nv).slice(0, 300) : 'n/a');
-  }
-  return {
-    sourceAddress: discovery.sourceAddress,
-    v0Notes: discovery.v0Notes,
-    totalNicks: discovery.totalNicks,
-    totalNock: Number(BigInt(discovery.totalNicks)) / NOCK_TO_NICKS,
-    rawNotesFromRpc: rawNotesCount,
-  };
-}
-
-export async function buildV0MigrationTransactionFromNotes(
-  v0Notes: any[],
-  targetV1Pkh: string,
-  feePerWord = '32768'
-): Promise<BuiltV0MigrationResult> {
-  await ensureWasmInitialized();
-  const built = await sdkBuildFromV0Notes(v0Notes, targetV1Pkh, feePerWord, undefined, undefined, {
-    singleNoteOnly: true,
-    debug: true, // [TEMPORARY] Remove when migration is validated
-  }) as { txId: string; fee: string; feeNock: number; migratedNicks: string; migratedNock: number; selectedNoteNicks: string; selectedNoteNock: number; signRawTxPayload: { rawTx: any; notes: any[]; spendConditions: any[] } };
-  return {
-    txId: built.txId,
-    feeNicks: built.fee,
-    feeNock: built.feeNock,
-    migratedNicks: built.migratedNicks,
-    migratedNock: built.migratedNock,
-    selectedNoteNicks: built.selectedNoteNicks,
-    selectedNoteNock: built.selectedNoteNock,
-    signRawTxPayload: {
-      rawTx: built.signRawTxPayload.rawTx,
-      notes: built.signRawTxPayload.notes,
-      spendConditions: built.signRawTxPayload.spendConditions,
-    },
-  };
-}
+export type { V0BalanceResult };
 
 const CONFIRM_POLL_INTERVAL_MS = 3000;
 const CONFIRM_TIMEOUT_MS = 90_000;
-
 /** [TEMPORARY] Set true to log unsigned tx before signing. Remove when migration is validated. */
 const DEBUG_V0_MIGRATION = true;
+
+/**
+ * Discovery only: query v0 (Legacy) balance for a mnemonic. Use this to display balance
+ * before building a migration tx. Does not build a transaction.
+ */
+export async function queryV0Balance(mnemonic: string): Promise<V0BalanceResult> {
+  await ensureWasmInitialized();
+  const grpcEndpoint = await getEffectiveRpcEndpoint();
+  return sdkQueryV0Balance(mnemonic, grpcEndpoint);
+}
+
+/**
+ * Build v0 migration transaction (queries balance internally, then builds tx when target provided).
+ * Use for fee estimation and for the actual migration payload on the Funds screen.
+ */
+export async function buildV0MigrationTx(
+  mnemonic: string,
+  targetV1Pkh?: string,
+  debug = false
+): Promise<BuildV0MigrationTxResult> {
+  await ensureWasmInitialized();
+  const grpcEndpoint = await getEffectiveRpcEndpoint();
+  const result = await sdkBuildV0MigrationTx(mnemonic, grpcEndpoint, targetV1Pkh, { debug });
+
+  if (debug) {
+    console.log('[V0 Migration] Result:', {
+      sourceAddress: result.sourceAddress,
+      rawNotesFromRpc: result.rawNotesFromRpc,
+      legacyV0Notes: result.v0Notes.length,
+      totalNicks: result.totalNicks,
+      smallestNoteNock: result.smallestNoteNock,
+      txId: result.txId,
+    });
+  }
+
+  return result;
+}
 
 /**
  * Sign a v0 migration raw transaction with the given mnemonic (master key) and broadcast.
@@ -117,11 +66,11 @@ const DEBUG_V0_MIGRATION = true;
  */
 export async function signAndBroadcastV0Migration(
   mnemonic: string,
-  signRawTxPayload: { rawTx: any; notes: any[]; spendConditions: any[] },
-  grpcEndpoint = RPC_ENDPOINT,
+  signRawTxPayload: { rawTx: any; notes: any[]; spendConditions?: (any | null)[]; refundLock?: any },
   options?: { debug?: boolean; skipBroadcast?: boolean }
 ): Promise<{ txId: string; confirmed: boolean; skipped?: boolean }> {
   await ensureWasmInitialized();
+  const grpcEndpoint = await getEffectiveRpcEndpoint();
 
   const masterKey = wasm.deriveMasterKeyFromMnemonic(mnemonic, '');
   if (!masterKey.privateKey || masterKey.privateKey.byteLength !== 32) {
@@ -133,36 +82,45 @@ export async function signAndBroadcastV0Migration(
   const skipBroadcast = options?.skipBroadcast ?? false;
 
   try {
-    const { rawTx, notes, spendConditions } = signRawTxPayload;
+    const { rawTx, notes } = signRawTxPayload;
 
     if (debug) {
-      console.log('[V0 Migration] Unsigned transaction (before signing):', {
+      const debugPayload = {
         rawTx: { id: rawTx?.id, version: rawTx?.version, spendsCount: rawTx?.spends?.length ?? 0 },
         notesCount: notes.length,
-        spendConditionsCount: spendConditions.length,
+        spendConditionsCount: signRawTxPayload.spendConditions?.length ?? 0,
         fullRawTx: rawTx,
-      });
+      };
+      console.log('[V0 Migration] Unsigned transaction (before signing):', debugPayload);
+      return { txId: rawTx?.id ?? '', confirmed: false, skipped: true, ...debugPayload };
     }
 
+    // alpha.6: fromTx(tx, notes, refund_lock, settings) - use refundLock from payload (v0 notes pass null for spendConditions)
+    const sc = signRawTxPayload.spendConditions;
+    const refundLock =
+      signRawTxPayload.refundLock ??
+      (sc && sc.length > 0 && sc[0] ? wasm.locky(sc[0]) : null);
     let builder: ReturnType<typeof wasm.TxBuilder.fromTx>;
     try {
       builder = wasm.TxBuilder.fromTx(
         rawTx,
         notes,
-        spendConditions,
-        txEngineSettings()
+        refundLock,
+        wasm.txEngineSettingsV1BythosDefault()
       );
     } catch (e) {
       console.error('[V0 Migration] TxBuilder.fromTx failed:', e);
       throw e;
     }
 
-    const signingKeyBytes = new Uint8Array(masterKey.privateKey.slice(0, 32));
+    const privateKey = wasm.PrivateKey.fromBytes(masterKey.privateKey);
     try {
-      builder.sign(signingKeyBytes);
+      await builder.sign(privateKey);
     } catch (e) {
       console.error('[V0 Migration] builder.sign failed:', e);
       throw e;
+    } finally {
+      privateKey.free();
     }
 
     try {
@@ -173,7 +131,7 @@ export async function signAndBroadcastV0Migration(
     }
 
     const signedTx = builder.build();
-    const signedRawTx = wasm.nockchainTxToRaw(signedTx) as wasm.RawTxV1;
+    const signedRawTx = wasm.nockchainTxToRawTx(signedTx) as wasm.RawTxV1;
     const protobuf = wasm.rawTxToProtobuf(signedRawTx);
 
     if (debug) {

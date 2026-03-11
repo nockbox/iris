@@ -5,7 +5,7 @@ import { Alert } from '../components/Alert';
 import lockIcon from '../assets/lock-icon.svg';
 import { importKeyfile, type Keyfile } from '../../shared/keyfile';
 import { UI_CONSTANTS } from '../../shared/constants';
-import { queryV0BalanceFromMnemonic } from '../../shared/v0-migration';
+import { queryV0Balance } from '../../shared/v0-migration';
 
 const WORD_COUNT = 24;
 
@@ -116,33 +116,28 @@ export function V0MigrationSetupScreen() {
     setDiscoverError('');
     setIsDiscovering(true);
     try {
-      const discovery = await queryV0BalanceFromMnemonic(words.join(' ').trim());
+      const mnemonic = words.join(' ').trim();
+      const result = await queryV0Balance(mnemonic);
 
-      if (!discovery.v0Notes.length) {
-        const rawCount = discovery.rawNotesFromRpc ?? 0;
+      if (!result.v0Notes.length) {
+        const rawCount = result.rawNotesFromRpc ?? 0;
         const msg =
           rawCount > 0
             ? `No v0 (Legacy) notes found. RPC returned ${rawCount} note(s) but none match Legacy format. Check DevTools console for details.`
-            : `No v0 notes found for this recovery phrase. Queried address: ${discovery.sourceAddress?.slice(0, 12)}... (see console for full address)`;
+            : `No v0 notes found for this recovery phrase. Queried address: ${result.sourceAddress?.slice(0, 12)}... (see console for full address)`;
         throw new Error(msg);
       }
 
-      const mnemonic = words.join(' ').trim();
       setV0MigrationDraft({
-        sourceAddress: discovery.sourceAddress,
+        sourceAddress: result.sourceAddress,
         v0Mnemonic: mnemonic,
-        v0Notes: discovery.v0Notes,
-        v0BalanceNock: discovery.totalNock,
+        v0Notes: result.v0Notes,
+        v0BalanceNock: result.totalNock,
         migratedAmountNock: undefined,
-        feeNock: 59,
+        feeNock: undefined,
         keyfileName: undefined,
         signRawTxPayload: undefined,
         txId: undefined,
-      });
-      console.log('[V0 Migration] derived query address', {
-        sourceAddress: discovery.sourceAddress,
-        totalNock: discovery.totalNock,
-        legacyNotesCount: discovery.v0Notes.length,
       });
       setWords(Array(WORD_COUNT).fill(''));
       navigate('v0-migration-funds');
@@ -214,7 +209,7 @@ export function V0MigrationSetupScreen() {
               Or import from keyfile
             </button>
 
-            {/* 24-word input grid - same as ImportScreen */}
+            {/* 24-word input grid */}
             <div className="flex flex-col gap-2 w-full pb-4">
               {Array.from({ length: 12 }).map((_, rowIndex) => (
                 <div key={rowIndex} className="flex gap-2 w-full">

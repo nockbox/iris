@@ -111,7 +111,7 @@ interface AppStore {
   v0MigrationDraft: {
     v0BalanceNock: number;
     migratedAmountNock?: number;
-    feeNock: number;
+    feeNock?: number;
     destinationWalletIndex: number | null;
     keyfileName?: string;
     sourceAddress?: string;
@@ -130,7 +130,7 @@ interface AppStore {
     value: Partial<{
       v0BalanceNock: number;
       migratedAmountNock?: number;
-      feeNock: number;
+      feeNock?: number;
       destinationWalletIndex: number | null;
       keyfileName?: string;
       sourceAddress?: string;
@@ -227,7 +227,7 @@ export const useStore = create<AppStore>((set, get) => ({
   v0MigrationDraft: {
     v0BalanceNock: 2500,
     migratedAmountNock: undefined,
-    feeNock: 59,
+    feeNock: undefined,
     destinationWalletIndex: null,
     keyfileName: undefined,
     sourceAddress: undefined,
@@ -313,7 +313,7 @@ export const useStore = create<AppStore>((set, get) => ({
       v0MigrationDraft: {
         v0BalanceNock: 2500,
         migratedAmountNock: undefined,
-        feeNock: 59,
+        feeNock: undefined,
         destinationWalletIndex: null,
         keyfileName: undefined,
         sourceAddress: undefined,

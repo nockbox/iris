@@ -29,7 +29,6 @@ export function V0MigrationReviewScreen() {
       const { txId, confirmed, skipped } = await signAndBroadcastV0Migration(
         v0MigrationDraft.v0Mnemonic,
         v0MigrationDraft.signRawTxPayload,
-        undefined,
         { debug: true, skipBroadcast }
       );
       setV0MigrationDraft({
@@ -115,7 +114,7 @@ export function V0MigrationReviewScreen() {
 
         <div className="rounded-[14px] p-3 flex items-center justify-between" style={{ backgroundColor: 'var(--color-surface-900)' }}>
           <span className="text-[14px] font-medium">Network fee</span>
-          <span className="text-[14px] font-medium">{v0MigrationDraft.feeNock} NOCK</span>
+          <span className="text-[14px] font-medium">{v0MigrationDraft.feeNock != null ? `${v0MigrationDraft.feeNock} NOCK` : ''}</span>
         </div>
 
         {sendError && <Alert type="error">{sendError}</Alert>}
