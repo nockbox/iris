@@ -2,6 +2,10 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import BaseIconAsset from '../assets/base_icon.svg';
+import NockTextCircleContainer from '../assets/NockTextCircleContainer.svg';
+import NockText from '../assets/NockText.svg';
+import JustNText from '../assets/JustNText.svg';
+import DownArrow from '../assets/downArrow.svg';
 import { BRIDGE_PROTOCOL_FEE_DISPLAY } from '../../shared/constants';
 
 function truncate(addr: string): string {
@@ -10,7 +14,7 @@ function truncate(addr: string): string {
 }
 
 export function SwapReviewScreen() {
-  const { navigate, pendingBridgeSwap, setPendingBridgeSwap } = useStore();
+  const { navigate, pendingBridgeSwap, setPendingBridgeSwap, setSwapSubmittedToastVisible, priceUsd } = useStore();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
 
@@ -25,10 +29,27 @@ export function SwapReviewScreen() {
     maximumFractionDigits: 2,
   });
 
+  const usdValue =
+    priceUsd > 0
+      ? (prepared.amountNock * priceUsd).toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
+      : null;
+
+  const bridgeFeeNock = prepared.amountNock * 0.005;
+  const bridgeFeeDisplay = bridgeFeeNock.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  });
+
   async function handleSwap() {
     setSubmitting(true);
     setError('Bridge execution is temporarily disabled while API migration is in progress.');
     setSubmitting(false);
+    setPendingBridgeSwap(null);
+    setSwapSubmittedToastVisible(true);
+    navigate('home');
   }
 
   return (
@@ -37,56 +58,142 @@ export function SwapReviewScreen() {
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       <header
-        className="flex items-center justify-between h-16 px-4"
+        className="flex items-center justify-between h-16 px-4 py-3 shrink-0"
         style={{ borderBottom: '1px solid var(--color-divider)' }}
       >
-        <button className="p-2" onClick={() => navigate('swap')} aria-label="Back">
+        <button className="p-2 -ml-2" onClick={() => navigate('swap')} aria-label="Back">
           <ChevronLeftIcon className="w-5 h-5" />
         </button>
-        <h1 className="text-[16px] font-medium tracking-[0.01em]">Swap review</h1>
-        <div className="w-7" />
+        <h1
+          className="text-[16px] font-medium"
+          style={{ letterSpacing: '0.16px', lineHeight: '22px' }}
+        >
+          Swap review
+        </h1>
+        <div className="w-8" />
       </header>
 
-      <div className="flex-1 px-4 py-5 flex flex-col gap-4">
-        <div className="text-[20px] font-medium">You&apos;re swapping</div>
+      <div className="flex-1 overflow-y-auto px-4 py-5 flex flex-col gap-2">
+        <div
+          className="text-[14px] font-medium"
+          style={{ letterSpacing: '0.14px', lineHeight: '18px' }}
+        >
+          You&apos;re swapping
+        </div>
 
-        <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-home-accent)' }}>
-          <div className="text-[50px] font-[Lora] leading-[50px] tracking-[-0.03em]">
-            {amountNock} NOCK
+        {/* From Nockchain card */}
+        <div
+          className="rounded-lg p-3 flex items-center justify-between gap-3"
+          style={{ backgroundColor: 'var(--color-surface-900)' }}
+        >
+          <div className="flex flex-1 min-w-0 flex-col gap-1">
+            <div
+              className="font-[Lora] font-medium text-[24px] leading-7"
+              style={{ letterSpacing: '-0.48px', color: 'var(--color-text-primary)' }}
+            >
+              {amountNock} NOCK
+            </div>
+            <div
+              className="text-[12px] font-medium"
+              style={{ color: 'var(--color-text-muted)', letterSpacing: '0.24px', lineHeight: '16px' }}
+            >
+              {usdValue !== null ? `≈${usdValue} USD` : '—'}
+            </div>
           </div>
-          <div className="text-[13px]" style={{ color: 'var(--color-text-muted)' }}>
-            Nockchain
+          <div className="relative h-10 w-10 shrink-0">
+            <img src={NockTextCircleContainer} alt="" className="h-10 w-10" />
+            <img
+              src={NockText}
+              alt=""
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[12px] w-[30px] object-contain"
+            />
+            <div
+              className="absolute -right-0.5 -bottom-0.5 h-4.5 w-4.5 rounded-full flex items-center justify-center shrink-0 border-2 border-[#F2F2F0]"
+              style={{ backgroundColor: 'black' }}
+            >
+              <img src={JustNText} alt="" className="min-w-0 min-h-0 h-[7px] w-[6px] object-contain" />
+            </div>
           </div>
         </div>
 
-        <div className="text-center text-[20px]" style={{ color: 'var(--color-text-muted)' }}>
-          ↓
+        {/* Down arrow */}
+        <div className="flex justify-center py-0">
+          <img src={DownArrow} alt="" className="w-5 h-5" />
         </div>
 
-        <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-home-accent)' }}>
-          <div className="text-[50px] font-[Lora] leading-[50px] tracking-[-0.03em]">
-            {amountNock} NOCK
+        {/* To Base card */}
+        <div
+          className="rounded-lg p-3 flex items-center justify-between gap-3"
+          style={{ backgroundColor: 'var(--color-surface-900)' }}
+        >
+          <div className="flex flex-1 min-w-0 flex-col gap-1">
+            <div
+              className="font-[Lora] font-medium text-[24px] leading-7"
+              style={{ letterSpacing: '-0.48px', color: 'var(--color-text-primary)' }}
+            >
+              {amountNock} NOCK
+            </div>
+            <div
+              className="text-[12px] font-medium"
+              style={{ color: 'var(--color-text-muted)', letterSpacing: '0.24px', lineHeight: '16px' }}
+            >
+              {usdValue !== null ? `≈${usdValue} USD` : '—'}
+            </div>
           </div>
-          <div className="text-[13px] flex items-center gap-2" style={{ color: 'var(--color-text-muted)' }}>
-            Base <img src={BaseIconAsset} alt="" className="w-3 h-3" />
+          <div className="relative h-10 w-10 shrink-0">
+            <img src={NockTextCircleContainer} alt="" className="h-10 w-10" />
+            <img
+              src={NockText}
+              alt=""
+              className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 h-[12px] w-[30px] object-contain"
+            />
+            <div
+              className="absolute -right-0.5 -bottom-0.5 h-4.5 w-4.5 rounded-full flex items-center justify-center shrink-0 border-2 border-[#F2F2F0]"
+              style={{ backgroundColor: 'white' }}
+            >
+              <img src={BaseIconAsset} alt="Base" className="min-w-0 min-h-0 h-[9px] w-[8px] object-contain" />
+            </div>
           </div>
         </div>
 
-        <div className="rounded-xl p-4" style={{ backgroundColor: 'var(--color-home-accent)' }}>
-          <div className="flex items-center justify-between text-[15px]">
-            <span>Receiving address</span>
-            <span className="flex items-center gap-2">
+        {/* Receiving address card */}
+        <div
+          className="rounded-lg p-3 flex items-center justify-between gap-2"
+          style={{ backgroundColor: 'var(--color-surface-900)' }}
+        >
+          <div
+            className="text-[14px] font-medium flex-1 min-w-0"
+            style={{ letterSpacing: '0.14px', lineHeight: '18px' }}
+          >
+            Receiving address
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span
+              className="text-[14px] font-medium"
+              style={{ letterSpacing: '0.14px', lineHeight: '18px' }}
+            >
               {truncate(prepared.destinationAddress)}
-              <img src={BaseIconAsset} alt="" className="w-3 h-3" />
+            </span>
+            <div
+              className="h-5 w-5 rounded-full flex items-center justify-center shrink-0 border-2 border-[#F2F2F0]"
+              style={{ backgroundColor: 'white' }}
+            >
+              <img src={BaseIconAsset} alt="" className="h-[9px] w-[8px] object-contain" />
+            </div>
+          </div>
+        </div>
+
+        {/* Divider + Bridge fee */}
+        <div className="flex flex-col gap-3 pt-2">
+          <div className="h-px" style={{ backgroundColor: 'var(--color-divider)' }} />
+          <div className="flex items-center justify-between text-[14px] font-medium">
+            <span style={{ letterSpacing: '0.14px', lineHeight: '18px' }}>
+              Bridge fee {BRIDGE_PROTOCOL_FEE_DISPLAY}
+            </span>
+            <span className="text-right" style={{ color: 'var(--color-text-muted)', letterSpacing: '0.14px' }}>
+              {bridgeFeeDisplay} NOCK
             </span>
           </div>
-        </div>
-
-        <div className="h-px" style={{ backgroundColor: 'var(--color-divider)' }} />
-
-        <div className="flex items-center justify-between text-[15px]">
-          <span>Bridge fee {BRIDGE_PROTOCOL_FEE_DISPLAY}</span>
-          <span style={{ color: 'var(--color-text-muted)' }}>{prepared.bridgeFeeLabel}</span>
         </div>
 
         {error && (
@@ -99,10 +206,14 @@ export function SwapReviewScreen() {
         )}
       </div>
 
-      <div className="flex gap-3 p-3" style={{ borderTop: '1px solid var(--color-divider)' }}>
+      <div className="flex gap-3 p-3 shrink-0" style={{ borderTop: '1px solid var(--color-divider)' }}>
         <button
-          className="flex-1 rounded-lg px-5 py-3.5 text-[14px] leading-[18px] font-medium"
-          style={{ backgroundColor: 'var(--color-surface-800)' }}
+          className="flex-1 rounded-lg px-5 py-3.5 text-[14px] leading-[18px] font-medium transition-opacity hover:opacity-90"
+          style={{
+            backgroundColor: 'var(--color-surface-800)',
+            color: 'var(--color-text-primary)',
+            letterSpacing: '0.14px',
+          }}
           onClick={() => {
             setPendingBridgeSwap(null);
             navigate('swap');
@@ -112,8 +223,8 @@ export function SwapReviewScreen() {
           Cancel
         </button>
         <button
-          className="flex-1 rounded-lg px-5 py-3.5 text-[14px] leading-[18px] font-medium"
-          style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
+          className="flex-1 rounded-lg px-5 py-3.5 text-[14px] leading-[18px] font-medium transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+          style={{ backgroundColor: 'var(--color-primary)', color: '#000', letterSpacing: '0.14px' }}
           onClick={handleSwap}
           disabled={submitting}
         >
@@ -123,4 +234,3 @@ export function SwapReviewScreen() {
     </div>
   );
 }
-
