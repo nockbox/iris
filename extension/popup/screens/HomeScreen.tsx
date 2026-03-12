@@ -30,6 +30,7 @@ import RefreshIcon from '../assets/refresh-icon.svg';
 import ReceiptIcon from '../assets/receipt-icon.svg';
 import SwapIconAsset from '../assets/swap_icon.svg';
 import BaseIconAsset from '../assets/base_icon.svg';
+import { SwapSubmittedToast } from '../components/SwapSubmittedToast';
 
 import './HomeScreen.tailwind.css';
 
@@ -329,6 +330,7 @@ export function HomeScreen() {
       className="w-[357px] h-[600px] overflow-hidden relative"
       style={{ backgroundColor: 'var(--color-home-fill)', color: 'var(--color-text-primary)' }}
     >
+      <SwapSubmittedToast />
       {/* Scroll container */}
       <div
         ref={scrollContainerRef}
@@ -669,11 +671,6 @@ export function HomeScreen() {
             >
               <div className="relative h-5 w-5">
                 <img src={SwapIconAsset} alt="Swap" className="h-5 w-5" />
-                <img
-                  src={BaseIconAsset}
-                  alt=""
-                  className="absolute -right-1 -bottom-1 h-2.5 w-2.5 rounded-full"
-                />
               </div>
               Swap
             </button>

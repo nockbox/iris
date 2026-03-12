@@ -142,6 +142,10 @@ interface AppStore {
   selectedTransaction: WalletTransaction | null;
   setSelectedTransaction: (transaction: WalletTransaction | null) => void;
 
+  // Swap submitted toast (drops down briefly, then disappears)
+  swapSubmittedToastVisible: boolean;
+  setSwapSubmittedToastVisible: (visible: boolean) => void;
+
   // Balance fetching state
   isBalanceFetching: boolean;
 
@@ -201,6 +205,7 @@ export const useStore = create<AppStore>((set, get) => ({
   pendingTransactionRequest: null,
   walletTransactions: [],
   selectedTransaction: null,
+  swapSubmittedToastVisible: false,
   isBalanceFetching: false,
   isInitialized: false,
   priceUsd: 0,
@@ -290,6 +295,10 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ selectedTransaction: transaction });
   },
 
+  setSwapSubmittedToastVisible: (visible: boolean) => {
+    set({ swapSubmittedToastVisible: visible });
+  },
+
   // Initialize app on load
   initialize: async () => {
     try {
@@ -363,16 +372,20 @@ export const useStore = create<AppStore>((set, get) => ({
         }
       }
 
+      // When we will fetch balance, set loading so UI never shows 0 without a loading state
+      const willFetchBalance = !walletState.locked && !!walletState.address;
+
       set({
         wallet: walletState,
         currentScreen: initialScreen,
         isInitialized: true,
+        isBalanceFetching: willFetchBalance,
       });
 
       await get().refreshRpcDisplayConfig();
 
-      // Fetch balance if wallet is unlocked
-      if (!walletState.locked && walletState.address) {
+      // Fetch balance if wallet is unlocked (don't await - let it update when ready)
+      if (willFetchBalance) {
         get().fetchBalance();
         get().fetchWalletTransactions();
       }
