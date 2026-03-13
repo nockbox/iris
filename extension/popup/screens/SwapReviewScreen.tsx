@@ -1,12 +1,14 @@
 import { useState } from 'react';
 import { useStore } from '../store';
+import { send } from '../utils/messaging';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import BaseIconAsset from '../assets/base_icon.svg';
 import NockTextCircleContainer from '../assets/NockTextCircleContainer.svg';
 import NockText from '../assets/NockText.svg';
 import JustNText from '../assets/JustNText.svg';
 import DownArrow from '../assets/downArrow.svg';
-import { BRIDGE_PROTOCOL_FEE_DISPLAY } from '../../shared/constants';
+import { BRIDGE_PROTOCOL_FEE_DISPLAY, INTERNAL_METHODS } from '../../shared/constants';
+import { nockToNick } from '../../shared/currency';
 
 function truncate(addr: string): string {
   if (!addr) return '';
@@ -45,11 +47,38 @@ export function SwapReviewScreen() {
 
   async function handleSwap() {
     setSubmitting(true);
-    setError('Bridge execution is temporarily disabled while API migration is in progress.');
-    setSubmitting(false);
-    setPendingBridgeSwap(null);
-    setSwapSubmittedToastVisible(true);
-    navigate('home');
+    setError('');
+
+    try {
+      const amountNicks = nockToNick(prepared.amountNock);
+      const result = await send<{
+        txid?: string;
+        broadcasted?: boolean;
+        walletTx?: unknown;
+        error?: string;
+      }>(INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION, [
+        prepared.destinationAddress,
+        amountNicks,
+        priceUsd > 0 ? priceUsd : undefined,
+      ]);
+
+      if (result?.error) {
+        setError(result.error);
+        setSubmitting(false);
+        return;
+      }
+
+      setPendingBridgeSwap(null);
+      setSwapSubmittedToastVisible(true);
+      useStore.getState().fetchBalance();
+      useStore.getState().fetchWalletTransactions();
+      navigate('home');
+    } catch (err) {
+      console.error('[SwapReview] Bridge failed:', err);
+      setError(err instanceof Error ? err.message : 'Bridge transaction failed');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   return (
