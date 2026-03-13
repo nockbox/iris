@@ -15,7 +15,7 @@ import {
   assertNativeNote,
   assertNativeSpendCondition,
 } from '../shared/sign-raw-tx-compat';
-import { isLegacySignRawTxRequest } from '@nockbox/iris-sdk';
+import { isLegacySignRawTxRequest, isEvmAddress } from '@nockbox/iris-sdk';
 import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
 import type { Nicks } from '../shared/currency';
 import {
@@ -1493,6 +1493,51 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           console.error('[Background] SendTransactionV2 failed:', error);
           sendResponse({
             error: error instanceof Error ? error.message : 'Transaction failed',
+          });
+        }
+        return;
+
+      case INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION:
+        // params: [destinationAddress, amountNicks, priceUsdAtTime?] - EVM address (Base), amount in nicks
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
+        const [bridgeDest, bridgeAmountNicks, bridgePriceUsd] = payload.params || [];
+        if (!bridgeDest || !isEvmAddress(bridgeDest)) {
+          sendResponse({ error: 'Invalid destination address. Expected EVM address (0x...).' });
+          return;
+        }
+        let bridgeAmountNicksParsed: Nicks;
+        try {
+          bridgeAmountNicksParsed = parseNicksParam(bridgeAmountNicks, 'amount');
+        } catch (err) {
+          sendResponse({ error: err instanceof Error ? err.message : 'Invalid amount' });
+          return;
+        }
+
+        try {
+          const bridgeResult = await vault.sendBridgeTransaction(
+            bridgeDest,
+            bridgeAmountNicksParsed,
+            typeof bridgePriceUsd === 'number' ? bridgePriceUsd : undefined
+          );
+
+          if ('error' in bridgeResult) {
+            sendResponse({ error: bridgeResult.error });
+            return;
+          }
+
+          sendResponse({
+            txid: bridgeResult.txId,
+            broadcasted: bridgeResult.broadcasted,
+            walletTx: bridgeResult.walletTx,
+          });
+        } catch (error) {
+          console.error('[Background] Bridge transaction failed:', error);
+          sendResponse({
+            error: error instanceof Error ? error.message : 'Bridge transaction failed',
           });
         }
         return;

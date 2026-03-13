@@ -18,7 +18,11 @@ import {
   NOCK_TO_NICKS,
 } from './constants';
 import { Account } from './types';
-import { buildMultiNotePayment, type Note } from './transaction-builder';
+import {
+  buildMultiNotePayment,
+  discoverSpendConditionForNote,
+  type Note,
+} from './transaction-builder';
 import wasm from './sdk-wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
@@ -48,6 +52,8 @@ import {
   assertNativeSpendCondition,
 } from './sign-raw-tx-compat';
 import { getTxEngineSettingsForHeight } from './rpc-config';
+import { buildBridgeTransaction, validateBridgeTransaction } from '@nockbox/iris-sdk';
+import { BRIDGE_CONFIG } from './bridge-config';
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
   return getTxEngineSettingsForHeight(blockHeight);
@@ -2283,6 +2289,155 @@ export class Vault {
 
         return {
           error: `Transaction failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    });
+  }
+
+  /**
+   * Build, sign, and broadcast a bridge transaction (Nockchain → Base)
+   * Uses UTXO store for spendable balance consistency.
+   *
+   * @param destinationAddress - EVM address on Base to receive NOCK
+   * @param amountNicks - Amount to bridge in nicks
+   * @param priceUsdAtTime - Optional USD price for display
+   */
+  async sendBridgeTransaction(
+    destinationAddress: string,
+    amountNicks: Nicks,
+    priceUsdAtTime?: number
+  ): Promise<
+    { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
+  > {
+    if (this.state.locked || !this.mnemonic) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    return withAccountLock(currentAccount.address, async () => {
+      const walletTxId = crypto.randomUUID();
+      let selectedNoteIds: string[] = [];
+
+      try {
+        await initWasmModules();
+
+        const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
+
+          if (availableStoredNotes.length === 0) {
+            return { error: 'No available UTXOs.' };
+          }
+
+          const estimatedFeeNum = 2 * NOCK_TO_NICKS;
+          const targetAmount = Number(amountNicks) + estimatedFeeNum;
+          const selectedStoredNotes = selectNotesForAmount(availableStoredNotes, targetAmount);
+
+          if (!selectedStoredNotes) {
+            return { error: 'Insufficient available funds' };
+          }
+
+          selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
+          const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
+          const expectedChange = selectedTotal - Number(amountNicks) - estimatedFeeNum;
+
+          await this.markNotesInFlight(currentAccount.address, selectedNoteIds, walletTxId);
+
+          const walletTx: WalletTransaction = {
+            id: walletTxId,
+            accountAddress: currentAccount.address,
+            direction: 'outgoing',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            priceUsdAtTime,
+            status: 'created',
+            inputNoteIds: selectedNoteIds,
+            recipient: destinationAddress,
+            amount: Number(amountNicks),
+            fee: estimatedFeeNum,
+            expectedChange: expectedChange > 0 ? expectedChange : 0,
+          };
+          await this.addWalletTransaction(walletTx);
+
+          const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
+          const senderPKH = currentAccount.address;
+
+          const wasmNotes = sortedStoredNotes.map(n => {
+            if (!n.protoNote) {
+              throw new Error('Note missing protoNote - cannot build bridge transaction');
+            }
+            return wasm.noteFromProtobuf(n.protoNote);
+          });
+
+          const spendConditions = await Promise.all(
+            sortedStoredNotes.map(n =>
+              discoverSpendConditionForNote(senderPKH, {
+                nameFirst: n.nameFirst,
+                originPage: n.originPage,
+              })
+            )
+          );
+
+          const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+          const txEngineSettings = await getTxEngineSettingsForHeight(blockHeight);
+
+          const bridgeResult = await buildBridgeTransaction(
+            {
+              inputNotes: wasmNotes,
+              spendConditions,
+              amountInNicks: String(amountNicks),
+              destinationAddress,
+              refundPkh: senderPKH,
+              txEngineSettings,
+            },
+            BRIDGE_CONFIG
+          );
+
+          const rawTx = wasm.nockchainTxToRawTx(bridgeResult.transaction);
+          const protobufTx = await this.signRawTx({
+            rawTx,
+            notes: wasmNotes,
+            spendConditions,
+          });
+
+          const validation = await validateBridgeTransaction(protobufTx, BRIDGE_CONFIG);
+          if (!validation.valid) {
+            throw new Error(validation.error ?? 'Bridge transaction validation failed');
+          }
+
+          const rpcClient = createBrowserClient(await getEffectiveRpcEndpoint());
+          await rpcClient.sendTransaction(protobufTx);
+
+          walletTx.fee = Number(bridgeResult.fee);
+          walletTx.txHash = bridgeResult.txId;
+          walletTx.status = 'broadcasted_unconfirmed';
+          await this.updateWalletTransaction(currentAccount.address, walletTxId, {
+            fee: walletTx.fee,
+            txHash: bridgeResult.txId,
+            status: 'broadcasted_unconfirmed',
+          });
+
+          return {
+            txId: bridgeResult.txId,
+            walletTx,
+            broadcasted: true,
+          };
+      } catch (error) {
+        console.error('[Vault] Bridge transaction failed:', error);
+        if (selectedNoteIds.length > 0) {
+          try {
+            await this.releaseInFlightNotes(currentAccount.address, selectedNoteIds);
+            await this.updateWalletTransaction(currentAccount.address, walletTxId, {
+              status: 'failed',
+            });
+          } catch (releaseError) {
+            console.error('[Vault] Error releasing notes:', releaseError);
+          }
+        }
+        return {
+          error: `Bridge failed: ${error instanceof Error ? error.message : String(error)}`,
         };
       }
     });
