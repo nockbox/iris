@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { send } from '../utils/messaging';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
@@ -8,7 +8,7 @@ import NockText from '../assets/NockText.svg';
 import JustNText from '../assets/JustNText.svg';
 import DownArrow from '../assets/downArrow.svg';
 import { BRIDGE_PROTOCOL_FEE_DISPLAY, INTERNAL_METHODS } from '../../shared/constants';
-import { nockToNick } from '../../shared/currency';
+import { nockToNick, nickToNock } from '../../shared/currency';
 
 function truncate(addr: string): string {
   if (!addr) return '';
@@ -19,12 +19,29 @@ export function SwapReviewScreen() {
   const { navigate, pendingBridgeSwap, setPendingBridgeSwap, setSwapSubmittedToastVisible, priceUsd } = useStore();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [networkFeeNicks, setNetworkFeeNicks] = useState<number | null>(null);
 
   if (!pendingBridgeSwap) {
     navigate('swap');
     return null;
   }
   const prepared = pendingBridgeSwap;
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const result = await send<{ fee?: number; error?: string }>(
+        INTERNAL_METHODS.ESTIMATE_BRIDGE_FEE,
+        [prepared.destinationAddress, nockToNick(prepared.amountNock)]
+      );
+      if (!cancelled && result?.fee != null) {
+        setNetworkFeeNicks(result.fee);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [prepared.destinationAddress, prepared.amountNock]);
 
   const amountNock = prepared.amountNock.toLocaleString('en-US', {
     minimumFractionDigits: 2,
@@ -39,8 +56,16 @@ export function SwapReviewScreen() {
         })
       : null;
 
-  const bridgeFeeNock = prepared.amountNock * 0.005;
-  const bridgeFeeDisplay = bridgeFeeNock.toLocaleString('en-US', {
+  const networkFeeDisplay =
+    networkFeeNicks != null
+      ? nickToNock(networkFeeNicks).toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
+      : '—';
+
+  const bridgeProtocolFeeNock = prepared.amountNock * 0.005;
+  const bridgeProtocolFeeDisplay = bridgeProtocolFeeNock.toLocaleString('en-US', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 0,
   });
@@ -212,15 +237,21 @@ export function SwapReviewScreen() {
           </div>
         </div>
 
-        {/* Divider + Bridge fee */}
+        {/* Divider + Fees */}
         <div className="flex flex-col gap-3 pt-2">
           <div className="h-px" style={{ backgroundColor: 'var(--color-divider)' }} />
+          <div className="flex items-center justify-between text-[14px] font-medium">
+            <span style={{ letterSpacing: '0.14px', lineHeight: '18px' }}>Network fee</span>
+            <span className="text-right" style={{ color: 'var(--color-text-muted)', letterSpacing: '0.14px' }}>
+              {networkFeeDisplay} NOCK
+            </span>
+          </div>
           <div className="flex items-center justify-between text-[14px] font-medium">
             <span style={{ letterSpacing: '0.14px', lineHeight: '18px' }}>
               Bridge fee {BRIDGE_PROTOCOL_FEE_DISPLAY}
             </span>
             <span className="text-right" style={{ color: 'var(--color-text-muted)', letterSpacing: '0.14px' }}>
-              {bridgeFeeDisplay} NOCK
+              {bridgeProtocolFeeDisplay} NOCK
             </span>
           </div>
         </div>

@@ -114,6 +114,9 @@ export const INTERNAL_METHODS = {
   /** Send transaction using UTXO store (build, lock, broadcast atomically) */
   SEND_TRANSACTION_V2: 'wallet:sendTransactionV2',
 
+  /** Estimate bridge transaction fee for a given destination and amount */
+  ESTIMATE_BRIDGE_FEE: 'wallet:estimateBridgeFee',
+
   /** Build, sign, and broadcast a bridge transaction (Nockchain → Base) */
   SEND_BRIDGE_TRANSACTION: 'wallet:sendBridgeTransaction',
 

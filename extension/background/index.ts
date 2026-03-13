@@ -1497,6 +1497,46 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
+      case INTERNAL_METHODS.ESTIMATE_BRIDGE_FEE:
+        // params: [destinationAddress, amountNicks]
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
+        const [estimateBridgeDest, estimateBridgeAmountNicks] = payload.params || [];
+        if (!estimateBridgeDest || !isEvmAddress(estimateBridgeDest)) {
+          sendResponse({ error: 'Invalid destination address. Expected EVM address (0x...).' });
+          return;
+        }
+        let estimateBridgeAmountParsed: Nicks;
+        try {
+          estimateBridgeAmountParsed = parseNicksParam(estimateBridgeAmountNicks, 'amount');
+        } catch (err) {
+          sendResponse({ error: err instanceof Error ? err.message : 'Invalid amount' });
+          return;
+        }
+
+        try {
+          const estimateResult = await vault.estimateBridgeFee(
+            estimateBridgeDest,
+            estimateBridgeAmountParsed
+          );
+
+          if ('error' in estimateResult) {
+            sendResponse({ error: estimateResult.error });
+            return;
+          }
+
+          sendResponse({ fee: estimateResult.fee });
+        } catch (error) {
+          console.error('[Background] Bridge fee estimation failed:', error);
+          sendResponse({
+            error: error instanceof Error ? error.message : 'Bridge fee estimation failed',
+          });
+        }
+        return;
+
       case INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION:
         // params: [destinationAddress, amountNicks, priceUsdAtTime?] - EVM address (Base), amount in nicks
         if (vault.isLocked()) {
