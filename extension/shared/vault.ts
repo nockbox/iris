@@ -2296,6 +2296,81 @@ export class Vault {
   }
 
   /**
+   * Estimate the chain fee for a bridge transaction (builds tx, returns fee).
+   * Does not lock notes or broadcast.
+   */
+  async estimateBridgeFee(
+    destinationAddress: string,
+    amountNicks: Nicks
+  ): Promise<{ fee: number } | { error: string }> {
+    if (this.state.locked || !this.mnemonic) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    try {
+      await initWasmModules();
+
+      const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
+      if (availableStoredNotes.length === 0) {
+        return { error: 'No available UTXOs.' };
+      }
+
+      const estimatedFeeNum = 2 * NOCK_TO_NICKS;
+      const targetAmount = Number(amountNicks) + estimatedFeeNum;
+      const selectedStoredNotes = selectNotesForAmount(availableStoredNotes, targetAmount);
+      if (!selectedStoredNotes) {
+        return { error: 'Insufficient available funds' };
+      }
+
+      const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
+      const senderPKH = currentAccount.address;
+
+      const wasmNotes = sortedStoredNotes.map(n => {
+        if (!n.protoNote) {
+          throw new Error('Note missing protoNote - cannot estimate bridge fee');
+        }
+        return wasm.noteFromProtobuf(n.protoNote);
+      });
+
+      const spendConditions = await Promise.all(
+        sortedStoredNotes.map(n =>
+          discoverSpendConditionForNote(senderPKH, {
+            nameFirst: n.nameFirst,
+            originPage: n.originPage,
+          })
+        )
+      );
+
+      const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+      const txEngineSettings = await getTxEngineSettingsForHeight(blockHeight);
+
+      const bridgeResult = await buildBridgeTransaction(
+        {
+          inputNotes: wasmNotes,
+          spendConditions,
+          amountInNicks: String(amountNicks),
+          destinationAddress,
+          refundPkh: senderPKH,
+          txEngineSettings,
+        },
+        BRIDGE_CONFIG
+      );
+
+      return { fee: Number(bridgeResult.fee) };
+    } catch (error) {
+      console.error('[Vault] Bridge fee estimation failed:', error);
+      return {
+        error: 'Fee estimation failed: ' + (error instanceof Error ? error.message : String(error)),
+      };
+    }
+  }
+
+  /**
    * Build, sign, and broadcast a bridge transaction (Nockchain → Base)
    * Uses UTXO store for spendable balance consistency.
    *
