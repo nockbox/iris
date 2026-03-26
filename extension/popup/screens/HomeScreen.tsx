@@ -271,13 +271,13 @@ export function HomeScreen() {
     }
   };
 
-  // Only show outgoing transactions in history (we don't store incoming)
-  const displayTransactions = walletTransactions.filter(tx => tx.direction === 'outgoing');
+  const displayTransactions = walletTransactions;
 
   // Group wallet transactions by date
   const transactionsByDate = displayTransactions.reduce(
     (acc, tx) => {
-      const date = new Date(tx.createdAt).toLocaleDateString('en-US', {
+      const txTimestampMs = (tx.confirmedAtTimestamp || 0) > 0 ? tx.confirmedAtTimestamp! * 1000 : tx.createdAt;
+      const date = new Date(txTimestampMs).toLocaleDateString('en-US', {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
@@ -289,9 +289,14 @@ export function HomeScreen() {
 
       // Convert amount from nicks to NOCK
       const amountNock = (tx.amount || 0) / NOCK_TO_NICKS;
-      const type = tx.direction === 'outgoing' ? 'sent' : 'received';
-      // For incoming transactions, show sender if known, otherwise leave empty
-      const address = tx.direction === 'outgoing' ? tx.recipient : tx.sender;
+      const type =
+        tx.direction === 'incoming' ? 'received' : tx.direction === 'self' ? 'self' : 'sent';
+      const address =
+        tx.direction === 'outgoing'
+          ? tx.recipient
+          : tx.direction === 'incoming'
+            ? tx.sender
+            : tx.recipient || tx.sender || currentAccount?.address;
 
       // Only show USD value if we have historical price stored
       const usdValue = tx.priceUsdAtTime
@@ -300,10 +305,19 @@ export function HomeScreen() {
 
       acc[date].push({
         type,
-        from: truncateAddress(address || ''),
+        from:
+          type === 'self'
+            ? 'Your wallets'
+            : address
+              ? truncateAddress(address)
+              : type === 'received'
+                ? 'Unknown sender'
+                : 'Unknown recipient',
         amount:
           type === 'sent'
             ? `-${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
+            : type === 'self'
+              ? `${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
             : `${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`,
         usdValue,
         status: getDisplayStatus(tx.status),
@@ -779,7 +793,11 @@ export function HomeScreen() {
                             className="text-[14px] font-medium truncate"
                             style={{ color: 'var(--color-text-primary)' }}
                           >
-                            {t.type === 'received' ? 'Received' : 'Sent'}
+                            {t.type === 'received'
+                              ? 'Received'
+                              : t.type === 'self'
+                                ? 'Internal'
+                                : 'Sent'}
                           </div>
                           <div
                             className="text-[12px] flex items-center gap-1.5 truncate"
