@@ -70,7 +70,7 @@ import { buildBridgeTransaction, validateBridgeTransaction } from '@nockbox/iris
 import { BRIDGE_CONFIG } from './bridge-config';
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
-  return getTxEngineSettingsForHeight(blockHeight);
+  return getTxEngineSettingsForHeight(blockHeight) as unknown as wasm.TxEngineSettings;
 }
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
@@ -3325,15 +3325,14 @@ export class Vault {
    * Sign a raw transaction using iris-wasm
    *
    * @param params - Transaction parameters with raw tx jam and notes/spend conditions
-   * @returns Hex-encoded signed transaction jam
+   * @returns Signed transaction in canonical NockchainTx form
    */
   async signRawTx(params: {
     rawTx: wasm.RawTx;
     notes: wasm.Note[];
     spendConditions: wasm.SpendCondition[];
-  }): Promise<any> {
-    // Returns protobuf wasm.RawTx
-    if (this.state.locked) {
+  }): Promise<wasm.NockchainTx> {
+    if (this.state.locked || !this.mnemonic) {
       throw new Error('Wallet is locked');
     }
 
@@ -3372,13 +3371,15 @@ export class Vault {
 
     try {
       // Use block height from latest balance (max originPage of current account's notes)
-      const accountNotes = currentAccount ? this.getAccountNotes(currentAccount.address) : [];
       const blockHeight = currentAccount
         ? this.getAccountBlockHeight(currentAccount.address)
         : await rpcClient.getCurrentBlockHeight();
 
       const settings = await txEngineSettings(blockHeight);
-      const builder = wasm.TxBuilder.fromTx(rawTx, notes, null, settings);
+      if (!('spends' in rawTx)) {
+        throw new Error('Only v1 raw transactions are supported');
+      }
+      const builder = wasm.TxBuilder.fromNockchainTx(wasm.rawTxV1ToNockchainTx(rawTx), settings);
 
       await builder.sign(privateKey);
 
@@ -3387,11 +3388,7 @@ export class Vault {
 
       // Build signed tx (returns NockchainTx)
       const signedTx = builder.build();
-
-      // Convert to protobuf for return
-      const protobuf = nockchainTxToProtobuf(signedTx);
-
-      return protobuf;
+      return signedTx;
     } finally {
       privateKey.free();
 
@@ -3412,7 +3409,11 @@ export class Vault {
 
     try {
       assertNativeRawTx(rawTx);
-      const outputs = wasm.rawTxOutputs(rawTx);
+      const endpoint = await getEffectiveRpcEndpoint();
+      const rpcClient = createBrowserClient(endpoint);
+      const blockHeight = await rpcClient.getCurrentBlockHeight();
+      const settings = await txEngineSettings(blockHeight);
+      const outputs = wasm.rawTxOutputs(rawTx, blockHeight, settings);
       return outputs.map(output => wasm.noteToProtobuf(output));
     } catch (err) {
       console.error('Failed to compute outputs:', err);

@@ -36,6 +36,14 @@ function getTxIdCompat(nockchainTx: wasm.NockchainTx): string {
   return nockchainTx.id;
 }
 
+function parseDigestString(value: string): wasm.Digest {
+  const bytes = base58.decode(value);
+  if (bytes.length !== 40) {
+    throw new Error(`Invalid digest length: ${bytes.length}, expected 40 bytes`);
+  }
+  return value as wasm.Digest;
+}
+
 function isSpendConditionList(
   value: wasm.SpendCondition | wasm.SpendCondition[]
 ): value is wasm.SpendCondition[] {
@@ -235,10 +243,10 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
   builder.simpleSpend(
     wasmNotes,
     locks,
-    recipientPKH,
-    amount,
-    fee ?? null,
-    refundPKH,
+    parseDigestString(recipientPKH),
+    amount as unknown as wasm.Nicks,
+    (fee ?? null) as wasm.Nicks | null,
+    parseDigestString(refundPKH),
     includeLockData
   );
 

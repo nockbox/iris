@@ -4,8 +4,9 @@
  * for wallet provider API and internal extension communication
  */
 
-// Import provider methods from local SDK source
-import { PROVIDER_METHODS } from '../../../iris-sdk/src/index';
+// Import provider methods from SDK
+import { PROVIDER_METHODS } from '@nockbox/iris-sdk';
+export { PROVIDER_METHODS };
 
 /**
  * Internal Extension Methods - Called by popup UI and other extension components
@@ -162,9 +163,6 @@ export const INTERNAL_METHODS = {
   /** Force resync an account's UTXOs */
   FORCE_RESYNC_ACCOUNT: 'wallet:forceResyncAccount',
 } as const;
-
-// Re-export PROVIDER_METHODS for other files
-export { PROVIDER_METHODS };
 
 /**
  * All RPC methods (combined)
@@ -352,7 +350,7 @@ export const USER_ACTIVITY_METHODS = new Set([
   PROVIDER_METHODS.CONNECT,
   PROVIDER_METHODS.SIGN_MESSAGE,
   PROVIDER_METHODS.SEND_TRANSACTION,
-  PROVIDER_METHODS.SIGN_RAW_TX,
+  PROVIDER_METHODS.SIGN_TX,
 
   // Internal methods (user actions in the UI)
   INTERNAL_METHODS.UNLOCK,
