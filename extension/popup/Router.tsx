@@ -19,6 +19,8 @@ import { HomeScreen } from './screens/HomeScreen';
 import { SendScreen } from './screens/SendScreen';
 import { SendReviewScreen } from './screens/SendReviewScreen';
 import { SendSubmittedScreen } from './screens/SendSubmittedScreen';
+import { SwapScreen } from './screens/SwapScreen';
+import { SwapReviewScreen } from './screens/SwapReviewScreen';
 import { SentScreen } from './screens/transactions/SentScreen';
 import { TransactionDetailsScreen } from './screens/TransactionDetailsScreen';
 import { ReceiveScreen } from './screens/ReceiveScreen';
@@ -123,6 +125,10 @@ export function Router() {
       return <SentScreen />;
     case 'receive':
       return <ReceiveScreen />;
+    case 'swap':
+      return <SwapScreen />;
+    case 'swap-review':
+      return <SwapReviewScreen />;
     case 'tx-details':
       return <TransactionDetailsScreen />;
 

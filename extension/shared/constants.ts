@@ -4,8 +4,8 @@
  * for wallet provider API and internal extension communication
  */
 
-// Import provider methods from SDK
-import { PROVIDER_METHODS } from '@nockbox/iris-sdk';
+// Import provider methods from local SDK source
+import { PROVIDER_METHODS } from '../../../iris-sdk/src/index';
 
 /**
  * Internal Extension Methods - Called by popup UI and other extension components
@@ -125,6 +125,12 @@ export const INTERNAL_METHODS = {
 
   /** Send transaction using UTXO store (build, lock, broadcast atomically) */
   SEND_TRANSACTION_V2: 'wallet:sendTransactionV2',
+
+  /** Estimate bridge transaction fee for a given destination and amount */
+  ESTIMATE_BRIDGE_FEE: 'wallet:estimateBridgeFee',
+
+  /** Build, sign, and broadcast a bridge transaction (Nockchain → Base) */
+  SEND_BRIDGE_TRANSACTION: 'wallet:sendBridgeTransaction',
 
   /** Approve pending sign raw transaction request */
   APPROVE_SIGN_RAW_TX: 'wallet:approveSignRawTx',
@@ -317,6 +323,25 @@ export const NOCK_TO_NICKS = 65_536;
  */
 export const DEFAULT_TRANSACTION_FEE = 3_407_872;
 
+/** Fee per word (8-byte unit) for transaction size calculation in nicks */
+export const DEFAULT_FEE_PER_WORD = 1 << 15; // 32,768 nicks = 0.5 NOCK per word
+
+/** Minimum bridge amount in NOCK (UI guardrail) */
+export const MIN_BRIDGE_AMOUNT_NOCK = 100_000;
+
+/** Bridge protocol fee display string (for review UI) */
+export const BRIDGE_PROTOCOL_FEE_DISPLAY = '0.5%';
+
+/** Zorp Bridge 3-of-5 Multisig Configuration (Nockchain → Base) */
+export const ZORP_BRIDGE_THRESHOLD = 3;
+export const ZORP_BRIDGE_ADDRESSES: string[] = [
+  'AD6Mw1QUnPUrnVpyj2gW2jT6Jd6WsuZQmPn79XpZoFEocuvV12iDkvh', // Zorp #1
+  '6KrZT5hHLY1fva9AUDeGtZu5Jznm4RDLYfjcGjuU49nWoNym5ZeX5X5', // Zorp #2
+  'CDLzgKWAKFXYABkuQaMwbttDSTDMh3Wy2Eoq2XiArsyxn7vScNHupBb', // Pero
+  '7E47xYNVEyt7jGmLsiChUHnyw88AfBvzJfXfEQkPmMo2ZWsdcPudwmV', // Nockbox
+  '3xSyK6RQUaYzE8YDUamkpKRHALxaYo8E7eppawwE4sP35c3PASc6koq', // SWPS
+];
+
 /**
  * User Activity Methods - Methods that count as user activity for auto-lock timer
  * Only these methods reset the lastActivity timestamp. Passive/polling methods
@@ -342,6 +367,7 @@ export const USER_ACTIVITY_METHODS = new Set([
   INTERNAL_METHODS.SET_AUTO_LOCK,
   INTERNAL_METHODS.GET_MNEMONIC, // Viewing secret phrase is user activity
   INTERNAL_METHODS.SEND_TRANSACTION_V2,
+  INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION,
   INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE,
   INTERNAL_METHODS.ESTIMATE_MAX_SEND,
   INTERNAL_METHODS.REPORT_ACTIVITY,
