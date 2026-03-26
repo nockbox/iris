@@ -1,33 +1,19 @@
 /**
- * Protobuf ↔ native conversion for signRawTx at the RPC boundary.
- * dApps send protobuf; we convert to native in the background, use native in the vault.
+ * Native helpers for signTx at the RPC boundary.
  */
 
-import * as guard from '@nockbox/iris-sdk/iris_wasm.guard';
+import * as guard from '@nockbox/iris-wasm/iris_wasm.guard';
+import type { SignTxRequest } from '@nockbox/iris-sdk';
 import wasm from './sdk-wasm.js';
 
-/** Convert protobuf rawTx to native. Used at RPC boundary only. */
-export function toRawTx(rawTx: unknown): wasm.RawTx {
-  if (!guard.isPbCom2RawTransaction(rawTx)) {
-    throw new Error('Raw transaction must be protobuf PbCom2RawTransaction');
-  }
-  return wasm.rawTxFromProtobuf(rawTx);
-}
-
-/** Convert protobuf note to native. Used at RPC boundary only. */
-export function toNote(note: unknown): wasm.Note {
-  if (!guard.isPbCom2Note(note)) {
-    throw new Error('Note must be protobuf PbCom2Note');
-  }
-  return wasm.noteFromProtobuf(note);
-}
-
-/** Convert protobuf spendCondition to native. Used at RPC boundary only. */
-export function toSpendCondition(spendCondition: unknown): wasm.SpendCondition {
-  if (!guard.isPbCom2SpendCondition(spendCondition)) {
-    throw new Error('Spend condition must be protobuf PbCom2SpendCondition');
-  }
-  return wasm.spendConditionFromProtobuf(spendCondition);
+export function isSignTxRequest(obj: unknown): obj is SignTxRequest {
+  if (!obj || typeof obj !== 'object') return false;
+  const p = obj as { tx?: unknown; notes?: unknown };
+  return (
+    guard.isNockchainTx(p.tx) &&
+    (typeof p.notes === 'undefined' ||
+      (Array.isArray(p.notes) && p.notes.every((note: unknown) => guard.isNote(note))))
+  );
 }
 
 /** Convert native note to protobuf for popup display. */

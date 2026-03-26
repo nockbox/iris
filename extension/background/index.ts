@@ -7,15 +7,13 @@
 import { Vault } from '../shared/vault';
 import { isNockAddress } from '../shared/validators';
 import {
-  toRawTx,
-  toNote,
-  toSpendCondition,
   noteToProtobuf,
+  isSignTxRequest,
   assertNativeRawTx,
   assertNativeNote,
   assertNativeSpendCondition,
 } from '../shared/sign-raw-tx-compat';
-import { isLegacySignRawTxRequest } from '@nockbox/iris-sdk';
+import wasm from '../shared/sdk-wasm.js';
 import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
 import type { Nicks } from '../shared/currency';
 import {
@@ -637,7 +635,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Response will be sent when user approves/rejects
         return;
 
-      case PROVIDER_METHODS.SIGN_RAW_TX:
+      case PROVIDER_METHODS.SIGN_TX:
         // Validate origin
         const signRawTxOrigin = _sender.url || _sender.origin || '';
         if (!isOriginApproved(signRawTxOrigin)) {
@@ -650,17 +648,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        const rawTxParams = payload.params?.[0];
-        if (!isLegacySignRawTxRequest(rawTxParams)) {
+        const signTxParams = payload.params;
+
+        if (!isSignTxRequest(signTxParams)) {
           sendResponse({ error: { code: -32602, message: 'Invalid params' } });
           return;
         }
 
-        const nativeRawTx = toRawTx(rawTxParams.rawTx);
-        const nativeNotes = rawTxParams.notes.map((n: unknown) => toNote(n));
-        const nativeSpendConditions = rawTxParams.spendConditions.map((sc: unknown) =>
-          toSpendCondition(sc)
-        );
+        const nativeRawTx = wasm.nockchainTxToRawTx(signTxParams.tx);
+        const nativeNotes = (signTxParams.notes ?? []) as Note[];
+        const nativeSpendConditions = wasm.rawTxInputSpendConditions(nativeRawTx);
         assertNativeRawTx(nativeRawTx);
 
         const outputs = await vault.computeOutputs(nativeRawTx);
@@ -1220,12 +1217,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             assertNativeRawTx(signRawTxRequest.rawTx);
             signRawTxRequest.notes.forEach(assertNativeNote);
             signRawTxRequest.spendConditions.forEach(assertNativeSpendCondition);
-            const signature = await vault.signRawTx({
+            const signedTx = await vault.signRawTx({
               rawTx: signRawTxRequest.rawTx,
               notes: signRawTxRequest.notes as Note[],
               spendConditions: signRawTxRequest.spendConditions as SpendCondition[],
             });
-            approveSignRawTxPending.sendResponse(signature);
+            approveSignRawTxPending.sendResponse({ tx: signedTx });
             cancelPendingRequest(approveSignRawTxId);
             processNextRequest();
             sendResponse({ success: true });
