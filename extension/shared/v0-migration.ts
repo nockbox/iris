@@ -85,20 +85,18 @@ export async function signAndBroadcastV0Migration(
   }
 
   const debug = options?.debug ?? DEBUG_V0_MIGRATION;
-  const skipBroadcast = options?.skipBroadcast ?? false;
+  const skipBroadcast = options?.skipBroadcast ?? debug;
 
   try {
     const { rawTx, notes } = signRawTxPayload;
 
     if (debug) {
-      const debugPayload = {
+      console.log('[V0 Migration] Unsigned transaction (before signing):', {
         rawTx: { id: rawTx?.id, version: rawTx?.version, spendsCount: rawTx?.spends?.length ?? 0 },
         notesCount: notes.length,
         spendConditionsCount: signRawTxPayload.spendConditions?.length ?? 0,
         fullRawTx: rawTx,
-      };
-      console.log('[V0 Migration] Unsigned transaction (before signing):', debugPayload);
-      return { txId: rawTx?.id ?? '', confirmed: false, skipped: true, ...debugPayload };
+      });
     }
 
     // Current WASM API reconstructs from a NockchainTx rather than from notes/refund lock.
