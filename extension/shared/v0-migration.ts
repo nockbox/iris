@@ -10,6 +10,7 @@ import {
   type BuildV0MigrationTxResult,
   type V0BalanceResult,
 } from '@nockbox/iris-sdk';
+import type { Digest } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
 import { createBrowserClient } from './rpc-client-browser';
 
@@ -41,7 +42,12 @@ export async function buildV0MigrationTx(
 ): Promise<BuildV0MigrationTxResult> {
   await ensureWasmInitialized();
   const grpcEndpoint = await getEffectiveRpcEndpoint();
-  const result = await sdkBuildV0MigrationTx(mnemonic, grpcEndpoint, targetV1Pkh, { debug });
+  const result = await sdkBuildV0MigrationTx(
+    mnemonic,
+    grpcEndpoint,
+    targetV1Pkh as Digest | undefined,
+    { debug }
+  );
 
   if (debug) {
     console.log('[V0 Migration] Result:', {
@@ -95,21 +101,15 @@ export async function signAndBroadcastV0Migration(
       return { txId: rawTx?.id ?? '', confirmed: false, skipped: true, ...debugPayload };
     }
 
-    // alpha.6: fromTx(tx, notes, refund_lock, settings) - use refundLock from payload (v0 notes pass null for spendConditions)
-    const sc = signRawTxPayload.spendConditions;
-    const refundLock =
-      signRawTxPayload.refundLock ??
-      (sc && sc.length > 0 && sc[0] ? wasm.locky(sc[0]) : null);
-    let builder: ReturnType<typeof wasm.TxBuilder.fromTx>;
+    // Current WASM API reconstructs from a NockchainTx rather than from notes/refund lock.
+    let builder: wasm.TxBuilder;
     try {
-      builder = wasm.TxBuilder.fromTx(
-        rawTx,
-        notes,
-        refundLock,
+      builder = wasm.TxBuilder.fromNockchainTx(
+        wasm.rawTxV1ToNockchainTx(rawTx as wasm.RawTxV1),
         wasm.txEngineSettingsV1BythosDefault()
       );
     } catch (e) {
-      console.error('[V0 Migration] TxBuilder.fromTx failed:', e);
+      console.error('[V0 Migration] TxBuilder.fromNockchainTx failed:', e);
       throw e;
     }
 

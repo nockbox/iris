@@ -58,6 +58,7 @@ import {
   assertNativeSpendCondition,
 } from './sign-raw-tx-compat';
 import { getTxEngineSettingsForHeight } from './rpc-config';
+import type { Nicks as WasmNicks } from '@nockbox/iris-sdk/wasm';
 import { getBothFirstNames } from './first-name-derivation';
 import {
   createNockblocksClient,
@@ -3155,7 +3156,7 @@ export class Vault {
         {
           inputNotes: wasmNotes,
           spendConditions,
-          amountInNicks: String(amountNicks),
+          amountInNicks: amountNicks as WasmNicks,
           destinationAddress,
           refundPkh: senderPKH,
           txEngineSettings,
@@ -3265,7 +3266,7 @@ export class Vault {
             {
               inputNotes: wasmNotes,
               spendConditions,
-              amountInNicks: String(amountNicks),
+              amountInNicks: amountNicks as WasmNicks,
               destinationAddress,
               refundPkh: senderPKH,
               txEngineSettings,
