@@ -147,7 +147,7 @@ export interface TransactionRequest {
   timestamp: number;
 }
 
-/** Pending signRawTx request. Native format (converted from protobuf at RPC boundary). */
+/** Pending signTx approval request stored in native wasm form. */
 export interface SignRawTxRequest {
   rawTx: unknown; // wasm.RawTx (native)
   notes: unknown[]; // wasm.Note[] (native); popup receives protobuf for display
