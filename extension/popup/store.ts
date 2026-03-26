@@ -392,6 +392,7 @@ export const useStore = create<AppStore>((set, get) => ({
       // Fetch UTXO store balance for ALL accounts
       const accountBalances: Record<string, number> = {};
       const accountSpendableBalances: Record<string, number> = {};
+      const accountBalanceDetails: Record<string, AccountBalance> = {};
 
       for (const account of accounts) {
         try {
@@ -408,14 +409,29 @@ export const useStore = create<AppStore>((set, get) => ({
           // Convert from nicks to NOCK for display
           const availableNock = storeBalance.available / NOCK_TO_NICKS;
           const spendableNock = storeBalance.spendableNow / NOCK_TO_NICKS;
+          const totalNock = storeBalance.total / NOCK_TO_NICKS;
+          const pendingOutNock = storeBalance.pendingOut / NOCK_TO_NICKS;
           accountBalances[account.address] = availableNock;
           accountSpendableBalances[account.address] = spendableNock;
+          accountBalanceDetails[account.address] = {
+            confirmed: totalNock,
+            pendingOut: pendingOutNock,
+            pendingIn: 0,
+            available: availableNock,
+          };
         } catch (err) {
           console.warn(`[Store] Could not get balance for ${account.name}:`, err);
           // Keep previous balance if fetch fails
           accountBalances[account.address] = get().wallet.accountBalances[account.address] ?? 0;
           accountSpendableBalances[account.address] =
             get().wallet.accountSpendableBalances[account.address] ?? 0;
+          accountBalanceDetails[account.address] =
+            get().wallet.accountBalanceDetails[account.address] ?? {
+              confirmed: accountBalances[account.address],
+              pendingOut: 0,
+              pendingIn: 0,
+              available: accountBalances[account.address],
+            };
         }
       }
 
@@ -438,6 +454,7 @@ export const useStore = create<AppStore>((set, get) => ({
           spendableBalance: currentSpendable,
           accountBalances,
           accountSpendableBalances,
+          accountBalanceDetails,
         },
         isBalanceFetching: false,
       });
