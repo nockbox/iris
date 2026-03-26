@@ -56,6 +56,11 @@ export type Screen =
   | 'send-submitted'
   | 'sent'
   | 'receive'
+  | 'v0-migration-intro'
+  | 'v0-migration-setup'
+  | 'v0-migration-funds'
+  | 'v0-migration-review'
+  | 'v0-migration-submitted'
   | 'tx-details'
 
   // Approval screens
@@ -117,6 +122,47 @@ interface AppStore {
   // Last transaction details (for showing confirmation screen)
   lastTransaction: TransactionDetails | null;
   setLastTransaction: (transaction: TransactionDetails | null) => void;
+
+  // UI-only draft state for transfering v0 funds flow
+  v0MigrationDraft: {
+    v0BalanceNock: number;
+    migratedAmountNock?: number;
+    feeNock?: number;
+    destinationWalletIndex: number | null;
+    keyfileName?: string;
+    sourceAddress?: string;
+    v0Mnemonic?: string; // Kept in memory only until sign+broadcast
+    v0Notes?: any[];
+    signRawTxPayload?: {
+      rawTx: any;
+      notes: any[];
+      spendConditions: any[];
+    };
+    txId?: string;
+    v0TxConfirmed?: boolean;
+    v0TxSkipped?: boolean;
+  };
+  setV0MigrationDraft: (
+    value: Partial<{
+      v0BalanceNock: number;
+      migratedAmountNock?: number;
+      feeNock?: number;
+      destinationWalletIndex: number | null;
+      keyfileName?: string;
+      sourceAddress?: string;
+      v0Mnemonic?: string;
+      v0Notes?: any[];
+      signRawTxPayload?: {
+        rawTx: any;
+        notes: any[];
+        spendConditions: any[];
+      };
+      txId?: string;
+      v0TxConfirmed?: boolean;
+      v0TxSkipped?: boolean;
+    }>
+  ) => void;
+  resetV0MigrationDraft: () => void;
 
   // Pending connect request (for showing approval screen)
   pendingConnectRequest: ConnectRequest | null;
@@ -199,6 +245,20 @@ export const useStore = create<AppStore>((set, get) => ({
 
   onboardingMnemonic: null,
   lastTransaction: null,
+  v0MigrationDraft: {
+    v0BalanceNock: 2500,
+    migratedAmountNock: undefined,
+    feeNock: undefined,
+    destinationWalletIndex: null,
+    keyfileName: undefined,
+    sourceAddress: undefined,
+    sourcePkh: undefined,
+    v0Notes: undefined,
+        signRawTxPayload: undefined,
+        txId: undefined,
+        v0TxConfirmed: undefined,
+        v0TxSkipped: undefined,
+  },
   pendingConnectRequest: null,
   pendingSignRequest: null,
   pendingSignRawTxRequest: null,
@@ -316,6 +376,34 @@ export const useStore = create<AppStore>((set, get) => ({
   // Set last transaction details
   setLastTransaction: (transaction: TransactionDetails | null) => {
     set({ lastTransaction: transaction });
+  },
+
+  setV0MigrationDraft: value => {
+    set(state => ({
+      v0MigrationDraft: {
+        ...state.v0MigrationDraft,
+        ...value,
+      },
+    }));
+  },
+
+  resetV0MigrationDraft: () => {
+    set({
+      v0MigrationDraft: {
+        v0BalanceNock: 2500,
+        migratedAmountNock: undefined,
+        feeNock: undefined,
+        destinationWalletIndex: null,
+        keyfileName: undefined,
+        sourceAddress: undefined,
+        v0Mnemonic: undefined,
+        v0Notes: undefined,
+        signRawTxPayload: undefined,
+        txId: undefined,
+        v0TxConfirmed: undefined,
+        v0TxSkipped: undefined,
+  },
+    });
   },
 
   // Set pending connect request
