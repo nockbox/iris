@@ -41,7 +41,8 @@ export function SendScreen() {
 
   // Get real accounts from vault (filter out hidden accounts)
   const accounts = (wallet.accounts || []).filter(acc => !acc.hidden);
-  const currentAccount = wallet.currentAccount || accounts[0];
+  const currentAccount =
+    wallet.currentAccount && !wallet.currentAccount.hidden ? wallet.currentAccount : accounts[0];
   // Use spendable balance (only UTXOs that are not in_flight - can be spent NOW)
   const currentBalance = wallet.spendableBalance;
 
@@ -51,7 +52,7 @@ export function SendScreen() {
   }, [fetchBalance]);
 
   // Account switching handler
-  async function handleSwitchAccount(index: number) {
+  async function handleSwitchAccount(accountAddress: string) {
     setIsLoadingBalance(true);
     setWalletDropdownOpen(false);
 
@@ -68,7 +69,7 @@ export function SendScreen() {
     try {
       const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
         INTERNAL_METHODS.SWITCH_ACCOUNT,
-        [index]
+        [accountAddress]
       );
 
       if (result?.ok && result.account) {
@@ -497,10 +498,10 @@ export function SendScreen() {
               className="rounded-xl shadow-[0_4px_12px_rgba(0,0,0,0.1)] p-1 max-h-[240px] overflow-y-auto"
             >
               {accounts.map(account => {
-                const isSelected = currentAccount?.index === account.index;
+                const isSelected = currentAccount?.address === account.address;
                 return (
                   <button
-                    key={account.index}
+                    key={account.address}
                     role="option"
                     aria-selected={isSelected}
                     className="w-full flex items-center gap-2 p-2 rounded-lg transition border"
@@ -518,7 +519,7 @@ export function SendScreen() {
                         e.currentTarget.style.backgroundColor = 'var(--color-bg)';
                       }
                     }}
-                    onClick={() => handleSwitchAccount(account.index)}
+                    onClick={() => handleSwitchAccount(account.address)}
                   >
                     <div
                       className="flex-shrink-0 w-10 h-10 rounded-lg grid place-items-center"
