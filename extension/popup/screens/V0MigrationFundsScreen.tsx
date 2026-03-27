@@ -15,6 +15,9 @@ import { buildV0MigrationTx } from '../../shared/v0-migration';
 export function V0MigrationFundsScreen() {
   const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft } = useStore();
   const visibleAccounts = wallet.accounts.filter(account => !account.hidden);
+  const debugSpendAmount = v0MigrationDraft.migratedAmountNock;
+  const isDebugSingleNoteSpend =
+    debugSpendAmount != null && debugSpendAmount !== v0MigrationDraft.v0BalanceNock;
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [buildError, setBuildError] = useState('');
   const [errorType, setErrorType] = useState<'fee_too_low' | 'general' | null>(null);
@@ -61,7 +64,7 @@ export function V0MigrationFundsScreen() {
         );
         if (ac.signal.aborted) return;
         const feeNock = result.feeNock;
-        setV0MigrationDraft({ feeNock });
+        setV0MigrationDraft({ feeNock, migratedAmountNock: result.migratedNock });
         if (feeNock != null) {
           setFee(feeNock.toString());
           setEditedFee(feeNock.toString());
@@ -76,7 +79,7 @@ export function V0MigrationFundsScreen() {
         if (ac.signal.aborted) return;
         setBuildError(err instanceof Error ? err.message : 'Failed to estimate fee');
         setErrorType('general');
-        setV0MigrationDraft({ feeNock: undefined });
+        setV0MigrationDraft({ feeNock: undefined, migratedAmountNock: undefined });
         setFee('');
         setEditedFee('');
         setMinimumFee(null);
@@ -218,6 +221,18 @@ export function V0MigrationFundsScreen() {
             {v0MigrationDraft.v0BalanceNock.toLocaleString('en-US')}
           </div>
         </div>
+
+        {isDebugSingleNoteSpend && (
+          <div
+            className="rounded-[14px] p-3 flex items-center justify-between"
+            style={{ backgroundColor: 'var(--color-surface-900)' }}
+          >
+            <span className="text-[14px] font-medium">Debug note spend</span>
+            <span className="text-[14px] font-medium">
+              {debugSpendAmount.toLocaleString('en-US')} NOCK
+            </span>
+          </div>
+        )}
 
         <div className="flex justify-center py-0.5">
           <div

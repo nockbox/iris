@@ -1344,6 +1344,15 @@ export class Vault {
     return this.walletTxStore[accountAddress] || [];
   }
 
+  private hasIncompleteHistoryMetadata(accountAddress: string): boolean {
+    const transactions = this.getWalletTransactions(accountAddress);
+    return transactions.some(
+      tx =>
+        tx.origin === 'history_sync' &&
+        ((tx.direction === 'incoming' && !tx.sender) || (tx.direction === 'outgoing' && !tx.recipient))
+    );
+  }
+
   private sortWalletTransactions(accountAddress: string): void {
     if (!this.walletTxStore[accountAddress]) return;
 
@@ -1573,18 +1582,30 @@ export class Vault {
   }
 
   private getUniqueLockRootFromSpends(spends: NockblocksSpend[]): string | undefined {
-    const lockRoots = new Set<string>()
+    const spendLockRoots = new Set<string>()
     for (const spend of spends) {
       if (spend.lockRoot) {
-        lockRoots.add(spend.lockRoot)
+        spendLockRoots.add(spend.lockRoot)
       }
+    }
+
+    if (spendLockRoots.size === 1) {
+      return [...spendLockRoots][0]
+    }
+
+    if (spendLockRoots.size > 1) {
+      return undefined
+    }
+
+    const seedLockRoots = new Set<string>()
+    for (const spend of spends) {
       for (const seed of spend.seeds || []) {
         if (seed.lockRoot) {
-          lockRoots.add(seed.lockRoot)
+          seedLockRoots.add(seed.lockRoot)
         }
       }
     }
-    return lockRoots.size === 1 ? [...lockRoots][0] : undefined
+    return seedLockRoots.size === 1 ? [...seedLockRoots][0] : undefined
   }
 
   private getTransactionTrackingId(tx: WalletTransaction): string | undefined {
@@ -1622,6 +1643,13 @@ export class Vault {
     )
 
     if (ownOutputs.length === 0 && ownSpends.length === 0) {
+      console.log('[Vault] Filtered out history transaction: no matching own first names', {
+        accountAddress,
+        txId,
+        ownFirstNames: Array.from(ownFirstNames),
+        outputFirstNames: outputs.map(output => output.firstName).filter(Boolean),
+        spendFirstNames: spends.map(spend => spend.firstName).filter(Boolean),
+      })
       return null
     }
 
@@ -1688,6 +1716,9 @@ export class Vault {
 
   private async refreshPendingTransactionStatuses(accountAddress: string): Promise<number> {
     if (!isNockblocksConfigured()) {
+      console.log('[Vault] Skipping pending tx status refresh: Nockblocks not configured', {
+        accountAddress,
+      })
       return 0
     }
 
@@ -1772,16 +1803,20 @@ export class Vault {
 
   private async syncConfirmedHistory(accountAddress: string): Promise<number> {
     if (!isNockblocksConfigured()) {
+      console.log('[Vault] Skipping confirmed history sync: Nockblocks not configured', {
+        accountAddress,
+      })
       return 0
     }
 
     const client = createNockblocksClient()
     const syncState = this.getAccountSyncState(accountAddress)
+    const needsHistoryRepair = this.hasIncompleteHistoryMetadata(accountAddress)
     const ownFirstNames = await this.getOwnFirstNameSet(accountAddress)
     const tip = await client.getTip()
     let syncedCount = 0
 
-    if (!syncState.historyInitialized) {
+    if (!syncState.historyInitialized || needsHistoryRepair) {
       const limit = 1000
       let offset = 0
 
