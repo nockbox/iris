@@ -10,6 +10,7 @@ import {
   type BuildV0MigrationTxResult,
   type V0BalanceResult,
 } from '@nockbox/iris-sdk';
+import type { Digest } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
 import { createBrowserClient } from './rpc-client-browser';
 
@@ -17,8 +18,44 @@ export type { V0BalanceResult };
 
 const CONFIRM_POLL_INTERVAL_MS = 3000;
 const CONFIRM_TIMEOUT_MS = 90_000;
+const NOCK_TO_NICKS = 65536;
 /** [TEMPORARY] Set true to log unsigned tx before signing. Remove when migration is validated. */
 const DEBUG_V0_MIGRATION = true;
+
+function buildMigrationBuilder(signRawTxPayload: {
+  rawTx: any;
+  notes: any[];
+  spendConditions?: (any | null)[];
+  refundLock?: any;
+}): wasm.TxBuilder {
+  const { notes, spendConditions, refundLock } = signRawTxPayload;
+  const builder = new wasm.TxBuilder(wasm.txEngineSettingsV1BythosDefault());
+  for (let i = 0; i < notes.length; i++) {
+    const spendBuilder = new wasm.SpendBuilder(
+      notes[i] as wasm.Note,
+      (spendConditions?.[i] ?? null) as wasm.Lock | null,
+      null,
+      (refundLock ?? null) as wasm.Digest | null
+    );
+    spendBuilder.computeRefund(false);
+    builder.spend(spendBuilder);
+  }
+  return builder;
+}
+
+async function stabilizeMigrationFee(builder: wasm.TxBuilder, privateKey: wasm.PrivateKey): Promise<string> {
+  let lastFee: string | undefined;
+  for (let i = 0; i < 3; i++) {
+    builder.recalcAndSetFee(false);
+    const nextFee = builder.curFee() as string;
+    await builder.sign(privateKey);
+    if (nextFee === lastFee) {
+      return nextFee;
+    }
+    lastFee = nextFee;
+  }
+  return builder.curFee() as string;
+}
 
 /**
  * Discovery only: query v0 (Legacy) balance for a mnemonic. Use this to display balance
@@ -41,7 +78,35 @@ export async function buildV0MigrationTx(
 ): Promise<BuildV0MigrationTxResult> {
   await ensureWasmInitialized();
   const grpcEndpoint = await getEffectiveRpcEndpoint();
-  const result = await sdkBuildV0MigrationTx(mnemonic, grpcEndpoint, targetV1Pkh, { debug });
+  let result = await sdkBuildV0MigrationTx(
+    mnemonic,
+    grpcEndpoint,
+    targetV1Pkh as Digest | undefined,
+    { debug }
+  );
+
+  if (result.signRawTxPayload) {
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(mnemonic, '');
+    try {
+      if (!masterKey.privateKey || masterKey.privateKey.byteLength !== 32) {
+        throw new Error('Cannot derive signing key from mnemonic');
+      }
+      const privateKey = wasm.PrivateKey.fromBytes(masterKey.privateKey);
+      try {
+        const builder = buildMigrationBuilder(result.signRawTxPayload);
+        const feeNicks = await stabilizeMigrationFee(builder, privateKey);
+        result = {
+          ...result,
+          fee: feeNicks as BuildV0MigrationTxResult['fee'],
+          feeNock: Number(BigInt(feeNicks)) / NOCK_TO_NICKS,
+        };
+      } finally {
+        privateKey.free();
+      }
+    } finally {
+      masterKey.free();
+    }
+  }
 
   if (debug) {
     console.log('[V0 Migration] Result:', {
@@ -51,6 +116,8 @@ export async function buildV0MigrationTx(
       totalNicks: result.totalNicks,
       smallestNoteNock: result.smallestNoteNock,
       txId: result.txId,
+      feeNock: result.feeNock,
+      sdkDebugUsesSingleSmallestNote: debug,
     });
   }
 
@@ -79,43 +146,31 @@ export async function signAndBroadcastV0Migration(
   }
 
   const debug = options?.debug ?? DEBUG_V0_MIGRATION;
-  const skipBroadcast = options?.skipBroadcast ?? false;
+  const skipBroadcast = options?.skipBroadcast ?? debug;
 
   try {
-    const { rawTx, notes } = signRawTxPayload;
+    const { rawTx, notes, spendConditions, refundLock } = signRawTxPayload;
 
     if (debug) {
-      const debugPayload = {
+      console.log('[V0 Migration] Unsigned transaction (before signing):', {
         rawTx: { id: rawTx?.id, version: rawTx?.version, spendsCount: rawTx?.spends?.length ?? 0 },
         notesCount: notes.length,
         spendConditionsCount: signRawTxPayload.spendConditions?.length ?? 0,
         fullRawTx: rawTx,
-      };
-      console.log('[V0 Migration] Unsigned transaction (before signing):', debugPayload);
-      return { txId: rawTx?.id ?? '', confirmed: false, skipped: true, ...debugPayload };
+      });
     }
 
-    // alpha.6: fromTx(tx, notes, refund_lock, settings) - use refundLock from payload (v0 notes pass null for spendConditions)
-    const sc = signRawTxPayload.spendConditions;
-    const refundLock =
-      signRawTxPayload.refundLock ??
-      (sc && sc.length > 0 && sc[0] ? wasm.locky(sc[0]) : null);
-    let builder: ReturnType<typeof wasm.TxBuilder.fromTx>;
+    let builder: wasm.TxBuilder;
     try {
-      builder = wasm.TxBuilder.fromTx(
-        rawTx,
-        notes,
-        refundLock,
-        wasm.txEngineSettingsV1BythosDefault()
-      );
+      builder = buildMigrationBuilder({ rawTx, notes, spendConditions, refundLock });
     } catch (e) {
-      console.error('[V0 Migration] TxBuilder.fromTx failed:', e);
+      console.error('[V0 Migration] Failed to reconstruct signer builder from notes:', e);
       throw e;
     }
 
     const privateKey = wasm.PrivateKey.fromBytes(masterKey.privateKey);
     try {
-      await builder.sign(privateKey);
+      await stabilizeMigrationFee(builder, privateKey);
     } catch (e) {
       console.error('[V0 Migration] builder.sign failed:', e);
       throw e;
