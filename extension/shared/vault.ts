@@ -46,6 +46,7 @@ import {
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
 import type { Nicks } from './currency';
+import type { Nicks as WasmNicks } from '@nockbox/iris-sdk/wasm';
 import {
   assertNativeRawTx,
   assertNativeNote,
@@ -2352,7 +2353,7 @@ export class Vault {
         {
           inputNotes: wasmNotes,
           spendConditions,
-          amountInNicks: String(amountNicks),
+          amountInNicks: amountNicks as WasmNicks,
           destinationAddress,
           refundPkh: senderPKH,
           txEngineSettings,
@@ -2462,7 +2463,7 @@ export class Vault {
             {
               inputNotes: wasmNotes,
               spendConditions,
-              amountInNicks: String(amountNicks),
+              amountInNicks: amountNicks as WasmNicks,
               destinationAddress,
               refundPkh: senderPKH,
               txEngineSettings,
