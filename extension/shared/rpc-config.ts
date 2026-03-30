@@ -3,16 +3,9 @@
  * Used by vault, popup (sync), background (dApp grpcEndpoint), and RpcSettingsScreen.
  */
 
+import type { Nicks, TxEngineSettings } from '@nockbox/iris-sdk/wasm';
+export type { Nicks, TxEngineSettings };
 import { STORAGE_KEYS, RPC_ENDPOINT } from './constants';
-
-/** Tx engine settings (matches wasm.TxEngineSettings). Stored directly, used as-is. */
-export interface TxEngineSettings {
-  tx_engine_version: 0 | 1 | 2;
-  tx_engine_patch: number;
-  min_fee: string;
-  cost_per_word: string;
-  witness_word_div: number;
-}
 
 /**
  * Activation heights for tx engine settings.
@@ -51,8 +44,8 @@ const DEFAULT_BLOCK_EXPLORER_URL = NOCKSCAN_URL;
 const V1_TX_ENGINE_SETTINGS: TxEngineSettings = {
   tx_engine_version: 1,
   tx_engine_patch: 0,
-  min_fee: '256',
-  cost_per_word: String(1 << 15),
+  min_fee: '256' as Nicks,
+  cost_per_word: String(1 << 15) as Nicks,
   witness_word_div: 1,
 };
 
@@ -60,8 +53,8 @@ const V1_TX_ENGINE_SETTINGS: TxEngineSettings = {
 const BYTHOS_TX_ENGINE_SETTINGS: TxEngineSettings = {
   tx_engine_version: 1,
   tx_engine_patch: 1,
-  min_fee: '256',
-  cost_per_word: String(1 << 14),
+  min_fee: '256' as Nicks,
+  cost_per_word: String(1 << 14) as Nicks,
   witness_word_div: 4,
 };
 

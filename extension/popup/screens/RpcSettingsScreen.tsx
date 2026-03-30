@@ -5,7 +5,7 @@ import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
 import NockBlocksFrame from '../assets/NockBlocksFrame.svg';
 import NockScanFrame from '../assets/NockScanFrame.svg';
-import type { TxEngineActivationHeights, TxEngineSettings } from '../../shared/rpc-config';
+import type { Nicks, TxEngineActivationHeights, TxEngineSettings } from '../../shared/rpc-config';
 import {
   defaultRpcConfig,
   getEffectiveRpcConfig,
@@ -43,8 +43,8 @@ function parseTxEngineHeightsJson(json: string): TxEngineActivationHeights | nul
         result[h] = {
           tx_engine_version: Math.min(2, Math.max(0, v.tx_engine_version)) as 0 | 1 | 2,
           tx_engine_patch: v.tx_engine_patch,
-          min_fee: String(v.min_fee),
-          cost_per_word: String(v.cost_per_word),
+          min_fee: String(v.min_fee) as Nicks,
+          cost_per_word: String(v.cost_per_word) as Nicks,
           witness_word_div: v.witness_word_div,
         };
       }
