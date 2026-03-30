@@ -1032,6 +1032,16 @@ export class Vault {
     return this.walletTxStore[accountAddress] || [];
   }
 
+  private hasIncompleteHistoryMetadata(accountAddress: string): boolean {
+    const transactions = this.getWalletTransactions(accountAddress);
+    return transactions.some(
+      tx =>
+        tx.origin === 'history_sync' &&
+        ((tx.direction === 'incoming' && !tx.sender) ||
+          (tx.direction === 'outgoing' && !tx.recipient))
+    );
+  }
+
   private sortWalletTransactions(accountAddress: string): void {
     if (!this.walletTxStore[accountAddress]) return;
 
@@ -1261,18 +1271,30 @@ export class Vault {
   }
 
   private getUniqueLockRootFromSpends(spends: NockblocksSpend[]): string | undefined {
-    const lockRoots = new Set<string>()
+    const spendLockRoots = new Set<string>()
     for (const spend of spends) {
       if (spend.lockRoot) {
-        lockRoots.add(spend.lockRoot)
+        spendLockRoots.add(spend.lockRoot)
       }
+    }
+
+    if (spendLockRoots.size === 1) {
+      return [...spendLockRoots][0]
+    }
+
+    if (spendLockRoots.size > 1) {
+      return undefined
+    }
+
+    const seedLockRoots = new Set<string>()
+    for (const spend of spends) {
       for (const seed of spend.seeds || []) {
         if (seed.lockRoot) {
-          lockRoots.add(seed.lockRoot)
+          seedLockRoots.add(seed.lockRoot)
         }
       }
     }
-    return lockRoots.size === 1 ? [...lockRoots][0] : undefined
+    return seedLockRoots.size === 1 ? [...seedLockRoots][0] : undefined
   }
 
   private getTransactionTrackingId(tx: WalletTransaction): string | undefined {
@@ -1465,11 +1487,12 @@ export class Vault {
 
     const client = createNockblocksClient()
     const syncState = this.getAccountSyncState(accountAddress)
+    const needsHistoryRepair = this.hasIncompleteHistoryMetadata(accountAddress)
     const ownFirstNames = await this.getOwnFirstNameSet(accountAddress)
     const tip = await client.getTip()
     let syncedCount = 0
 
-    if (!syncState.historyInitialized) {
+    if (!syncState.historyInitialized || needsHistoryRepair) {
       const limit = 1000
       let offset = 0
 

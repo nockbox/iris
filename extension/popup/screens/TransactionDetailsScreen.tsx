@@ -8,6 +8,8 @@ import IrisLogo40 from '../assets/iris-logo-40.svg';
 import IrisLogoBlue from '../assets/iris-logo-blue.svg';
 import { truncateAddress } from '../utils/format';
 import { NOCK_TO_NICKS } from '../../shared/constants';
+import { resolveCounterpartyAccount } from '../../shared/account-lock-roots';
+import { useLockRootAccountMap } from '../hooks/useLockRootAccountMap';
 
 export function TransactionDetailsScreen() {
   const {
@@ -21,6 +23,7 @@ export function TransactionDetailsScreen() {
     blockExplorerUrl,
   } = useStore();
 
+  const lockRootToAccount = useLockRootAccountMap(wallet.accounts);
   const [copiedTxId, setCopiedTxId] = useState(false);
 
   // Fetch fresh transaction data on mount
@@ -120,42 +123,55 @@ export function TransactionDetailsScreen() {
       ? selectedTransaction.recipient
       : selectedTransaction.sender;
 
+  const accountsList = wallet.accounts ?? [];
+  const counterpartyAccount = resolveCounterpartyAccount(
+    counterpartyAddress,
+    accountsList,
+    lockRootToAccount
+  );
+
   // Resolve sender and receiver for wallet cards (like review screen)
   const senderAccount =
     selectedTransaction.direction === 'outgoing' || selectedTransaction.direction === 'self'
       ? currentAccount
-      : wallet.accounts?.find(
-          acc =>
-            counterpartyAddress && acc.address.toLowerCase() === counterpartyAddress.toLowerCase()
-        );
+      : counterpartyAccount;
   const receiverAccount =
     selectedTransaction.direction === 'outgoing'
-      ? wallet.accounts?.find(
-          acc =>
-            counterpartyAddress && acc.address.toLowerCase() === counterpartyAddress.toLowerCase()
-        )
+      ? counterpartyAccount
       : selectedTransaction.direction === 'self'
         ? currentAccount
       : currentAccount;
 
   const senderLabel =
-    selectedTransaction.direction === 'self' ? currentAccount?.name ?? 'Current wallet' : senderAccount?.name ?? 'Unknown wallet';
+    selectedTransaction.direction === 'self'
+      ? currentAccount?.name ?? 'Current wallet'
+      : senderAccount?.name ??
+        (selectedTransaction.origin === 'history_sync' && selectedTransaction.direction === 'incoming'
+          ? 'Sending lockroot'
+          : 'Unknown wallet');
   const receiverLabel =
     selectedTransaction.direction === 'self'
       ? receiverAccount?.name ?? 'Current wallet'
-      : receiverAccount?.name ?? 'Receiving address';
+      : receiverAccount?.name ??
+        (selectedTransaction.origin === 'history_sync' && selectedTransaction.direction === 'outgoing'
+          ? 'Receiving lock root'
+          : 'Receiving address');
 
   const senderAddress =
     selectedTransaction.direction === 'outgoing' || selectedTransaction.direction === 'self'
       ? truncateAddress(currentAddress)
-      : counterpartyAddress
-        ? truncateAddress(counterpartyAddress)
-        : 'Unknown';
+      : counterpartyAccount?.address
+        ? truncateAddress(counterpartyAccount.address)
+        : counterpartyAddress
+          ? truncateAddress(counterpartyAddress)
+          : 'Unknown';
   const receiverAddress =
     selectedTransaction.direction === 'outgoing'
-      ? counterpartyAddress
-        ? truncateAddress(counterpartyAddress)
-        : 'Unknown'
+      ? receiverAccount?.address
+        ? truncateAddress(receiverAccount.address)
+        : counterpartyAddress
+          ? truncateAddress(counterpartyAddress)
+          : 'Unknown'
       : selectedTransaction.direction === 'self'
         ? truncateAddress(currentAddress)
       : truncateAddress(currentAddress);
@@ -271,7 +287,7 @@ export function TransactionDetailsScreen() {
 
             {(selectedTransaction.confirmedAtBlock || selectedTransaction.confirmedAtTimestamp) && (
               <div
-                className="rounded-lg px-3 py-5"
+                className="rounded-lg px-3 py-3"
                 style={{ backgroundColor: 'var(--color-surface-900)' }}
               >
                 {selectedTransaction.confirmedAtBlock && (
@@ -283,7 +299,11 @@ export function TransactionDetailsScreen() {
                   </div>
                 )}
                 {selectedTransaction.confirmedAtTimestamp && (
-                  <div className="flex items-center justify-between text-sm font-medium leading-[18px] tracking-[0.14px] mt-3">
+                  <div
+                    className={`flex items-center justify-between text-sm font-medium leading-[16px] tracking-[0.14px] ${
+                      selectedTransaction.confirmedAtBlock ? 'mt-1.5' : ''
+                    }`}
+                  >
                     <div style={{ color: 'var(--color-text-primary)' }}>Confirmed at</div>
                     <div style={{ color: 'var(--color-text-muted)' }}>
                       {new Date(selectedTransaction.confirmedAtTimestamp * 1000).toLocaleString()}
@@ -385,24 +405,28 @@ export function TransactionDetailsScreen() {
               className="self-stretch py-3 rounded-lg flex flex-col justify-center items-start gap-3"
               style={{ backgroundColor: 'var(--color-surface-900)' }}
             >
-              <div className="self-stretch px-3 flex justify-between items-center">
-                <div
-                  className="flex-1 text-sm font-medium leading-4 tracking-tight"
-                  style={{ color: 'var(--color-text-muted)' }}
-                >
-                  Network fee
-                </div>
-                <div
-                  className="text-sm font-medium leading-4 tracking-tight"
-                  style={{ color: 'var(--color-text-muted)' }}
-                >
-                  {networkFee}
-                </div>
-              </div>
-              <div
-                className="self-stretch h-0 outline outline-1 outline-offset-[-0.5px]"
-                style={{ outlineColor: 'var(--color-divider)' }}
-              />
+              {selectedTransaction.direction === 'outgoing' && (
+                <>
+                  <div className="self-stretch px-3 flex justify-between items-center">
+                    <div
+                      className="flex-1 text-sm font-medium leading-4 tracking-tight"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      Network fee
+                    </div>
+                    <div
+                      className="text-sm font-medium leading-4 tracking-tight"
+                      style={{ color: 'var(--color-text-muted)' }}
+                    >
+                      {networkFee}
+                    </div>
+                  </div>
+                  <div
+                    className="self-stretch h-0 outline outline-1 outline-offset-[-0.5px]"
+                    style={{ outlineColor: 'var(--color-divider)' }}
+                  />
+                </>
+              )}
               <div className="self-stretch px-3 flex justify-between items-start">
                 <div
                   className="flex-1 text-sm font-medium leading-4 tracking-tight"

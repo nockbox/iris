@@ -61,17 +61,16 @@ export interface NockblocksBlock {
   transactions: NockblocksTransaction[]
 }
 
-function getEnvVar(name: string): string | undefined {
-  const value = (import.meta.env as Record<string, string | undefined>)[name]
+function getEnvVar(value: string | undefined): string | undefined {
   return value?.trim() || undefined
 }
 
 function getApiKey(): string | undefined {
-  return getEnvVar('VITE_NOCKBLOCKS_API_KEY')
+  return getEnvVar(import.meta.env.VITE_NOCKBLOCKS_API_KEY)
 }
 
 function getApiUrl(): string {
-  return getEnvVar('VITE_NOCKBLOCKS_API_URL') || DEFAULT_NOCKBLOCKS_RPC_URL
+  return getEnvVar(import.meta.env.VITE_NOCKBLOCKS_API_URL) || DEFAULT_NOCKBLOCKS_RPC_URL
 }
 
 function normalizeTransaction(transaction: NockblocksTransaction): NockblocksTransaction {
@@ -89,19 +88,31 @@ function normalizeBlock(block: unknown): NockblocksBlock | null {
   }
 
   const value = block as Record<string, unknown>
+  const blockId =
+    typeof value.blockId === 'string'
+      ? value.blockId
+      : typeof value.digest === 'string'
+        ? value.digest
+        : undefined
+  const parentId =
+    typeof value.parentId === 'string'
+      ? value.parentId
+      : typeof value.parent === 'string'
+        ? value.parent
+        : undefined
   const txs = Array.isArray(value.transactions)
     ? value.transactions.map(tx => normalizeTransaction(tx as NockblocksTransaction))
     : []
 
-  if (typeof value.blockId !== 'string' || typeof value.height !== 'number') {
+  if (typeof blockId !== 'string' || typeof value.height !== 'number') {
     return null
   }
 
   return {
-    blockId: value.blockId,
+    blockId,
     height: value.height,
     timestamp: typeof value.timestamp === 'number' ? value.timestamp : 0,
-    parentId: typeof value.parentId === 'string' ? value.parentId : undefined,
+    parentId,
     transactions: txs,
   }
 }

@@ -28,6 +28,8 @@ import SettingsGearIcon from '../assets/settings-gear-icon.svg';
 import PencilEditIcon from '../assets/pencil-edit-icon.svg';
 import RefreshIcon from '../assets/refresh-icon.svg';
 import ReceiptIcon from '../assets/receipt-icon.svg';
+import { resolveCounterpartyAccount } from '../../shared/account-lock-roots';
+import { useLockRootAccountMap } from '../hooks/useLockRootAccountMap';
 
 import './HomeScreen.tailwind.css';
 
@@ -50,6 +52,7 @@ export function HomeScreen() {
     blockExplorerUrl,
   } = useStore();
   const { theme } = useTheme();
+  const lockRootToAccount = useLockRootAccountMap(wallet.accounts);
 
   const [balanceHidden, setBalanceHidden] = useState(false);
   const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
@@ -291,12 +294,18 @@ export function HomeScreen() {
       const amountNock = (tx.amount || 0) / NOCK_TO_NICKS;
       const type =
         tx.direction === 'incoming' ? 'received' : tx.direction === 'self' ? 'self' : 'sent';
-      const address =
+      const counterparty =
         tx.direction === 'outgoing'
           ? tx.recipient
           : tx.direction === 'incoming'
             ? tx.sender
             : tx.recipient || tx.sender || currentAccount?.address;
+      const peerAccount = resolveCounterpartyAccount(
+        counterparty,
+        wallet.accounts ?? [],
+        lockRootToAccount
+      );
+      const address = peerAccount?.address ?? counterparty;
 
       // Only show USD value if we have historical price stored
       const usdValue = tx.priceUsdAtTime
