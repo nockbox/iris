@@ -70,13 +70,13 @@ export function SendSubmittedScreen() {
               >
                 Your transaction
                 <br />
-                was submitted
+                is pending
               </h2>
               <p
                 className="m-0 text-[13px] leading-[18px] tracking-[0.26px]"
                 style={{ color: 'var(--color-text-muted)' }}
               >
-                Check the transaction activity below
+                Check the transaction activity below for confirmation updates
               </p>
             </div>
           </div>
