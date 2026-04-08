@@ -4,7 +4,7 @@ import { useTheme } from '../contexts/ThemeContext';
 import { truncateAddress } from '../utils/format';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS, NOCK_TO_NICKS, STORAGE_KEYS } from '../../shared/constants';
-import type { Account } from '../../shared/types';
+import type { SubAccount } from '../../shared/types';
 import { AccountIcon } from '../components/AccountIcon';
 import { EyeIcon } from '../components/icons/EyeIcon';
 import { EyeOffIcon } from '../components/icons/EyeOffIcon';
@@ -155,43 +155,29 @@ export function HomeScreen() {
   // Get accounts from vault (filter out hidden accounts)
   const accounts = (wallet.accounts || []).filter(acc => !acc.hidden);
   const seedGroups = useMemo(() => {
-    const bySeed = new Map<string, typeof accounts>();
-    for (const acc of accounts) {
-      const id = acc.seedAccountId || 'unknown';
-      if (!bySeed.has(id)) bySeed.set(id, []);
-      bySeed.get(id)!.push(acc);
+    const sources = wallet.seedSources || [];
+    if (sources.length > 0) {
+      return sources.map(seed => ({
+        seed,
+        accounts: (seed.accounts || []).filter(acc => !acc.hidden),
+      }));
     }
-    const grouped = Array.from(bySeed.entries()).map(([id, groupAccounts]) => {
-      const master =
-        groupAccounts.find(a => a.index === 0 || a.derivation === 'master') || groupAccounts[0];
-      return {
-        seed: {
-          id,
-          name: master.name,
-          type: master.keySource === 'external' ? 'external' : 'mnemonic',
-          createdAt: master.createdAt ?? 0,
-          accounts: [],
-        },
-        accounts: groupAccounts,
-      };
-    });
-    return grouped.length > 0
-      ? grouped
-      : accounts.length > 0
-        ? [
-            {
-              seed: {
-                id: wallet.activeSeedSourceId || 'legacy',
-                name: 'Legacy',
-                type: 'mnemonic' as const,
-                createdAt: 0,
-                accounts: [],
-              },
-              accounts,
+    // Fallback for pre-migration vaults with no seed sources loaded
+    return accounts.length > 0
+      ? [
+          {
+            seed: {
+              id: wallet.activeSeedSourceId || 'legacy',
+              name: 'Legacy',
+              type: 'mnemonic' as const,
+              createdAt: 0,
+              accounts: [] as SubAccount[],
             },
-          ]
-        : [];
-  }, [accounts, wallet.activeSeedSourceId]);
+            accounts,
+          },
+        ]
+      : [];
+  }, [accounts, wallet.seedSources, wallet.activeSeedSourceId]);
 
   // Sync UI display order from vault seed order; append new seeds when added
   useEffect(() => {
@@ -246,7 +232,7 @@ export function HomeScreen() {
 
   // Account switching handler
   async function handleSwitchAccount(accountAddress: string) {
-    const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
+    const result = await send<{ ok?: boolean; account?: SubAccount; error?: string }>(
       INTERNAL_METHODS.SWITCH_ACCOUNT,
       [accountAddress]
     );
@@ -278,28 +264,10 @@ export function HomeScreen() {
     setWalletDropdownOpen(false);
   }
 
-  async function handleAddSubWallet(seedAccountId: string) {
-    const fallbackSeedId = wallet.currentAccount?.seedAccountId;
-    const resolvedSeedAccountId =
-      seedAccountId === 'legacy' && fallbackSeedId ? fallbackSeedId : seedAccountId;
-    const isLegacySeed = resolvedSeedAccountId === 'legacy';
-    const result = isLegacySeed
-      ? await send<{ ok?: boolean; account?: Account; error?: string }>(
-          INTERNAL_METHODS.CREATE_ACCOUNT,
-          []
-        )
-      : await createChildAccount(resolvedSeedAccountId);
+  async function handleAddSubWallet(seedAccountId?: string) {
+    const result = await createChildAccount(seedAccountId || undefined);
     if (result?.error) {
       alert(`Failed to create sub-wallet: ${result.error}`);
-      return;
-    }
-
-    // Legacy CREATE_ACCOUNT path does not auto-refresh store state.
-    if (isLegacySeed) {
-      await refreshWalletAccounts();
-      // Keep refresh non-blocking to preserve dropdown responsiveness.
-      void fetchBalance();
-      void fetchWalletTransactions();
     }
   }
 

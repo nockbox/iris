@@ -6,7 +6,7 @@ import { useEffect } from 'react';
 import { useStore } from './store';
 import { send } from './utils/messaging';
 import { INTERNAL_METHODS, UI_CONSTANTS } from '../shared/constants';
-import { Account } from '../shared/types';
+import { SubAccount } from '../shared/types';
 import { Router } from './Router';
 import { useApprovalDetection } from './hooks/useApprovalDetection';
 
@@ -69,8 +69,8 @@ export function Popup() {
       const state = await send<{
         locked: boolean;
         address: string;
-        accounts: Account[];
-        currentAccount: Account | null;
+        accounts: SubAccount[];
+        currentAccount: SubAccount | null;
       }>(INTERNAL_METHODS.GET_STATE);
 
       // If vault became locked, navigate to locked screen

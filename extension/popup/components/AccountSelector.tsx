@@ -9,7 +9,7 @@ import { truncateAddress } from '../utils/format';
 import { useAutoFocus } from '../hooks/useAutoFocus';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { INTERNAL_METHODS } from '../../shared/constants';
-import { Account } from '../../shared/types';
+import { SubAccount } from '../../shared/types';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { PlusIcon } from './icons/PlusIcon';
 import { UploadIcon } from './icons/UploadIcon';
@@ -37,7 +37,7 @@ export function AccountSelector() {
   );
 
   async function handleSwitchAccount(accountAddress: string) {
-    const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
+    const result = await send<{ ok?: boolean; account?: SubAccount; error?: string }>(
       INTERNAL_METHODS.SWITCH_ACCOUNT,
       [accountAddress]
     );
@@ -55,13 +55,12 @@ export function AccountSelector() {
   }
 
   async function handleCreateAccount() {
-    const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
-      INTERNAL_METHODS.CREATE_ACCOUNT,
+    const result = await send<{ account?: SubAccount; error?: string }>(
+      INTERNAL_METHODS.CREATE_CHILD_ACCOUNT,
       []
     );
 
-    if (result?.ok) {
-      // Refresh from vault to keep account/seed-source state consistent.
+    if (!result?.error) {
       await refreshWalletAccounts();
     } else if (result?.error) {
       alert(`Failed to create account: ${result.error}`);
@@ -81,7 +80,7 @@ export function AccountSelector() {
     setIsOpen(false);
   }
 
-  function startEditing(account: Account, event: React.MouseEvent) {
+  function startEditing(account: SubAccount, event: React.MouseEvent) {
     event.stopPropagation(); // Prevent switching accounts
     setEditingIndex(wallet.accounts.findIndex(acc => acc.address === account.address));
     setEditingName(account.name);

@@ -30,10 +30,7 @@ export const INTERNAL_METHODS = {
   /** Set auto-lock timeout in minutes */
   SET_AUTO_LOCK: 'wallet:setAutoLock',
 
-  /** LEGACY: Create child account under currently selected seed source */
-  CREATE_ACCOUNT: 'wallet:createAccount',
-
-  /** Create a child account under a specific seed source */
+  /** Create a child sub-account under a specific seed source */
   CREATE_CHILD_ACCOUNT: 'wallet:createChildAccount',
 
   /** Create/import mnemonic-based seed source */
@@ -274,7 +271,7 @@ export const SESSION_STORAGE_KEYS = {
 } as const;
 
 /** Current storage schema version - increment when making breaking changes */
-export const CURRENT_SCHEMA_VERSION = 2;
+export const CURRENT_SCHEMA_VERSION = 1;
 
 /**
  * Chrome Alarm Names - Named alarms for scheduled tasks
@@ -332,7 +329,6 @@ export const USER_ACTIVITY_METHODS = new Set([
   // Internal methods (user actions in the UI)
   INTERNAL_METHODS.UNLOCK,
   INTERNAL_METHODS.SWITCH_ACCOUNT,
-  INTERNAL_METHODS.CREATE_ACCOUNT,
   INTERNAL_METHODS.CREATE_CHILD_ACCOUNT,
   INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE,
   INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE,

@@ -6,16 +6,15 @@ import { PROVIDER_METHODS, INTERNAL_METHODS, RPC_METHODS, ERROR_CODES } from './
 import type { Nicks } from './currency';
 
 /**
- * Account information for multi-account wallet
- * Each account is derived from the same mnemonic using BIP-44 derivation paths
+ * Child wallet account, always nested under a SeedAccount.
+ * Key source, external metadata, and seed identity are
+ * inherited from the parent SeedAccount — never duplicated here.
  */
-export interface Account {
+export interface SubAccount {
   /** User-defined account name (editable) */
   name: string;
   /** Nockchain V1 PKH address (40 bytes base58-encoded, ~54-55 chars) */
   address: string;
-  /** Parent seed account/source identifier */
-  seedAccountId?: string;
   /** BIP-44 derivation index (0, 1, 2, ...) */
   index: number;
   /** Icon style ID (1-15, defaults to index % 3 + 1 for variety) */
@@ -26,20 +25,14 @@ export interface Account {
   hidden?: boolean;
   /** Timestamp when the account was created (milliseconds since epoch) */
   createdAt?: number;
-  /** Key source for this wallet account */
-  keySource?: 'mnemonic' | 'external';
   /** Derivation path for mnemonic-based wallets */
   derivation?: 'master' | 'slip10';
-  /** Optional hardware/external wallet metadata (for future integrations such as Ledger) */
-  external?: {
-    provider: 'ledger' | 'unknown';
-    accountRef?: string;
-  };
 }
 
 /**
  * Top-level account source (seed phrase, hardware wallet, etc.)
  * Each source can contain one or more child wallet accounts.
+ * Vault-internal — the UI receives a mnemonic-stripped projection via getSeedSources().
  */
 export interface SeedAccount {
   id: string;
@@ -47,7 +40,7 @@ export interface SeedAccount {
   type: 'mnemonic' | 'external';
   mnemonic?: string;
   createdAt: number;
-  accounts: Account[];
+  accounts: SubAccount[];
   external?: {
     provider: 'ledger' | 'unknown';
     sourceRef?: string;

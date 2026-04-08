@@ -842,6 +842,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           address: await vault.getAddressSafe(),
           accounts: vault.getAccounts(),
           currentAccount: vault.getCurrentAccount(),
+          activeSeedSourceId: vault.getActiveSeedSourceId(),
         });
         return;
 
@@ -849,6 +850,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({
           accounts: vault.getAccounts(),
           currentAccount: vault.getCurrentAccount(),
+          activeSeedSourceId: vault.getActiveSeedSourceId(),
         });
         return;
 
@@ -896,23 +898,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
-      case INTERNAL_METHODS.CREATE_ACCOUNT:
-        // params: name (optional)
-        const createResult = await vault.createAccount(payload.params?.[0]);
-        sendResponse(createResult);
-
-        // Emit accountsChanged event to all tabs if successful
-        // New account is automatically set as current
-        if ('ok' in createResult && createResult.ok) {
-          await emitWalletEvent('accountsChanged', [createResult.account.address]);
-        }
-        return;
-
       case INTERNAL_METHODS.CREATE_CHILD_ACCOUNT:
         // params: [seedAccountId, name?]
         const createChildResult = await vault.createChildAccount(payload.params?.[0], payload.params?.[1]);
         sendResponse(createChildResult);
-        if ('ok' in createChildResult && createChildResult.ok) {
+        if (!('error' in createChildResult)) {
           await emitWalletEvent('accountsChanged', [createChildResult.account.address]);
         }
         return;
@@ -924,7 +914,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           payload.params?.[1]
         );
         sendResponse(createSeedResult);
-        if ('ok' in createSeedResult && createSeedResult.ok) {
+        if (!('error' in createSeedResult)) {
           await emitWalletEvent('accountsChanged', [createSeedResult.account.address]);
         }
         return;
@@ -933,7 +923,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // params: [{ address, name?, provider?, sourceRef?, accountRef? }]
         const createExternalResult = await vault.createExternalSeedSource(payload.params?.[0] || {});
         sendResponse(createExternalResult);
-        if ('ok' in createExternalResult && createExternalResult.ok) {
+        if (!('error' in createExternalResult)) {
           await emitWalletEvent('accountsChanged', [createExternalResult.account.address]);
         }
         return;

@@ -17,7 +17,7 @@ import {
   PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
 } from './constants';
-import { Account, SeedAccount } from './types';
+import { SubAccount, SeedAccount } from './types';
 import { buildMultiNotePayment, type Note } from './transaction-builder';
 import wasm from './sdk-wasm.js';
 import { queryV1Balance } from './balance-query';
@@ -196,7 +196,7 @@ interface EncryptedVault {
  */
 interface LegacyVaultPayload {
   mnemonic: string;
-  accounts: Account[];
+  accounts: SubAccount[];
 }
 
 interface VaultPayloadV2 {
@@ -208,7 +208,7 @@ type VaultPayload = LegacyVaultPayload | VaultPayloadV2;
 
 interface VaultState {
   locked: boolean;
-  accounts: Account[];
+  accounts: SubAccount[];
   currentAccountIndex: number;
   enc: EncryptedVault | null;
 }
@@ -256,6 +256,10 @@ export class Vault {
     return `Wallet ${seedOrdinal}.${childOrdinal}`;
   }
 
+  private getDerivationForIndex(index: number): 'master' | 'slip10' {
+    return index === 0 ? 'master' : 'slip10';
+  }
+
   /** Returns a style (icon + color) not already used by any account across all seeds. */
   private pickUnusedStyleGlobally(): { iconStyleId: number; iconColor: string } {
     const allAccounts = this.seedAccounts.flatMap(seed => seed.accounts);
@@ -282,22 +286,26 @@ export class Vault {
     return { iconStyleId: 1, iconColor: PRESET_WALLET_STYLES[0].iconColor };
   }
 
-  private createSeedAccountFromLegacy(mnemonic: string, legacyAccounts: Account[]): SeedAccount {
+  private createSeedAccountFromLegacy(mnemonic: string, legacyAccounts: SubAccount[]): SeedAccount {
     const seedAccountId = crypto.randomUUID();
     const seedOrdinal = this.getSeedOrdinal(seedAccountId);
-    const normalizedAccounts = legacyAccounts.map((account, idx) => ({
-      ...account,
-      seedAccountId,
-      keySource: 'mnemonic' as const,
-      derivation:
-        account.derivation || (typeof account.index === 'number' && account.index === 0 ? 'master' : 'slip10'),
-      index: typeof account.index === 'number' ? account.index : idx,
-      name:
-        account.name ||
-        (idx === 0
-          ? this.getDefaultMasterWalletName(seedOrdinal)
-          : this.getDefaultChildWalletName(seedOrdinal, idx)),
-    }));
+    const normalizedAccounts: SubAccount[] = legacyAccounts.map((account, idx) => {
+      const accountIndex = typeof account.index === 'number' ? account.index : idx;
+      return {
+        name:
+          account.name ||
+          (accountIndex === 0
+            ? this.getDefaultMasterWalletName(seedOrdinal)
+            : this.getDefaultChildWalletName(seedOrdinal, accountIndex)),
+        address: account.address,
+        index: accountIndex,
+        iconStyleId: account.iconStyleId,
+        iconColor: account.iconColor,
+        hidden: account.hidden,
+        createdAt: account.createdAt,
+        derivation: this.getDerivationForIndex(accountIndex),
+      };
+    });
 
     return {
       id: seedAccountId,
@@ -315,17 +323,24 @@ export class Vault {
       ...seedAccount,
       id: seedId,
       name: seedAccount.name || this.getDefaultMasterWalletName(seedOrdinal),
-      accounts: (seedAccount.accounts || []).map((account, idx) => ({
-        ...account,
-        index: typeof account.index === 'number' ? account.index : idx,
-        name:
-          account.name ||
-          (account.derivation === 'master' || idx === 0
-            ? this.getDefaultMasterWalletName(seedOrdinal)
-            : this.getDefaultChildWalletName(seedOrdinal, idx)),
-        seedAccountId: account.seedAccountId || seedId,
-        keySource: account.keySource || (seedAccount.type === 'external' ? 'external' : 'mnemonic'),
-      })),
+      accounts: (seedAccount.accounts || []).map((account, idx) => {
+        const accountIndex = typeof account.index === 'number' ? account.index : idx;
+        const normalized: SubAccount = {
+          ...account,
+          index: accountIndex,
+          name:
+            account.name ||
+            (accountIndex === 0
+              ? this.getDefaultMasterWalletName(seedOrdinal)
+              : this.getDefaultChildWalletName(seedOrdinal, accountIndex)),
+        };
+
+        if (seedAccount.type === 'mnemonic') {
+          normalized.derivation = this.getDerivationForIndex(accountIndex);
+        }
+
+        return normalized;
+      }),
     };
   }
 
@@ -358,16 +373,11 @@ export class Vault {
     }
   }
 
-  private getSeedAccountForWallet(account: Account | null): SeedAccount | null {
+  private getSeedAccountForWallet(account: SubAccount | null): SeedAccount | null {
     if (!account) return null;
-
-    if (account.seedAccountId) {
-      const byId = this.seedAccounts.find(seed => seed.id === account.seedAccountId);
-      if (byId) return byId;
-    }
-
-    const mnemonicSeed = this.seedAccounts.find(seed => seed.type === 'mnemonic');
-    return mnemonicSeed || this.seedAccounts[0] || null;
+    return this.seedAccounts.find(seed =>
+      seed.accounts.some(a => a.address === account.address)
+    ) || null;
   }
 
   private getSigningMnemonicForCurrentAccount(): string | null {
@@ -458,19 +468,16 @@ export class Vault {
       createdAt: Date.now(),
       accounts: [
         {
-      name: 'Wallet 1',
-      address: masterAddress,
-          seedAccountId: '',
-      index: 0,
-      iconStyleId: firstPreset.iconStyleId,
-      iconColor: firstPreset.iconColor,
-      createdAt: Date.now(),
-          keySource: 'mnemonic',
-      derivation: 'master',
+          name: 'Wallet 1',
+          address: masterAddress,
+          index: 0,
+          iconStyleId: firstPreset.iconStyleId,
+          iconColor: firstPreset.iconColor,
+          createdAt: Date.now(),
+          derivation: 'master',
         },
       ],
     };
-    firstSeedAccount.accounts[0].seedAccountId = firstSeedAccount.id;
 
     // Generate PBKDF2 salt and derive encryption key
     const kdfSalt = rand(16);
@@ -528,7 +535,7 @@ export class Vault {
   async unlock(
     password: string
   ): Promise<
-    | { ok: boolean; address: string; accounts: Account[]; currentAccount: Account }
+    | { ok: boolean; address: string; accounts: SubAccount[]; currentAccount: SubAccount; activeSeedSourceId: string | null }
     | { error: string }
   > {
     const stored = await chrome.storage.local.get([
@@ -659,6 +666,7 @@ export class Vault {
         address: currentAccount?.address || '',
         accounts: this.state.accounts,
         currentAccount,
+        activeSeedSourceId: this.getSeedAccountForWallet(currentAccount)?.id || null,
       };
     } catch (err) {
       return { error: ERROR_CODES.BAD_PASSWORD };
@@ -671,7 +679,7 @@ export class Vault {
   async unlockWithKey(
     key: CryptoKey
   ): Promise<
-    | { ok: boolean; address: string; accounts: Account[]; currentAccount: Account }
+    | { ok: boolean; address: string; accounts: SubAccount[]; currentAccount: SubAccount; activeSeedSourceId: string | null }
     | { error: string }
   > {
     const stored = await chrome.storage.local.get([
@@ -750,6 +758,7 @@ export class Vault {
       address: currentAccount?.address || '',
       accounts: this.state.accounts,
       currentAccount,
+      activeSeedSourceId: this.getSeedAccountForWallet(currentAccount)?.id || null,
     };
   }
 
@@ -844,12 +853,11 @@ export class Vault {
   }
 
   /**
-   * LEGACY: Gets current account from flattened account list.
-   * Prefer seed-source aware flows for new code.
+   * Gets the currently selected sub-account from the flattened account list.
    */
-  getCurrentAccount(): Account | null {
+  getCurrentAccount(): SubAccount | null {
     // currentAccountIndex refers to the flattened `state.accounts` array position,
-    // not the per-seed derivation index on Account.index.
+    // not the per-seed derivation index on SubAccount.index.
     const account = this.state.accounts[this.state.currentAccountIndex];
     return account || this.state.accounts[0] || null;
   }
@@ -863,11 +871,18 @@ export class Vault {
   }
 
   /**
-   * LEGACY: Returns flattened account list for compatibility.
-   * Prefer getSeedSources() + per-source account rendering in new flows.
+   * Returns the flattened sub-account list across all seed sources.
    */
-  getAccounts(): Account[] {
+  getAccounts(): SubAccount[] {
     return this.state.accounts;
+  }
+
+  /**
+   * Gets the seed source ID for the currently selected account
+   */
+  getActiveSeedSourceId(): string | null {
+    const currentAccount = this.getCurrentAccount();
+    return this.getSeedAccountForWallet(currentAccount)?.id || null;
   }
 
   /**
@@ -884,7 +899,7 @@ export class Vault {
     mnemonic?: string,
     name?: string
   ): Promise<
-    { ok: boolean; seedSource: Omit<SeedAccount, 'mnemonic'>; account: Account; mnemonic: string } | { error: string }
+    { seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount; mnemonic: string } | { error: string }
   > {
     if (this.state.locked || !this.state.enc || !this.encryptionKey) {
       return { error: ERROR_CODES.LOCKED };
@@ -898,15 +913,13 @@ export class Vault {
     const masterName = name?.trim() || this.getDefaultMasterWalletName(seedOrdinal);
     const masterAddress = await deriveAddressFromMaster(words);
 
-    const masterAccount: Account = {
+    const masterAccount: SubAccount = {
       name: masterName,
       address: masterAddress,
-      seedAccountId: seedId,
       index: 0,
       iconStyleId,
       iconColor,
       createdAt: Date.now(),
-      keySource: 'mnemonic',
       derivation: 'master',
     };
 
@@ -923,7 +936,7 @@ export class Vault {
     this.rebuildFlatAccounts();
 
     const newFlatIndex = this.state.accounts.findIndex(
-      acc => acc.seedAccountId === seedId && acc.derivation === 'master'
+      acc => acc.address === masterAddress
     );
     this.state.currentAccountIndex = newFlatIndex >= 0 ? newFlatIndex : this.state.accounts.length - 1;
     this.mnemonic = words;
@@ -936,7 +949,7 @@ export class Vault {
     ]);
 
     const { mnemonic: _mnemonic, ...publicSeed } = seedAccount;
-    return { ok: true, seedSource: publicSeed, account: masterAccount, mnemonic: words };
+    return { seedSource: publicSeed, account: masterAccount, mnemonic: words };
   }
 
   /**
@@ -948,7 +961,7 @@ export class Vault {
     provider?: 'ledger' | 'unknown';
     sourceRef?: string;
     accountRef?: string;
-  }): Promise<{ ok: boolean; seedSource: Omit<SeedAccount, 'mnemonic'>; account: Account } | { error: string }> {
+  }): Promise<{ seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount } | { error: string }> {
     if (this.state.locked || !this.state.enc || !this.encryptionKey) {
       return { error: ERROR_CODES.LOCKED };
     }
@@ -962,19 +975,13 @@ export class Vault {
     const masterName = params.name?.trim() || this.getDefaultMasterWalletName(seedOrdinal);
     const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
 
-    const externalMasterAccount: Account = {
+    const externalMasterAccount: SubAccount = {
       name: masterName,
       address: params.address,
-      seedAccountId: seedId,
       index: 0,
       iconStyleId,
       iconColor,
       createdAt: Date.now(),
-      keySource: 'external',
-      external: {
-        provider,
-        accountRef: params.accountRef,
-      },
     };
 
     const seedAccount: SeedAccount = {
@@ -993,7 +1000,7 @@ export class Vault {
     this.rebuildFlatAccounts();
 
     const newFlatIndex = this.state.accounts.findIndex(
-      acc => acc.seedAccountId === seedId && acc.keySource === 'external'
+      acc => acc.address === params.address
     );
     this.state.currentAccountIndex = newFlatIndex >= 0 ? newFlatIndex : this.state.accounts.length - 1;
     this.mnemonic = null;
@@ -1006,7 +1013,7 @@ export class Vault {
     ]);
 
     const { mnemonic: _mnemonic, ...publicSeed } = seedAccount;
-    return { ok: true, seedSource: publicSeed, account: externalMasterAccount };
+    return { seedSource: publicSeed, account: externalMasterAccount };
   }
 
   /**
@@ -1703,13 +1710,12 @@ export class Vault {
   }
 
   /**
-   * LEGACY: Creates a child account under the currently selected seed source.
-   * Prefer createChildAccount(seedAccountId, name?) for explicit seed targeting.
+   * Creates a child sub-account under the specified seed source.
    */
-  async createAccount(
-    name?: string,
-    seedAccountId?: string
-  ): Promise<{ ok: boolean; account: Account } | { error: string }> {
+  async createChildAccount(
+    seedAccountId?: string,
+    name?: string
+  ): Promise<{ account: SubAccount } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
@@ -1727,38 +1733,24 @@ export class Vault {
     const nextChildOrdinal = seedAccount.accounts.filter(acc => acc.derivation !== 'master').length + 1;
     const accountName = name || this.getDefaultChildWalletName(seedOrdinal, nextChildOrdinal);
 
-    // Pick a style (icon + color) not already used by any account across all seeds
     const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
 
-    const newAccount: Account = {
+    const newAccount: SubAccount = {
       name: accountName,
       address: await deriveAddress(seedAccount.mnemonic, nextIndex),
-      seedAccountId: seedAccount.id,
       index: nextIndex,
       iconStyleId,
       iconColor,
       createdAt: Date.now(),
-      keySource: 'mnemonic',
-      derivation: 'slip10', // Additional accounts use child derivation
+      derivation: this.getDerivationForIndex(nextIndex),
     };
 
     seedAccount.accounts = [...seedAccount.accounts, newAccount];
     this.rebuildFlatAccounts();
 
-    // Save accounts to encrypted vault
     await this.saveAccountsToVault();
 
-    return { ok: true, account: newAccount };
-  }
-
-  /**
-   * Creates a child account under a specific seed source
-   */
-  async createChildAccount(
-    seedAccountId: string,
-    name?: string
-  ): Promise<{ ok: boolean; account: Account } | { error: string }> {
-    return this.createAccount(name, seedAccountId);
+    return { account: newAccount };
   }
 
   /**
@@ -1766,7 +1758,7 @@ export class Vault {
    */
   async switchAccount(
     address: string
-  ): Promise<{ ok: boolean; account: Account } | { error: string }> {
+  ): Promise<{ ok: boolean; account: SubAccount; activeSeedSourceId: string | null } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
@@ -1783,7 +1775,7 @@ export class Vault {
       [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: index,
     });
 
-    return { ok: true, account: this.state.accounts[index] };
+    return { ok: true, account: this.state.accounts[index], activeSeedSourceId: this.getActiveSeedSourceId() };
   }
 
   /**
@@ -1917,9 +1909,11 @@ export class Vault {
       // Parse payload and return the mnemonic for the currently selected seed source
       const decoded = this.decodeVaultPayload(pt);
       const currentAccount = this.getCurrentAccount();
-      const selectedSeed =
-        decoded.seedAccounts.find(seed => seed.id === currentAccount?.seedAccountId) ||
-        decoded.seedAccounts.find(seed => seed.type === 'mnemonic');
+      const selectedSeed = currentAccount
+        ? decoded.seedAccounts.find(seed =>
+            seed.accounts.some(a => a.address === currentAccount.address)
+          )
+        : decoded.seedAccounts.find(seed => seed.type === 'mnemonic');
 
       if (!selectedSeed || selectedSeed.type !== 'mnemonic' || !selectedSeed.mnemonic) {
         return { error: 'Selected account has no mnemonic (external account source).' };

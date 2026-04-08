@@ -5,7 +5,7 @@ import { truncateAddress } from '../utils/format';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../shared/constants';
 import { formatNock, isDustAmount, MIN_SENDABLE_NOCK } from '../../shared/currency';
-import type { Account } from '../../shared/types';
+import type { SubAccount } from '../../shared/types';
 import { AccountIcon } from '../components/AccountIcon';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
@@ -67,7 +67,7 @@ export function SendScreen() {
     setErrorType(null);
 
     try {
-      const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
+      const result = await send<{ ok?: boolean; account?: SubAccount; error?: string }>(
         INTERNAL_METHODS.SWITCH_ACCOUNT,
         [accountAddress]
       );

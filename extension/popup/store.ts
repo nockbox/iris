@@ -6,7 +6,7 @@ import { create } from 'zustand';
 import { INTERNAL_METHODS, APPROVAL_CONSTANTS, NOCK_TO_NICKS } from '../shared/constants';
 import { hasIncompleteOnboarding } from '../shared/onboarding';
 import {
-  Account,
+  SubAccount,
   AccountBalance,
   TransactionDetails,
   SignRequest,
@@ -73,8 +73,9 @@ export type Screen =
 interface WalletState {
   locked: boolean;
   address: string | null;
-  accounts: Account[];
-  currentAccount: Account | null;
+  accounts: SubAccount[];
+  seedSources: Array<{ id: string; name: string; type: string; accounts: SubAccount[] }>;
+  currentAccount: SubAccount | null;
   activeSeedSourceId: string | null;
   balance: number;
   availableBalance: number;
@@ -108,7 +109,7 @@ interface AppStore {
     sourceRef?: string;
     accountRef?: string;
   }) => Promise<any>;
-  createChildAccount: (seedAccountId: string, name?: string) => Promise<any>;
+  createChildAccount: (seedAccountId?: string, name?: string) => Promise<any>;
 
   // Temporary onboarding state (cleared after completion)
   onboardingMnemonic: string | null;
@@ -187,6 +188,7 @@ export const useStore = create<AppStore>((set, get) => ({
     locked: true,
     address: null,
     accounts: [],
+    seedSources: [],
     currentAccount: null,
     activeSeedSourceId: null,
     balance: 0,
@@ -254,10 +256,14 @@ export const useStore = create<AppStore>((set, get) => ({
 
   refreshWalletAccounts: async () => {
     try {
-      const accountsResult = await send<{
-        accounts: Account[];
-        currentAccount: Account | null;
-      }>(INTERNAL_METHODS.GET_ACCOUNTS);
+      const [accountsResult, seedSourcesResult] = await Promise.all([
+        send<{
+          accounts: SubAccount[];
+          currentAccount: SubAccount | null;
+          activeSeedSourceId: string | null;
+        }>(INTERNAL_METHODS.GET_ACCOUNTS),
+        send<{ seedSources: any[] }>(INTERNAL_METHODS.GET_SEED_SOURCES),
+      ]);
 
       const accounts = accountsResult.accounts || [];
 
@@ -265,9 +271,10 @@ export const useStore = create<AppStore>((set, get) => ({
         wallet: {
           ...get().wallet,
           accounts,
+          seedSources: seedSourcesResult?.seedSources || [],
           currentAccount: accountsResult.currentAccount || null,
           address: accountsResult.currentAccount?.address || null,
-          activeSeedSourceId: accountsResult.currentAccount?.seedAccountId || null,
+          activeSeedSourceId: accountsResult.activeSeedSourceId || null,
         },
       });
     } catch (error) {
@@ -277,7 +284,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   createMnemonicSeedSource: async (mnemonic?: string, name?: string) => {
     const result = await send<any>(INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE, [mnemonic, name]);
-    if (result?.ok) {
+    if (!result?.error) {
       await get().refreshWalletAccounts();
       // Non-blocking refresh: avoid delaying backup flow UX.
       void get().fetchBalance();
@@ -288,7 +295,7 @@ export const useStore = create<AppStore>((set, get) => ({
 
   createExternalSeedSource: async params => {
     const result = await send<any>(INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE, [params]);
-    if (result?.ok) {
+    if (!result?.error) {
       await get().refreshWalletAccounts();
       // Non-blocking refresh to keep wallet actions snappy.
       void get().fetchBalance();
@@ -297,9 +304,9 @@ export const useStore = create<AppStore>((set, get) => ({
     return result;
   },
 
-  createChildAccount: async (seedAccountId: string, name?: string) => {
+  createChildAccount: async (seedAccountId?: string, name?: string) => {
     const result = await send<any>(INTERNAL_METHODS.CREATE_CHILD_ACCOUNT, [seedAccountId, name]);
-    if (result?.ok) {
+    if (!result?.error) {
       await get().refreshWalletAccounts();
       // Non-blocking refresh to avoid blocking dropdown interactions.
       void get().fetchBalance();
@@ -363,19 +370,25 @@ export const useStore = create<AppStore>((set, get) => ({
         locked: boolean;
         hasVault: boolean;
         address: string;
-        accounts: Account[];
-        currentAccount: Account | null;
+        accounts: SubAccount[];
+        currentAccount: SubAccount | null;
+        activeSeedSourceId: string | null;
       }>(INTERNAL_METHODS.GET_STATE);
 
-      // Load cached balances from encrypted storage (only if unlocked)
+      // Load cached balances and seed sources from encrypted storage (only if unlocked)
       let cachedBalances: Record<string, number> = {};
+      let seedSources: WalletState['seedSources'] = [];
       if (!state.locked) {
-        const balanceResp = await send<{ ok?: boolean; balances?: Record<string, number> }>(
-          INTERNAL_METHODS.GET_CACHED_BALANCES
-        );
+        const [balanceResp, seedSourcesResp] = await Promise.all([
+          send<{ ok?: boolean; balances?: Record<string, number> }>(
+            INTERNAL_METHODS.GET_CACHED_BALANCES
+          ),
+          send<{ seedSources: any[] }>(INTERNAL_METHODS.GET_SEED_SOURCES),
+        ]);
         if (balanceResp?.ok && balanceResp.balances) {
           cachedBalances = balanceResp.balances;
         }
+        seedSources = seedSourcesResp?.seedSources || [];
       }
 
       // Initial wallet state with confirmed balances (available balance computed after TX fetch)
@@ -387,13 +400,14 @@ export const useStore = create<AppStore>((set, get) => ({
         locked: state.locked,
         address: state.address || null,
         accounts,
+        seedSources,
         currentAccount: state.currentAccount || null,
-        activeSeedSourceId: state.currentAccount?.seedAccountId || null,
+        activeSeedSourceId: state.activeSeedSourceId || null,
         balance: confirmedBalance,
-        availableBalance: confirmedBalance, // Will be recalculated after fetching transactions
-        spendableBalance: confirmedBalance, // Will be recalculated after fetching transactions
-        accountBalances: cachedBalances, // Load all cached balances
-        accountSpendableBalances: cachedBalances, // Will be recalculated after fetching transactions
+        availableBalance: confirmedBalance,
+        spendableBalance: confirmedBalance,
+        accountBalances: cachedBalances,
+        accountSpendableBalances: cachedBalances,
         accountBalanceDetails: {},
       };
 
