@@ -116,7 +116,8 @@ export function AccountSelector() {
           : acc
       );
       const updatedCurrentAccount =
-        wallet.accounts.findIndex(acc => acc.address === wallet.currentAccount?.address) === editingIndex
+        wallet.accounts.findIndex(acc => acc.address === wallet.currentAccount?.address) ===
+        editingIndex
           ? wallet.currentAccount
             ? { ...wallet.currentAccount, name: editingName.trim() }
             : null
@@ -177,20 +178,23 @@ export function AccountSelector() {
                 <div
                   key={account.address}
                   className={`w-full flex items-center gap-2 p-3 ${
-                    editingIndex !== wallet.accounts.findIndex(acc => acc.address === account.address)
+                    editingIndex !==
+                    wallet.accounts.findIndex(acc => acc.address === account.address)
                       ? 'hover:bg-gray-700 cursor-pointer'
                       : ''
                   } transition-colors ${
                     currentAccount?.address === account.address ? 'bg-gray-700' : ''
                   }`}
                   onClick={() =>
-                    editingIndex !== wallet.accounts.findIndex(acc => acc.address === account.address) &&
+                    editingIndex !==
+                      wallet.accounts.findIndex(acc => acc.address === account.address) &&
                     handleSwitchAccount(account.address)
                   }
                 >
                   <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex-shrink-0" />
                   <div className="text-left flex-1 min-w-0">
-                    {editingIndex === wallet.accounts.findIndex(acc => acc.address === account.address) ? (
+                    {editingIndex ===
+                    wallet.accounts.findIndex(acc => acc.address === account.address) ? (
                       <input
                         ref={editInputRef}
                         type="text"
@@ -219,9 +223,10 @@ export function AccountSelector() {
                     )}
                   </div>
                   {currentAccount?.address === account.address &&
-                    editingIndex !== wallet.accounts.findIndex(acc => acc.address === account.address) && (
-                    <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0" />
-                  )}
+                    editingIndex !==
+                      wallet.accounts.findIndex(acc => acc.address === account.address) && (
+                      <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0" />
+                    )}
                 </div>
               ))}
           </div>

@@ -900,7 +900,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       case INTERNAL_METHODS.CREATE_CHILD_ACCOUNT:
         // params: [seedAccountId, name?]
-        const createChildResult = await vault.createChildAccount(payload.params?.[0], payload.params?.[1]);
+        const createChildResult = await vault.createChildAccount(
+          payload.params?.[0],
+          payload.params?.[1]
+        );
         sendResponse(createChildResult);
         if (!('error' in createChildResult)) {
           await emitWalletEvent('accountsChanged', [createChildResult.account.address]);
@@ -921,7 +924,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
       case INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE:
         // params: [{ address, name?, provider?, sourceRef?, accountRef? }]
-        const createExternalResult = await vault.createExternalSeedSource(payload.params?.[0] || {});
+        const createExternalResult = await vault.createExternalSeedSource(
+          payload.params?.[0] || {}
+        );
         sendResponse(createExternalResult);
         if (!('error' in createExternalResult)) {
           await emitWalletEvent('accountsChanged', [createExternalResult.account.address]);

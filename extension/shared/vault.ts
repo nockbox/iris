@@ -344,7 +344,10 @@ export class Vault {
     };
   }
 
-  private decodeVaultPayload(rawPayload: string): { seedAccounts: SeedAccount[]; migrated: boolean } {
+  private decodeVaultPayload(rawPayload: string): {
+    seedAccounts: SeedAccount[];
+    migrated: boolean;
+  } {
     const parsed = JSON.parse(rawPayload) as VaultPayload;
 
     if (this.isVaultPayloadV2(parsed)) {
@@ -375,9 +378,9 @@ export class Vault {
 
   private getSeedAccountForWallet(account: SubAccount | null): SeedAccount | null {
     if (!account) return null;
-    return this.seedAccounts.find(seed =>
-      seed.accounts.some(a => a.address === account.address)
-    ) || null;
+    return (
+      this.seedAccounts.find(seed => seed.accounts.some(a => a.address === account.address)) || null
+    );
   }
 
   private getSigningMnemonicForCurrentAccount(): string | null {
@@ -532,10 +535,14 @@ export class Vault {
   /**
    * Unlocks the vault with the provided password
    */
-  async unlock(
-    password: string
-  ): Promise<
-    | { ok: boolean; address: string; accounts: SubAccount[]; currentAccount: SubAccount; activeSeedSourceId: string | null }
+  async unlock(password: string): Promise<
+    | {
+        ok: boolean;
+        address: string;
+        accounts: SubAccount[];
+        currentAccount: SubAccount;
+        activeSeedSourceId: string | null;
+      }
     | { error: string }
   > {
     const stored = await chrome.storage.local.get([
@@ -614,7 +621,9 @@ export class Vault {
       // Migration: fallback from legacy unencrypted stores
       if (!loadedFromEncrypted) {
         const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
-        const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as WalletTxStore | undefined;
+        const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as
+          | WalletTxStore
+          | undefined;
         const legacyCachedBalances = stored[STORAGE_KEYS.CACHED_BALANCES] as
           | Record<string, number>
           | undefined;
@@ -676,10 +685,14 @@ export class Vault {
   /**
    * Unlocks the vault using a cached encryption key (used for session restore)
    */
-  async unlockWithKey(
-    key: CryptoKey
-  ): Promise<
-    | { ok: boolean; address: string; accounts: SubAccount[]; currentAccount: SubAccount; activeSeedSourceId: string | null }
+  async unlockWithKey(key: CryptoKey): Promise<
+    | {
+        ok: boolean;
+        address: string;
+        accounts: SubAccount[];
+        currentAccount: SubAccount;
+        activeSeedSourceId: string | null;
+      }
     | { error: string }
   > {
     const stored = await chrome.storage.local.get([
@@ -899,7 +912,8 @@ export class Vault {
     mnemonic?: string,
     name?: string
   ): Promise<
-    { seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount; mnemonic: string } | { error: string }
+    | { seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount; mnemonic: string }
+    | { error: string }
   > {
     if (this.state.locked || !this.state.enc || !this.encryptionKey) {
       return { error: ERROR_CODES.LOCKED };
@@ -935,10 +949,9 @@ export class Vault {
     this.seedAccounts.push(seedAccount);
     this.rebuildFlatAccounts();
 
-    const newFlatIndex = this.state.accounts.findIndex(
-      acc => acc.address === masterAddress
-    );
-    this.state.currentAccountIndex = newFlatIndex >= 0 ? newFlatIndex : this.state.accounts.length - 1;
+    const newFlatIndex = this.state.accounts.findIndex(acc => acc.address === masterAddress);
+    this.state.currentAccountIndex =
+      newFlatIndex >= 0 ? newFlatIndex : this.state.accounts.length - 1;
     this.mnemonic = words;
 
     await Promise.all([
@@ -961,7 +974,9 @@ export class Vault {
     provider?: 'ledger' | 'unknown';
     sourceRef?: string;
     accountRef?: string;
-  }): Promise<{ seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount } | { error: string }> {
+  }): Promise<
+    { seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount } | { error: string }
+  > {
     if (this.state.locked || !this.state.enc || !this.encryptionKey) {
       return { error: ERROR_CODES.LOCKED };
     }
@@ -999,10 +1014,9 @@ export class Vault {
     this.seedAccounts.push(seedAccount);
     this.rebuildFlatAccounts();
 
-    const newFlatIndex = this.state.accounts.findIndex(
-      acc => acc.address === params.address
-    );
-    this.state.currentAccountIndex = newFlatIndex >= 0 ? newFlatIndex : this.state.accounts.length - 1;
+    const newFlatIndex = this.state.accounts.findIndex(acc => acc.address === params.address);
+    this.state.currentAccountIndex =
+      newFlatIndex >= 0 ? newFlatIndex : this.state.accounts.length - 1;
     this.mnemonic = null;
 
     await Promise.all([
@@ -1730,7 +1744,8 @@ export class Vault {
 
     const nextIndex = seedAccount.accounts.length;
     const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
-    const nextChildOrdinal = seedAccount.accounts.filter(acc => acc.derivation !== 'master').length + 1;
+    const nextChildOrdinal =
+      seedAccount.accounts.filter(acc => acc.derivation !== 'master').length + 1;
     const accountName = name || this.getDefaultChildWalletName(seedOrdinal, nextChildOrdinal);
 
     const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
@@ -1758,7 +1773,9 @@ export class Vault {
    */
   async switchAccount(
     address: string
-  ): Promise<{ ok: boolean; account: SubAccount; activeSeedSourceId: string | null } | { error: string }> {
+  ): Promise<
+    { ok: boolean; account: SubAccount; activeSeedSourceId: string | null } | { error: string }
+  > {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
@@ -1775,7 +1792,11 @@ export class Vault {
       [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: index,
     });
 
-    return { ok: true, account: this.state.accounts[index], activeSeedSourceId: this.getActiveSeedSourceId() };
+    return {
+      ok: true,
+      account: this.state.accounts[index],
+      activeSeedSourceId: this.getActiveSeedSourceId(),
+    };
   }
 
   /**

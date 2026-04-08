@@ -26,7 +26,8 @@ function generateRandomPositions(): number[] {
 }
 
 export function VerifyScreen() {
-  const { onboardingMnemonic, navigate, setOnboardingMnemonic, currentScreen, fetchBalance } = useStore();
+  const { onboardingMnemonic, navigate, setOnboardingMnemonic, currentScreen, fetchBalance } =
+    useStore();
   const isAddWalletFlow = currentScreen === 'wallet-add-verify';
   const [inputs, setInputs] = useState<Record<number, string>>({});
   const [error, setError] = useState<string>('');

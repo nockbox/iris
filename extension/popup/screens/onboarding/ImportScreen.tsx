@@ -166,6 +166,7 @@ export function ImportScreen() {
           locked: false,
           address: result.address || null,
           accounts: [firstAccount],
+          seedSources: [],
           currentAccount: firstAccount,
           activeSeedSourceId: null,
           balance: 0,

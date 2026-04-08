@@ -79,6 +79,7 @@ export function CreateScreen() {
         locked: false,
         address: result.address || null,
         accounts: [firstAccount],
+        seedSources: [],
         currentAccount: firstAccount,
         activeSeedSourceId: null,
         balance: 0, // New wallet starts with 0 balance
@@ -157,99 +158,101 @@ export function CreateScreen() {
           </div>
 
           {/* Password inputs (onboarding only) */}
-          {!isAddSeedFlow && <div className="flex flex-col gap-6">
-            {/* Create password */}
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="password"
-                className="font-sans font-medium text-[var(--color-text-primary)]"
-                style={{
-                  fontSize: 'var(--font-size-sm)',
-                  lineHeight: 'var(--line-height-snug)',
-                  letterSpacing: '0.02em',
-                }}
-              >
-                Create password
-              </label>
-              <div className="relative">
-                <input
-                  id="password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={password}
-                  onChange={e => {
-                    setPassword(e.target.value);
-                    setError('');
-                  }}
-                  className="w-full h-[52px] px-3 py-4 bg-transparent border border-[var(--color-surface-700)] rounded-lg font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] focus:outline-none focus:border-[var(--color-primary)]"
+          {!isAddSeedFlow && (
+            <div className="flex flex-col gap-6">
+              {/* Create password */}
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="password"
+                  className="font-sans font-medium text-[var(--color-text-primary)]"
                   style={{
-                    fontSize: 'var(--font-size-base)',
+                    fontSize: 'var(--font-size-sm)',
                     lineHeight: 'var(--line-height-snug)',
-                    letterSpacing: '0.01em',
+                    letterSpacing: '0.02em',
                   }}
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
-                  tabIndex={-1}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showPassword ? (
-                    <EyeIcon className="w-4 h-4" />
-                  ) : (
-                    <EyeOffIcon className="w-4 h-4" />
-                  )}
-                </button>
+                  Create password
+                </label>
+                <div className="relative">
+                  <input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    value={password}
+                    onChange={e => {
+                      setPassword(e.target.value);
+                      setError('');
+                    }}
+                    className="w-full h-[52px] px-3 py-4 bg-transparent border border-[var(--color-surface-700)] rounded-lg font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] focus:outline-none focus:border-[var(--color-primary)]"
+                    style={{
+                      fontSize: 'var(--font-size-base)',
+                      lineHeight: 'var(--line-height-snug)',
+                      letterSpacing: '0.01em',
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
+                    tabIndex={-1}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? (
+                      <EyeIcon className="w-4 h-4" />
+                    ) : (
+                      <EyeOffIcon className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
               </div>
-            </div>
 
-            {/* Confirm password */}
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="confirmPassword"
-                className="font-sans font-medium text-[var(--color-text-primary)]"
-                style={{
-                  fontSize: 'var(--font-size-sm)',
-                  lineHeight: 'var(--line-height-snug)',
-                  letterSpacing: '0.02em',
-                }}
-              >
-                Confirm password
-              </label>
-              <div className="relative">
-                <input
-                  id="confirmPassword"
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  value={confirmPassword}
-                  onChange={e => {
-                    setConfirmPassword(e.target.value);
-                    setError('');
-                  }}
-                  onKeyDown={e => e.key === 'Enter' && handleCreate()}
-                  className="w-full h-[52px] px-3 py-4 bg-transparent border border-[var(--color-surface-700)] rounded-lg font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] focus:outline-none focus:border-[var(--color-primary)]"
+              {/* Confirm password */}
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="confirmPassword"
+                  className="font-sans font-medium text-[var(--color-text-primary)]"
                   style={{
-                    fontSize: 'var(--font-size-base)',
+                    fontSize: 'var(--font-size-sm)',
                     lineHeight: 'var(--line-height-snug)',
-                    letterSpacing: '0.01em',
+                    letterSpacing: '0.02em',
                   }}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
-                  tabIndex={-1}
-                  aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
                 >
-                  {showConfirmPassword ? (
-                    <EyeIcon className="w-4 h-4" />
-                  ) : (
-                    <EyeOffIcon className="w-4 h-4" />
-                  )}
-                </button>
+                  Confirm password
+                </label>
+                <div className="relative">
+                  <input
+                    id="confirmPassword"
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    value={confirmPassword}
+                    onChange={e => {
+                      setConfirmPassword(e.target.value);
+                      setError('');
+                    }}
+                    onKeyDown={e => e.key === 'Enter' && handleCreate()}
+                    className="w-full h-[52px] px-3 py-4 bg-transparent border border-[var(--color-surface-700)] rounded-lg font-sans font-medium text-[var(--color-text-primary)] placeholder:text-[var(--color-text-secondary)] focus:outline-none focus:border-[var(--color-primary)]"
+                    style={{
+                      fontSize: 'var(--font-size-base)',
+                      lineHeight: 'var(--line-height-snug)',
+                      letterSpacing: '0.01em',
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--color-text-muted)] hover:text-[var(--color-text-secondary)] transition-colors"
+                    tabIndex={-1}
+                    aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showConfirmPassword ? (
+                      <EyeIcon className="w-4 h-4" />
+                    ) : (
+                      <EyeOffIcon className="w-4 h-4" />
+                    )}
+                  </button>
+                </div>
               </div>
             </div>
-          </div>}
+          )}
 
           {/* Info box */}
           <div className="bg-[var(--color-surface-900)] rounded-lg p-3">

@@ -14,7 +14,8 @@ import PencilEditIcon from '../assets/pencil-edit-icon.svg';
 import SettingsGearIcon from '../assets/settings-gear-icon.svg';
 
 export function WalletSettingsScreen() {
-  const { navigate, wallet, syncWallet, settingsAccountAddress, setSettingsAccountAddress } = useStore();
+  const { navigate, wallet, syncWallet, settingsAccountAddress, setSettingsAccountAddress } =
+    useStore();
 
   // Use the account we're editing (when opened from dropdown) or current account
   const currentAccount =

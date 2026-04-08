@@ -27,7 +27,9 @@ export function WalletStylingScreen() {
 
   // Style the account selected in wallet settings (if present), otherwise current account
   const currentAccount =
-    (settingsAccountAddress ? wallet.accounts.find(a => a.address === settingsAccountAddress) : null) ??
+    (settingsAccountAddress
+      ? wallet.accounts.find(a => a.address === settingsAccountAddress)
+      : null) ??
     wallet.currentAccount ??
     wallet.accounts.find(a => !a.hidden) ??
     wallet.accounts[0];

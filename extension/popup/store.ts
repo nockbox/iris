@@ -74,7 +74,13 @@ interface WalletState {
   locked: boolean;
   address: string | null;
   accounts: SubAccount[];
-  seedSources: Array<{ id: string; name: string; type: string; accounts: SubAccount[] }>;
+  seedSources: Array<{
+    id: string;
+    name: string;
+    type: 'mnemonic' | 'external';
+    createdAt: number;
+    accounts: SubAccount[];
+  }>;
   currentAccount: SubAccount | null;
   activeSeedSourceId: string | null;
   balance: number;
@@ -262,7 +268,7 @@ export const useStore = create<AppStore>((set, get) => ({
           currentAccount: SubAccount | null;
           activeSeedSourceId: string | null;
         }>(INTERNAL_METHODS.GET_ACCOUNTS),
-        send<{ seedSources: any[] }>(INTERNAL_METHODS.GET_SEED_SOURCES),
+        send<{ seedSources: WalletState['seedSources'] }>(INTERNAL_METHODS.GET_SEED_SOURCES),
       ]);
 
       const accounts = accountsResult.accounts || [];
@@ -383,7 +389,7 @@ export const useStore = create<AppStore>((set, get) => ({
           send<{ ok?: boolean; balances?: Record<string, number> }>(
             INTERNAL_METHODS.GET_CACHED_BALANCES
           ),
-          send<{ seedSources: any[] }>(INTERNAL_METHODS.GET_SEED_SOURCES),
+          send<{ seedSources: WalletState['seedSources'] }>(INTERNAL_METHODS.GET_SEED_SOURCES),
         ]);
         if (balanceResp?.ok && balanceResp.balances) {
           cachedBalances = balanceResp.balances;

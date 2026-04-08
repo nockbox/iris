@@ -497,7 +497,8 @@ export function HomeScreen() {
                     onDragOver={e => {
                       e.preventDefault();
                       e.stopPropagation();
-                      if (draggedSeedId && draggedSeedId !== group.seed.id) setDropTargetSeedId(group.seed.id);
+                      if (draggedSeedId && draggedSeedId !== group.seed.id)
+                        setDropTargetSeedId(group.seed.id);
                     }}
                     onDragLeave={() => setDropTargetSeedId(null)}
                     onDrop={e => {
@@ -523,9 +524,7 @@ export function HomeScreen() {
                             onClick={() => handleSwitchAccount(account.address)}
                             className="wallet-dropdown-item self-stretch pl-2 pr-3 py-2 rounded-lg inline-flex justify-between items-center gap-2.5 transition"
                             style={{
-                              backgroundColor: showSelection
-                                ? selectedBackground
-                                : baseBackground,
+                              backgroundColor: showSelection ? selectedBackground : baseBackground,
                               paddingLeft: isTopLevelWallet ? undefined : 24,
                             }}
                             onMouseEnter={e => {
@@ -587,10 +586,13 @@ export function HomeScreen() {
                               className="wallet-balance text-sm font-medium leading-4 tracking-tight text-right shrink-0 whitespace-nowrap"
                               style={{ color: 'var(--color-text-primary)' }}
                             >
-                              {(wallet.accountBalances[account.address] ?? 0).toLocaleString('en-US', {
-                                minimumFractionDigits: 2,
-                                maximumFractionDigits: 2,
-                              })}{' '}
+                              {(wallet.accountBalances[account.address] ?? 0).toLocaleString(
+                                'en-US',
+                                {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                }
+                              )}{' '}
                               NOCK
                             </div>
                             <div
@@ -636,7 +638,9 @@ export function HomeScreen() {
                               +
                             </span>
                           </div>
-                          <span className="text-[14px] font-medium tracking-[0.14px]">Add sub-wallet</span>
+                          <span className="text-[14px] font-medium tracking-[0.14px]">
+                            Add sub-wallet
+                          </span>
                         </button>
                       )}
                     </div>
