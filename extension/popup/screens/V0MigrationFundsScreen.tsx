@@ -97,8 +97,9 @@ export function V0MigrationFundsScreen() {
     };
   }, [v0MigrationDraft.v0Mnemonic, destinationWallet?.address, destinationWallet?.index, v0MigrationDraft.destinationWalletIndex, isFeeManuallyEdited, setV0MigrationDraft]);
 
+  const v0BalanceNock = v0MigrationDraft.v0BalanceNock ?? 0;
   const hasInsufficientFunds =
-    v0MigrationDraft.feeNock != null && v0MigrationDraft.v0BalanceNock <= v0MigrationDraft.feeNock;
+    v0MigrationDraft.feeNock != null && v0BalanceNock <= v0MigrationDraft.feeNock;
 
   function handleEditFee() {
     setIsEditingFee(true);
@@ -219,7 +220,7 @@ export function V0MigrationFundsScreen() {
         <div className="rounded-[14px] p-4" style={{ backgroundColor: 'var(--color-surface-900)' }}>
           <div className="text-[12px] leading-[18px] font-medium">v0 Wallet Balance</div>
           <div className="mt-2 text-[56px] leading-[56px] font-display tracking-[-0.03em]">
-            {v0MigrationDraft.v0BalanceNock.toLocaleString('en-US')}
+            {v0BalanceNock.toLocaleString('en-US')}
           </div>
         </div>
 
