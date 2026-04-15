@@ -31,6 +31,26 @@ export type V0MigrationOptions = {
 const CONFIRM_POLL_INTERVAL_MS = 3000;
 const CONFIRM_TIMEOUT_MS = 90_000;
 
+function summarizeSmallestV0Note(
+  notes: Array<{ assets: string }>
+): { index: number; assetsNicks: string; assetsNock: number } | null {
+  if (!notes.length) return null;
+  let smallestIndex = 0;
+  let smallestAssets = BigInt(notes[0].assets);
+  for (let i = 1; i < notes.length; i++) {
+    const assets = BigInt(notes[i].assets);
+    if (assets < smallestAssets) {
+      smallestAssets = assets;
+      smallestIndex = i;
+    }
+  }
+  return {
+    index: smallestIndex,
+    assetsNicks: smallestAssets.toString(),
+    assetsNock: Number(smallestAssets) / NOCK_TO_NICKS,
+  };
+}
+
 async function migrationTxEngineSettings(grpcEndpoint: string): Promise<wasm.TxEngineSettings> {
   const client = createBrowserClient(grpcEndpoint);
   const blockHeight = await client.getCurrentBlockHeight();
@@ -51,12 +71,28 @@ function v0SourcePublicKeyFromMnemonic(mnemonic: string): wasm.PublicKey {
 }
 
 /**
- * Same fee read pattern as `buildTransaction`: sign, validate, then `calcFee()` (post-signature).
+ * Reconstructed migration builders need fee/signature convergence:
+ * signing changes witness size, which can increase required fee.
+ * Re-sign + recalc a few rounds until fee stabilizes, then validate.
  */
 async function feeNicksAfterSign(builder: wasm.TxBuilder, privateKey: wasm.PrivateKey): Promise<string> {
+  let previousFee = '';
+  const MAX_FEE_CONVERGENCE_ROUNDS = 4;
+
+  for (let i = 0; i < MAX_FEE_CONVERGENCE_ROUNDS; i++) {
+    builder.recalcAndSetFee(false);
+    await builder.sign(privateKey);
+    const currentFee = String(builder.curFee());
+    if (currentFee === previousFee) {
+      break;
+    }
+    previousFee = currentFee;
+  }
+
+  // Ensure final tx has signatures matching the last fee adjustment.
   await builder.sign(privateKey);
   builder.validate();
-  return String(builder.calcFee());
+  return String(builder.curFee());
 }
 
 /**
@@ -105,7 +141,22 @@ export async function buildV0MigrationTx(
           result.v0MigrationTxSignPayload,
           txEngineSettings
         );
-        const feeNicks = await feeNicksAfterSign(builder, privateKey);
+        let feeNicks: string;
+        try {
+          feeNicks = await feeNicksAfterSign(builder, privateKey);
+        } catch (e) {
+          if (debug) {
+            console.error('[V0 Migration] Fee estimation failed during sign/validate:', {
+              error: e instanceof Error ? e.message : String(e),
+              txId: result.txId,
+              notesUsed: result.v0MigrationTxSignPayload.notes.length,
+              smallestDiscoveredNote: summarizeSmallestV0Note(
+                result.v0Notes as Array<{ assets: string }>
+              ),
+            });
+          }
+          throw e;
+        }
         result = {
           ...result,
           fee: feeNicks as BuildV0MigrationTxResult['fee'],
@@ -120,16 +171,28 @@ export async function buildV0MigrationTx(
   }
 
   if (debug) {
+    const smallestNote = summarizeSmallestV0Note(result.v0Notes as Array<{ assets: string }>);
     console.log('[V0 Migration] Result:', {
       sourceAddress: result.sourceAddress,
       rawNotesFromRpc: result.rawNotesFromRpc,
       legacyV0Notes: result.v0Notes.length,
       totalNicks: result.totalNicks,
       smallestNoteNock: result.smallestNoteNock,
+      smallestDiscoveredNote: smallestNote,
       txId: result.txId,
       feeNock: result.feeNock,
       sdkDebugUsesSingleSmallestNote: debug,
     });
+    if (!result.v0MigrationTxSignPayload) {
+      console.warn(
+        '[V0 Migration] Build returned discovery-only result (no sign payload). This usually means the selected single note could not produce a valid migration tx with current fees/settings.',
+        {
+          endpoint: grpcEndpoint,
+          txEngineSettings,
+          smallestDiscoveredNote: smallestNote,
+        }
+      );
+    }
   }
 
   return result;
@@ -183,20 +246,14 @@ export async function signAndBroadcastV0Migration(
     }
 
     const privateKey = wasm.PrivateKey.fromBytes(masterKey.privateKey);
+    let convergedFeeNicks = '0';
     try {
-      await builder.sign(privateKey);
+      convergedFeeNicks = await feeNicksAfterSign(builder, privateKey);
     } catch (e) {
-      console.error('[V0 Migration] builder.sign failed:', e);
+      console.error('[V0 Migration] builder.sign/validate failed:', e);
       throw e;
     } finally {
       privateKey.free();
-    }
-
-    try {
-      builder.validate();
-    } catch (e) {
-      console.error('[V0 Migration] builder.validate failed:', e);
-      throw e;
     }
 
     const signedTx = builder.build();
@@ -204,9 +261,44 @@ export async function signAndBroadcastV0Migration(
     const protobuf = wasm.rawTxToProtobuf(signedRawTx);
 
     if (debug) {
+      let derivedOutputs: unknown[] = [];
+      try {
+        const rpcClient = createBrowserClient(grpcEndpoint);
+        const blockHeight = await rpcClient.getCurrentBlockHeight();
+        const outputs = wasm.rawTxOutputs(signedRawTx, blockHeight, txEngineSettings);
+        derivedOutputs = outputs.map(output => {
+          const protobufNote = wasm.noteToProtobuf(output);
+          const note = protobufNote as Record<string, unknown>;
+          const name = note.name as Record<string, unknown> | undefined;
+          const noteVersion = note.note_version as Record<string, unknown> | undefined;
+          const v1 = noteVersion?.V1 as Record<string, unknown> | undefined;
+          const v1Name = v1?.name as Record<string, unknown> | undefined;
+          return {
+            firstName:
+              typeof name?.first === 'string'
+                ? name.first
+                : typeof v1Name?.first === 'string'
+                  ? v1Name.first
+                  : null,
+            assetsNicks: note.assets,
+            fullOutputNote: protobufNote,
+          };
+        });
+      } catch (e) {
+        console.warn(
+          '[V0 Migration] Failed to derive output notes from signed tx for debug logging:',
+          e
+        );
+      }
+
       console.log('[V0 Migration] Signed transaction (before broadcast):', {
         txId: signedTx.id,
         spendsCount: signedRawTx?.spends?.length ?? 0,
+        feeNicks: convergedFeeNicks,
+        feeNock: Number(BigInt(convergedFeeNicks)) / NOCK_TO_NICKS,
+        derivedOutputs,
+        fullSignedRawTx: signedRawTx,
+        protobufPayload: protobuf,
       });
       console.log('[V0 Migration] Skipping broadcast (debug mode)');
       return { txId: signedTx.id, confirmed: false, skipped: true };
