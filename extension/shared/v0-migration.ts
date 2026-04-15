@@ -62,12 +62,13 @@ export async function queryV0Balance(mnemonic: string): Promise<V0BalanceResult>
 }
 
 /**
- * Build v0 migration transaction (queries balance internally, then builds tx when target provided).
- * Use for fee estimation and for the actual migration payload on the Funds screen.
+ * Build v0 migration transaction (queries balance internally, then builds to `targetV1Pkh`).
+ *
+ * @param targetV1Pkh - Destination v1 PKH (`Digest` from iris-wasm). Use `pkhAddressToDigest` for base58 wallet addresses.
  */
 export async function buildV0MigrationTx(
   mnemonic: string,
-  targetV1Pkh?: string,
+  targetV1Pkh: Digest,
   debug = false
 ): Promise<BuildV0MigrationTxResult> {
   await ensureWasmInitialized();
@@ -75,15 +76,10 @@ export async function buildV0MigrationTx(
   const txEngineSettings = await migrationTxEngineSettings(grpcEndpoint);
   const sourcePublicKey = v0SourcePublicKeyFromMnemonic(mnemonic);
 
-  let result = await sdkBuildV0MigrationTx(
-    sourcePublicKey,
-    grpcEndpoint,
-    targetV1Pkh as Digest | undefined,
-    {
-      txEngineSettings,
-      maxNotes: debug ? 1 : undefined,
-    }
-  );
+  let result = await sdkBuildV0MigrationTx(sourcePublicKey, grpcEndpoint, targetV1Pkh, {
+    txEngineSettings,
+    maxNotes: debug ? 1 : undefined,
+  });
 
   if (result.v0MigrationTxSignPayload) {
     const masterKey = wasm.deriveMasterKeyFromMnemonic(mnemonic, '');

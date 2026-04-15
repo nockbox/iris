@@ -10,6 +10,7 @@ import PencilEditIcon from '../assets/pencil-edit-icon.svg';
 import CheckmarkIcon from '../assets/checkmark-pencil-icon.svg';
 import { truncateAddress } from '../utils/format';
 import { PlusIcon } from '../components/icons/PlusIcon';
+import { pkhAddressToDigest } from '../../shared/address-encoding';
 import { buildV0MigrationTx } from '../../shared/v0-migration';
 
 export function V0MigrationFundsScreen() {
@@ -59,7 +60,7 @@ export function V0MigrationFundsScreen() {
       try {
         const result = await buildV0MigrationTx(
           v0MigrationDraft.v0Mnemonic!,
-          destinationWallet!.address,
+          pkhAddressToDigest(destinationWallet!.address),
           true
         );
         if (ac.signal.aborted) return;
@@ -153,7 +154,7 @@ export function V0MigrationFundsScreen() {
     try {
       const result = await buildV0MigrationTx(
         v0MigrationDraft.v0Mnemonic,
-        destinationWallet.address,
+        pkhAddressToDigest(destinationWallet.address),
         true
       );
       if (!result.txId || !result.v0MigrationTxSignPayload) {
