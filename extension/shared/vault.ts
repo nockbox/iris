@@ -3291,7 +3291,7 @@ export class Vault {
           refundPkh: senderPKH,
         },
         BRIDGE_CONFIG,
-        { txEngineSettings }
+        { txEngineSettings, debug: true }
       );
     } catch (error) {
       console.error('[Bridge Swap] buildBridgeTransaction failed:', {
@@ -3354,6 +3354,7 @@ export class Vault {
 
       const validation = await validateBridgeTransaction(signedTx, BRIDGE_CONFIG, {
         txEngineSettings: buildCtx.txEngineSettings,
+        debug: true,
       });
       if (!validation.valid) {
         throw new Error(validation.error ?? 'Bridge transaction validation failed');
