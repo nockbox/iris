@@ -7,7 +7,7 @@ import NockTextCircleContainer from '../assets/NockTextCircleContainer.svg';
 import NockText from '../assets/NockText.svg';
 import JustNText from '../assets/JustNText.svg';
 import UpDownVec from '../assets/upDownvec.svg';
-import { BRIDGE_PROTOCOL_FEE_DISPLAY, MIN_BRIDGE_AMOUNT_NOCK } from '../../shared/constants';
+import { MIN_BRIDGE_AMOUNT_NOCK } from '@nockbox/iris-sdk';
 
 function isEvmAddress(value: string): boolean {
   const s = value.trim();
@@ -61,7 +61,6 @@ export function SwapScreen() {
     try {
       setPendingBridgeSwap({
         amountNock: amountNum || 100000,
-        bridgeFeeLabel: BRIDGE_PROTOCOL_FEE_DISPLAY,
         destinationAddress: destinationAddress || '0x0000000000000000000000000000000000000001',
       });
       navigate('swap-review');

@@ -107,13 +107,11 @@ interface AppStore {
   // Prepared bridge swap transaction between swap and review screens
   pendingBridgeSwap: {
     amountNock: number;
-    bridgeFeeLabel: string;
     destinationAddress: string;
   } | null;
   setPendingBridgeSwap: (
     value: {
       amountNock: number;
-      bridgeFeeLabel: string;
       destinationAddress: string;
     } | null
   ) => void;

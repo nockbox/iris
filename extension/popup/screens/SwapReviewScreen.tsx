@@ -7,7 +7,8 @@ import NockTextCircleContainer from '../assets/NockTextCircleContainer.svg';
 import NockText from '../assets/NockText.svg';
 import JustNText from '../assets/JustNText.svg';
 import DownArrow from '../assets/downArrow.svg';
-import { BRIDGE_PROTOCOL_FEE_DISPLAY, INTERNAL_METHODS } from '../../shared/constants';
+import { BRIDGE_PROTOCOL_FEE_RATE } from '@nockbox/iris-sdk';
+import { INTERNAL_METHODS } from '../../shared/constants';
 import { nockToNick, nickToNock } from '../../shared/currency';
 
 function truncate(addr: string): string {
@@ -64,11 +65,12 @@ export function SwapReviewScreen() {
         })
       : '—';
 
-  const bridgeProtocolFeeNock = prepared.amountNock * 0.005;
-  const bridgeProtocolFeeDisplay = bridgeProtocolFeeNock.toLocaleString('en-US', {
+  const bridgeProtocolFeeNock = prepared.amountNock * BRIDGE_PROTOCOL_FEE_RATE;
+  const bridgeProtocolFeeAmountDisplay = bridgeProtocolFeeNock.toLocaleString('en-US', {
     minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
+    maximumFractionDigits: 4,
   });
+  const bridgeProtocolFeePercentLabel = `${(BRIDGE_PROTOCOL_FEE_RATE * 100).toFixed(1)}%`;
 
   async function handleSwap() {
     setSubmitting(true);
@@ -248,10 +250,10 @@ export function SwapReviewScreen() {
           </div>
           <div className="flex items-center justify-between text-[14px] font-medium">
             <span style={{ letterSpacing: '0.14px', lineHeight: '18px' }}>
-              Bridge fee {BRIDGE_PROTOCOL_FEE_DISPLAY}
+              Bridge fee {bridgeProtocolFeePercentLabel}
             </span>
             <span className="text-right" style={{ color: 'var(--color-text-muted)', letterSpacing: '0.14px' }}>
-              {bridgeProtocolFeeDisplay} NOCK
+              {bridgeProtocolFeeAmountDisplay} NOCK
             </span>
           </div>
         </div>
