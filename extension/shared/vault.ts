@@ -50,7 +50,7 @@ import {
 import { getTxEngineSettingsForHeight } from './rpc-config';
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
-  return getTxEngineSettingsForHeight(blockHeight) as unknown as wasm.TxEngineSettings;
+  return await getTxEngineSettingsForHeight(blockHeight);
 }
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
