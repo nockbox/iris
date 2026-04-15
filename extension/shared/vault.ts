@@ -2306,6 +2306,7 @@ export class Vault {
   ): Promise<{
     bridgeResult: Awaited<ReturnType<typeof buildBridgeTransaction>>;
     destinationAddress: string;
+    refundPkh: string;
     wasmNotes: wasm.Note[];
     spendConditions: wasm.SpendCondition[];
     selectedNoteIds: string[];
@@ -2446,6 +2447,7 @@ export class Vault {
     return {
       bridgeResult,
       destinationAddress,
+      refundPkh: senderPKH,
       wasmNotes,
       spendConditions,
       selectedNoteIds,
@@ -2516,6 +2518,7 @@ export class Vault {
       console.log('[Bridge Swap] Signed transaction (before broadcast):', {
         txId: buildCtx.bridgeResult.txId,
         feeNicks: Number(buildCtx.bridgeResult.fee),
+        refundPkh: buildCtx.refundPkh,
         destinationRoundtrip: {
           requested: buildCtx.destinationAddress,
           reconstructed: validation.destinationAddress,
