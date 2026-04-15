@@ -13,7 +13,7 @@ export function V0MigrationReviewScreen() {
   const [isSending, setIsSending] = useState(false);
   const destinationWallet =
     wallet.accounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) || null;
-  const amount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock;
+  const amount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock ?? 0;
   const usdAmount = amount * priceUsd;
   const canSend =
     Boolean(v0MigrationDraft.v0MigrationTxSignPayload) &&

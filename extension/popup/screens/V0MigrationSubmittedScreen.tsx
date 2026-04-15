@@ -5,7 +5,7 @@ import { PlusIcon } from '../components/icons/PlusIcon';
 
 export function V0MigrationSubmittedScreen() {
   const { navigate, v0MigrationDraft, resetV0MigrationDraft } = useStore();
-  const sentAmount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock;
+  const sentAmount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock ?? 0;
 
   function handleBackToOverview() {
     resetV0MigrationDraft();
