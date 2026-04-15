@@ -8,11 +8,11 @@ import { Vault } from '../shared/vault';
 import { isNockAddress } from '../shared/validators';
 import {
   noteToProtobuf,
-  isSignTxRequest,
   assertNativeRawTx,
   assertNativeNote,
   assertNativeSpendCondition,
 } from '../shared/sign-raw-tx-compat';
+import { isSignTxRequest } from '@nockbox/iris-sdk';
 import wasm from '../shared/sdk-wasm.js';
 import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
 import type { Nicks } from '@nockbox/iris-wasm';

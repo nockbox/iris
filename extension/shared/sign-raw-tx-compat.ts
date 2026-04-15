@@ -3,18 +3,7 @@
  */
 
 import * as guard from '@nockbox/iris-wasm/iris_wasm.guard';
-import type { SignTxRequest } from '@nockbox/iris-sdk';
 import wasm from './sdk-wasm.js';
-
-export function isSignTxRequest(obj: unknown): obj is SignTxRequest {
-  if (!obj || typeof obj !== 'object') return false;
-  const p = obj as { tx?: unknown; notes?: unknown };
-  return (
-    guard.isNockchainTx(p.tx) &&
-    (typeof p.notes === 'undefined' ||
-      (Array.isArray(p.notes) && p.notes.every((note: unknown) => guard.isNote(note))))
-  );
-}
 
 /** Convert native note to protobuf for popup display. */
 export function noteToProtobuf(note: wasm.Note): unknown {
