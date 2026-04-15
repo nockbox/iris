@@ -18,11 +18,14 @@ import {
   mapRpcResponse,
   RPC_API_VERSION,
   isEvmAddress,
+  DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS,
+  DEFAULT_COINBASE_TIMELOCK_BLOCKS,
 } from '@nockbox/iris-sdk';
-import type { RpcRequest, RpcResponse } from '@nockbox/iris-sdk';
+import type { RpcRequest, RpcResponse, ConnectResponse, SignMessageResponse } from '@nockbox/iris-sdk';
 import wasm from '../shared/sdk-wasm.js';
 import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
 import type { Nicks } from '@nockbox/iris-sdk/wasm';
+import type { Digest } from '@nockbox/iris-sdk/wasm';
 import {
   PROVIDER_METHODS,
   INTERNAL_METHODS,
@@ -367,6 +370,49 @@ function toInvalidParamsError(err: unknown): { error: { code: number; message: s
   };
 }
 
+function buildConnectResponse(address: string, rpcUrl: string): ConnectResponse {
+  return {
+    account: {
+      type: 'v1',
+      address: address as Digest,
+    },
+    rpcConfig: {
+      rpcUrl,
+      networkName: 'mainnet',
+      blockExplorerUrl: '',
+      txEngineActivationHeights: DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS,
+      coinbaseTimelockBlocks: DEFAULT_COINBASE_TIMELOCK_BLOCKS,
+    },
+  };
+}
+
+function buildSignMessageResponse(
+  legacySignatureJson: string,
+  publicKeyHex: string
+): SignMessageResponse {
+  const legacySignature = JSON.parse(legacySignatureJson) as { c: number[]; s: number[] };
+
+  const fromLegacyHex = (bytes: number[]): string => {
+    return bytes
+      .reverse()
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+  };
+
+  const publicKey = wasm.publicKeyFromHex(publicKeyHex);
+  if (!publicKey) {
+    throw new Error('Invalid public key');
+  }
+
+  return {
+    signature: {
+      c: fromLegacyHex(legacySignature.c),
+      s: fromLegacyHex(legacySignature.s),
+    },
+    publicKey,
+  };
+}
+
 /**
  * Pending approval requests
  * Maps request ID to the request data and response callback
@@ -706,10 +752,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
         // Origin approved - return address
         const connectEndpoint = await getEffectiveRpcEndpoint();
-        await sendBridgedResponse({
-          pkh: vault.getAddress(),
-          grpcEndpoint: connectEndpoint,
-        });
+        await sendBridgedResponse(buildConnectResponse(vault.getAddress(), connectEndpoint));
 
         // Emit connect event when dApp connects successfully
         await emitWalletEvent('connect', { chainId: CHAIN_ID });
@@ -1334,7 +1377,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
           try {
             const { signature, publicKeyHex } = await vault.signMessage([signRequest.message]);
-            approveSignPending.sendResponse({ signature, publicKeyHex });
+            approveSignPending.sendResponse(buildSignMessageResponse(signature, publicKeyHex));
             cancelPendingRequest(approveSignId);
             processNextRequest();
             sendResponse({ success: true });
@@ -1441,10 +1484,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
           // Return wallet info
           const approveEndpoint = await getEffectiveRpcEndpoint();
-          approveConnectPending.sendResponse({
-            pkh: vault.getAddress(),
-            grpcEndpoint: approveEndpoint,
-          });
+          approveConnectPending.sendResponse(buildConnectResponse(vault.getAddress(), approveEndpoint));
           cancelPendingRequest(approveConnectId);
           processNextRequest();
           sendResponse({ success: true });
