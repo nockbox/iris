@@ -16,19 +16,19 @@ export function V0MigrationReviewScreen() {
   const amount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock;
   const usdAmount = amount * priceUsd;
   const canSend =
-    Boolean(v0MigrationDraft.signRawTxPayload) &&
+    Boolean(v0MigrationDraft.v0MigrationTxSignPayload) &&
     Boolean(v0MigrationDraft.v0Mnemonic) &&
     !isSending;
 
   async function handleSend(skipBroadcast = false) {
-    if (!canSend || !v0MigrationDraft.v0Mnemonic || !v0MigrationDraft.signRawTxPayload) return;
+    if (!canSend || !v0MigrationDraft.v0Mnemonic || !v0MigrationDraft.v0MigrationTxSignPayload) return;
 
     setSendError('');
     setIsSending(true);
     try {
       const { txId, confirmed, skipped } = await signAndBroadcastV0Migration(
         v0MigrationDraft.v0Mnemonic,
-        v0MigrationDraft.signRawTxPayload,
+        v0MigrationDraft.v0MigrationTxSignPayload,
         { debug: true, skipBroadcast }
       );
       setV0MigrationDraft({

@@ -136,7 +136,7 @@ export function V0MigrationSetupScreen() {
         migratedAmountNock: undefined,
         feeNock: undefined,
         keyfileName: undefined,
-        signRawTxPayload: undefined,
+        v0MigrationTxSignPayload: undefined,
         txId: undefined,
       });
       setWords(Array(WORD_COUNT).fill(''));

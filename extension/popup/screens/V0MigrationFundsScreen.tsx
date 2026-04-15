@@ -156,14 +156,14 @@ export function V0MigrationFundsScreen() {
         destinationWallet.address,
         true
       );
-      if (!result.txId || !result.signRawTxPayload) {
+      if (!result.txId || !result.v0MigrationTxSignPayload) {
         throw new Error('Failed to build migration transaction');
       }
 
       setV0MigrationDraft({
         migratedAmountNock: result.migratedNock,
         feeNock: result.feeNock,
-        signRawTxPayload: result.signRawTxPayload,
+        v0MigrationTxSignPayload: result.v0MigrationTxSignPayload,
         txId: result.txId,
       });
       navigate('v0-migration-review');
@@ -480,7 +480,7 @@ export function V0MigrationFundsScreen() {
                   onClick={() => {
                     setV0MigrationDraft({
                       destinationWalletIndex: account.index,
-                      signRawTxPayload: undefined,
+                      v0MigrationTxSignPayload: undefined,
                       txId: undefined,
                       migratedAmountNock: undefined,
                       feeNock: undefined,

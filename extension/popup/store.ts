@@ -16,6 +16,7 @@ import {
   WalletTransaction,
 } from '../shared/types';
 import { send } from './utils/messaging';
+import type { V0MigrationTxSignPayload } from '@nockbox/iris-sdk';
 
 /**
  * All available screens in the wallet
@@ -117,11 +118,7 @@ interface AppStore {
     sourceAddress?: string;
     v0Mnemonic?: string; // Kept in memory only until sign+broadcast
     v0Notes?: any[];
-    signRawTxPayload?: {
-      rawTx: any;
-      notes: any[];
-      spendConditions: any[];
-    };
+    v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
     txId?: string;
     v0TxConfirmed?: boolean;
     v0TxSkipped?: boolean;
@@ -136,11 +133,7 @@ interface AppStore {
       sourceAddress?: string;
       v0Mnemonic?: string;
       v0Notes?: any[];
-      signRawTxPayload?: {
-        rawTx: any;
-        notes: any[];
-        spendConditions: any[];
-      };
+      v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
       txId?: string;
       v0TxConfirmed?: boolean;
       v0TxSkipped?: boolean;
@@ -233,12 +226,12 @@ export const useStore = create<AppStore>((set, get) => ({
     sourceAddress: undefined,
     sourcePkh: undefined,
     v0Notes: undefined,
-        signRawTxPayload: undefined,
+        v0MigrationTxSignPayload: undefined,
         txId: undefined,
         v0TxConfirmed: undefined,
         v0TxSkipped: undefined,
   },
-  pendingConnectRequest: null,
+    pendingConnectRequest: null,
   pendingSignRequest: null,
   pendingSignRawTxRequest: null,
   pendingTransactionRequest: null,
@@ -319,7 +312,7 @@ export const useStore = create<AppStore>((set, get) => ({
         sourceAddress: undefined,
         v0Mnemonic: undefined,
         v0Notes: undefined,
-        signRawTxPayload: undefined,
+        v0MigrationTxSignPayload: undefined,
         txId: undefined,
         v0TxConfirmed: undefined,
         v0TxSkipped: undefined,
