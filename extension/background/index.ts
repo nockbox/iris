@@ -12,10 +12,16 @@ import {
   assertNativeNote,
   assertNativeSpendCondition,
 } from '../shared/sign-raw-tx-compat';
-import { isSignTxRequest } from '@nockbox/iris-sdk';
+import {
+  isSignTxRequest,
+  mapRpcRequest,
+  mapRpcResponse,
+  RPC_API_VERSION,
+} from '@nockbox/iris-sdk';
+import type { RpcRequest, RpcResponse } from '@nockbox/iris-sdk';
 import wasm from '../shared/sdk-wasm.js';
 import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
-import type { Nicks } from '@nockbox/iris-wasm';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
 import {
   PROVIDER_METHODS,
   INTERNAL_METHODS,
@@ -262,6 +268,106 @@ function parseNicksParam(
   }
 
   return String(value) as Nicks;
+}
+
+type IncomingRpcRequest = {
+  method?: string;
+  params?: any;
+  api?: unknown;
+};
+
+const LEGACY_RPC_API_VERSION = '0';
+
+/**
+ * Provider requests that do not specify `api` are treated as legacy API 0.
+ */
+function resolveSourceApiVersion(requestApi: unknown): string {
+  return typeof requestApi === 'string' && requestApi.trim()
+    ? requestApi.trim()
+    : LEGACY_RPC_API_VERSION;
+}
+
+function isProviderMethod(method: unknown): method is string {
+  return (
+    method === PROVIDER_METHODS.CONNECT ||
+    method === PROVIDER_METHODS.SIGN_MESSAGE ||
+    method === PROVIDER_METHODS.SEND_TRANSACTION ||
+    method === PROVIDER_METHODS.GET_WALLET_INFO ||
+    method === PROVIDER_METHODS.SIGN_TX
+  );
+}
+
+async function bridgeIncomingProviderPayload(
+  sourceRequest: IncomingRpcRequest
+): Promise<IncomingRpcRequest> {
+  if (!sourceRequest?.method) {
+    return sourceRequest;
+  }
+
+  if (!isProviderMethod(sourceRequest.method)) {
+    return sourceRequest;
+  }
+
+  const sourceApi = resolveSourceApiVersion(sourceRequest.api);
+  if (sourceApi === RPC_API_VERSION) {
+    return {
+      ...sourceRequest,
+      api: sourceApi,
+    };
+  }
+
+  const mappedRequest = mapRpcRequest(
+    sourceRequest as RpcRequest,
+    sourceApi,
+    RPC_API_VERSION
+  );
+
+  return {
+    ...(mappedRequest as IncomingRpcRequest),
+    api: sourceApi,
+  };
+}
+
+function toRpcResponse(response: unknown): RpcResponse<unknown> {
+  if (response && typeof response === 'object' && 'error' in (response as Record<string, unknown>)) {
+    return response as RpcResponse<unknown>;
+  }
+  return { result: response };
+}
+
+async function bridgeOutgoingProviderResponse(
+  sourceRequest: IncomingRpcRequest,
+  response: unknown
+): Promise<unknown> {
+  if (!sourceRequest?.method || !isProviderMethod(sourceRequest.method)) {
+    return response;
+  }
+
+  const sourceApi = resolveSourceApiVersion(sourceRequest.api);
+  const mappedRequest = mapRpcRequest(
+    sourceRequest as RpcRequest,
+    sourceApi,
+    RPC_API_VERSION
+  );
+  const bridged = mapRpcResponse(
+    mappedRequest.method,
+    toRpcResponse(response),
+    RPC_API_VERSION,
+    sourceApi
+  );
+  if (bridged.error) {
+    return { error: bridged.error };
+  }
+  return bridged.result;
+}
+
+function toInvalidParamsError(err: unknown): { error: { code: number; message: string } } {
+  return {
+    error: {
+      code: -32602,
+      message: err instanceof Error ? err.message : 'Invalid params',
+    },
+  };
 }
 
 /**
@@ -544,12 +650,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     await initPromise;
     await ensureSessionRestored();
-    const { payload } = msg || {};
+    const sourcePayload = ((msg || {}).payload || {}) as IncomingRpcRequest;
+    let payload: any;
+    try {
+      payload = await bridgeIncomingProviderPayload(sourcePayload);
+    } catch (err) {
+      sendResponse(toInvalidParamsError(err));
+      return;
+    }
+    const sendBridgedResponse = async (response: unknown): Promise<void> => {
+      sendResponse(await bridgeOutgoingProviderResponse(sourcePayload, response));
+    };
     await touchActivity(payload?.method);
 
     // Guard: internal methods (wallet:*) can only be called from popup/extension pages
     if (payload?.method?.startsWith('wallet:') && !isFromPopup(_sender)) {
-      sendResponse({ error: ERROR_CODES.UNAUTHORIZED });
+      await sendBridgedResponse({ error: ERROR_CODES.UNAUTHORIZED });
       return;
     }
 
@@ -578,7 +694,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           // Store pending request with response callback
           pendingRequests.set(connectRequestId, {
             request: connectRequest,
-            sendResponse,
+            sendResponse: response => {
+              void sendBridgedResponse(response);
+            },
             origin: connectRequest.origin,
           });
 
@@ -591,7 +709,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
         // Origin approved - return address
         const connectEndpoint = await getEffectiveRpcEndpoint();
-        sendResponse({
+        await sendBridgedResponse({
           pkh: vault.getAddress(),
           grpcEndpoint: connectEndpoint,
         });
@@ -604,28 +722,35 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Validate origin
         const signMessageOrigin = _sender.url || _sender.origin || '';
         if (!isOriginApproved(signMessageOrigin)) {
-          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
           return;
         }
 
         if (vault.isLocked()) {
-          sendResponse({ error: ERROR_CODES.LOCKED });
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
         // Create sign message approval request
         const newSignRequestId = crypto.randomUUID();
+        const signMessageParams =
+          payload.params && typeof payload.params === 'object'
+            ? (payload.params as { message?: unknown })
+            : undefined;
         const signRequest: SignRequest = {
           id: newSignRequestId,
           origin: signMessageOrigin,
-          message: payload.params?.[0] || '',
+          message:
+            typeof signMessageParams?.message === 'string' ? signMessageParams.message : '',
           timestamp: Date.now(),
         };
 
         // Store pending request with response callback
         pendingRequests.set(newSignRequestId, {
           request: signRequest,
-          sendResponse,
+          sendResponse: response => {
+            void sendBridgedResponse(response);
+          },
           origin: signRequest.origin,
         });
 
@@ -639,19 +764,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Validate origin
         const signRawTxOrigin = _sender.url || _sender.origin || '';
         if (!isOriginApproved(signRawTxOrigin)) {
-          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
           return;
         }
 
         if (vault.isLocked()) {
-          sendResponse({ error: ERROR_CODES.LOCKED });
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
         const signTxParams = payload.params;
 
         if (!isSignTxRequest(signTxParams)) {
-          sendResponse({ error: { code: -32602, message: 'Invalid params' } });
+          await sendBridgedResponse({ error: { code: -32602, message: 'Invalid params' } });
           return;
         }
 
@@ -676,7 +801,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Store pending request with response callback
         pendingRequests.set(signRawTxId, {
           request: signRawTxRequest,
-          sendResponse,
+          sendResponse: response => {
+            void sendBridgedResponse(response);
+          },
           origin: signRawTxRequest.origin,
         });
 
@@ -690,17 +817,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Validate origin
         const sendTxOrigin = _sender.url || _sender.origin || '';
         if (!isOriginApproved(sendTxOrigin)) {
-          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
           return;
         }
 
         if (vault.isLocked()) {
-          sendResponse({ error: ERROR_CODES.LOCKED });
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
-        const { to, amount, fee } = payload.params?.[0] ?? {};
+        const sendTxParams =
+          payload.params && typeof payload.params === 'object' ? payload.params : {};
+        const { to, amount, fee } = sendTxParams;
         if (!isNockAddress(to)) {
-          sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
+          await sendBridgedResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
         }
         let amountNicks: Nicks;
@@ -709,7 +838,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           amountNicks = parseNicksParam(amount, 'amount');
           feeNicks = parseNicksParam(fee, 'fee', { allowZero: true });
         } catch (err) {
-          sendResponse({ error: err instanceof Error ? err.message : 'Invalid params' });
+          await sendBridgedResponse({ error: err instanceof Error ? err.message : 'Invalid params' });
           return;
         }
 
@@ -727,7 +856,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Store pending request with response callback
         pendingRequests.set(txRequestId, {
           request: txRequest,
-          sendResponse,
+          sendResponse: response => {
+            void sendBridgedResponse(response);
+          },
           origin: txRequest.origin,
         });
 
@@ -741,17 +872,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Validate origin
         const getInfoOrigin = _sender.url || _sender.origin || '';
         if (!isOriginApproved(getInfoOrigin)) {
-          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
           return;
         }
 
         if (vault.isLocked()) {
-          sendResponse({ error: ERROR_CODES.LOCKED });
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
         const stateEndpoint = await getEffectiveRpcEndpoint();
-        sendResponse({
+        await sendBridgedResponse({
           pkh: vault.getAddress(),
           grpcEndpoint: stateEndpoint,
         });
