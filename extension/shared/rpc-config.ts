@@ -5,6 +5,10 @@
 
 import type { Nicks, TxEngineSettings } from '@nockbox/iris-sdk/wasm';
 export type { Nicks, TxEngineSettings };
+import {
+  DEFAULT_COINBASE_TIMELOCK_BLOCKS,
+  DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS,
+} from '@nockbox/iris-sdk';
 import { STORAGE_KEYS, RPC_ENDPOINT } from './constants';
 
 /**
@@ -40,39 +44,33 @@ export const BLOCK_EXPLORER_OPTIONS = [
 
 const DEFAULT_BLOCK_EXPLORER_URL = NOCKSCAN_URL;
 
-/** Default V1 tx engine settings (mainnet: v1 from 39000). */
-const V1_TX_ENGINE_SETTINGS: TxEngineSettings = {
-  tx_engine_version: 1,
-  tx_engine_patch: 0,
-  min_fee: '256' as Nicks,
-  cost_per_word: String(1 << 15) as Nicks,
-  witness_word_div: 1,
-};
+/**
+ * Strip v0 from an activation map when building Iris **defaults** from the SDK.
+ * `RpcConfig` itself can still hold v0 if something stores it; this is not a hard
+ * protocol rule—today the extension simply does not ship v0 in the default map
+ * until product paths support the v0 tx engine end-to-end.
+ */
+function walletTxEngineActivationHeights(
+  heights: Record<number, TxEngineSettings>
+): TxEngineActivationHeights {
+  const out: TxEngineActivationHeights = {};
+  for (const [height, settings] of Object.entries(heights)) {
+    if (settings.tx_engine_version === 0) continue;
+    out[Number(height)] = settings;
+  }
+  return out;
+}
 
-/** Bythos tx engine (v1 patch 1): witness_word_div 4, min_fee 256 */
-const BYTHOS_TX_ENGINE_SETTINGS: TxEngineSettings = {
-  tx_engine_version: 1,
-  tx_engine_patch: 1,
-  min_fee: '256' as Nicks,
-  cost_per_word: String(1 << 14) as Nicks,
-  witness_word_div: 4,
-};
-
-// Intentionally don't have a tx engine at block 0, because we do not support v0 just yet.
-const DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS: TxEngineActivationHeights = {
-  39000: V1_TX_ENGINE_SETTINGS,
-  54000: BYTHOS_TX_ENGINE_SETTINGS,
-};
-
-/** Default coinbase timelock (mainnet maturity) */
-const DEFAULT_COINBASE_TIMELOCK_BLOCKS = 100;
+const DEFAULT_WALLET_TX_ENGINE_ACTIVATION_HEIGHTS = walletTxEngineActivationHeights(
+  DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS
+);
 
 /** Default RPC config (used when nothing is stored, and for "Reset to default") */
 export const defaultRpcConfig: RpcConfig = {
   rpcUrl: RPC_ENDPOINT,
   networkName: DEFAULT_NETWORK_NAME,
   blockExplorerUrl: DEFAULT_BLOCK_EXPLORER_URL,
-  txEngineActivationHeights: DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS,
+  txEngineActivationHeights: DEFAULT_WALLET_TX_ENGINE_ACTIVATION_HEIGHTS,
   coinbaseTimelockBlocks: DEFAULT_COINBASE_TIMELOCK_BLOCKS,
 };
 
@@ -155,7 +153,7 @@ export async function getTxEngineSettingsForHeight(blockHeight: number): Promise
   const heights =
     config.txEngineActivationHeights ??
     defaultRpcConfig.txEngineActivationHeights ??
-    DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS;
+    DEFAULT_WALLET_TX_ENGINE_ACTIVATION_HEIGHTS;
   const sorted = Object.keys(heights)
     .map(Number)
     .filter(h => h <= blockHeight)

@@ -5,6 +5,7 @@ import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronDownIcon } from '../components/icons/ChevronDownIcon';
 import NockBlocksFrame from '../assets/NockBlocksFrame.svg';
 import NockScanFrame from '../assets/NockScanFrame.svg';
+import { DEFAULT_COINBASE_TIMELOCK_BLOCKS } from '@nockbox/iris-sdk';
 import type { Nicks, TxEngineActivationHeights, TxEngineSettings } from '../../shared/rpc-config';
 import {
   defaultRpcConfig,
@@ -69,7 +70,7 @@ export function RpcSettingsScreen() {
     txEngineHeightsToJson(defaultRpcConfig.txEngineActivationHeights)
   );
   const [coinbaseTimelockBlocks, setCoinbaseTimelockBlocks] = useState(
-    String(defaultRpcConfig.coinbaseTimelockBlocks ?? 100)
+    String(defaultRpcConfig.coinbaseTimelockBlocks ?? DEFAULT_COINBASE_TIMELOCK_BLOCKS)
   );
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
@@ -92,7 +93,11 @@ export function RpcSettingsScreen() {
       setBlockExplorerUrl(explorerUrl);
       setTxEngineConfig(txEngineHeightsToJson(config.txEngineActivationHeights));
       setCoinbaseTimelockBlocks(
-        String(config.coinbaseTimelockBlocks ?? defaultRpcConfig.coinbaseTimelockBlocks ?? 100)
+        String(
+          config.coinbaseTimelockBlocks ??
+            defaultRpcConfig.coinbaseTimelockBlocks ??
+            DEFAULT_COINBASE_TIMELOCK_BLOCKS
+        )
       );
       setIsLoading(false);
     });
@@ -140,7 +145,9 @@ export function RpcSettingsScreen() {
     setRpcUrl(defaultRpcConfig.rpcUrl);
     setBlockExplorerUrl(defaultRpcConfig.blockExplorerUrl);
     setTxEngineConfig(txEngineHeightsToJson(defaultRpcConfig.txEngineActivationHeights));
-    setCoinbaseTimelockBlocks(String(defaultRpcConfig.coinbaseTimelockBlocks ?? 100));
+    setCoinbaseTimelockBlocks(
+      String(defaultRpcConfig.coinbaseTimelockBlocks ?? DEFAULT_COINBASE_TIMELOCK_BLOCKS)
+    );
     setTxEngineError(null);
     await clearRpcConfig();
   }

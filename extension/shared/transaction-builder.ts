@@ -8,6 +8,7 @@ import type { Nicks } from '@nockbox/iris-wasm';
 import { nicksToBigInt } from './currency.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
+import { DEFAULT_COINBASE_TIMELOCK_BLOCKS } from '@nockbox/iris-sdk';
 import { getEffectiveRpcConfig, getTxEngineSettingsForHeight } from './rpc-config.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
 import {
@@ -68,7 +69,7 @@ export async function discoverSpendConditionForNote(
   await ensureWasmInitialized();
 
   const config = await getEffectiveRpcConfig();
-  const timelock = config.coinbaseTimelockBlocks ?? 100;
+  const timelock = config.coinbaseTimelockBlocks ?? DEFAULT_COINBASE_TIMELOCK_BLOCKS;
   const timelockBigInt = BigInt(timelock);
 
   const candidates: Array<{ name: string; condition: SpendConditionLike }> = [];
