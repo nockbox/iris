@@ -244,8 +244,8 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     wasmNotes,
     locks,
     parseDigestString(recipientPKH),
-    amount as unknown as wasm.Nicks,
-    (fee ?? null) as wasm.Nicks | null,
+    amount as wasm.Nicks,
+    fee !== undefined ? (fee as wasm.Nicks) : null,
     parseDigestString(refundPKH),
     includeLockData
   );
