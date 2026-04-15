@@ -23,7 +23,7 @@ export type { V0BalanceResult };
 export type V0MigrationOptions = {
   /**
    * Build: use a single smallest note and log the build result.
-   * Sign/broadcast: log unsigned/signed txs and do not send to the network.
+   * Sign/broadcast: log unsigned/signed txs.
    */
   debug?: boolean;
 };
@@ -300,8 +300,7 @@ export async function signAndBroadcastV0Migration(
         fullSignedRawTx: signedRawTx,
         protobufPayload: protobuf,
       });
-      console.log('[V0 Migration] Skipping broadcast (debug mode)');
-      return { txId: signedTx.id, confirmed: false, skipped: true };
+      console.log('[V0 Migration] Debug mode enabled; broadcasting after logging');
     }
 
     const rpcClient = createBrowserClient(grpcEndpoint);
