@@ -4,7 +4,8 @@
  */
 
 import wasm from './sdk-wasm.js';
-import type { Nicks } from './currency.js';
+import type { Nicks } from '@nockbox/iris-wasm';
+import { nicksToBigInt } from './currency.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
 import { getEffectiveRpcConfig, getTxEngineSettingsForHeight } from './rpc-config.js';
@@ -196,14 +197,15 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     throw new Error('At least one note (UTXO) is required');
   }
 
-  // Calculate total available from notes
-  const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
-  const amountNum = Number(amount);
-  const feeNum = fee !== undefined ? Number(fee) : 0;
+  // Calculate total available from notes (per-note assets are integral nicks from RPC)
+  const totalAvailable = notes.reduce((sum, note) => sum + BigInt(Math.floor(note.assets)), 0n);
+  const amountBn = nicksToBigInt(amount);
+  const feeBn = fee !== undefined ? nicksToBigInt(fee) : 0n;
+  const needBn = amountBn + feeBn;
 
-  if (totalAvailable < amountNum + feeNum) {
+  if (totalAvailable < needBn) {
     throw new Error(
-      `Insufficient funds: have ${totalAvailable} nicks, need ${amountNum + feeNum} (${amount} amount + ${fee ?? '0'} fee)`
+      `Insufficient funds: have ${totalAvailable} nicks, need ${needBn} (${amount} amount + ${fee ?? '0'} fee)`
     );
   }
 
@@ -303,8 +305,8 @@ export async function buildMultiNotePayment(
   }
 
   // Calculate total available from all notes
-  const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
-  const totalNeeded = Number(amount) + Number(fee || '0');
+  const totalAvailable = notes.reduce((sum, note) => sum + BigInt(Math.floor(note.assets)), 0n);
+  const totalNeeded = nicksToBigInt(amount) + nicksToBigInt(fee ?? ('0' as Nicks));
 
   if (totalAvailable < totalNeeded) {
     throw new Error(

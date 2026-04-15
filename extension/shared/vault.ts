@@ -41,7 +41,7 @@ import {
   matchChangeOutputs,
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
-import type { Nicks } from './currency';
+import type { Nicks } from '@nockbox/iris-wasm';
 import {
   assertNativeRawTx,
   assertNativeNote,
@@ -1959,7 +1959,7 @@ export class Vault {
         const constructedTx = await buildMultiNotePayment(
           txBuilderNotes,
           to,
-          String(estimationAmount),
+          String(estimationAmount) as Nicks,
           accountKey.publicKey,
           privateKey,
           undefined, // let WASM auto-calc fee

@@ -8,10 +8,22 @@
  * 1 NICK = 0.0000152587890625 NOCK
  */
 
+import type { Nicks } from '@nockbox/iris-wasm';
 import { NOCK_TO_NICKS } from './constants';
 
-/** WASM Nicks type: decimal string for whole-number amounts (matches iris-wasm Nicks). */
-export type Nicks = string;
+/**
+ * Parse a Nicks string to bigint (whole non-negative decimal digits only).
+ */
+export function nicksToBigInt(value: Nicks): bigint {
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed[0] === '-') {
+    throw new Error(`Invalid Nicks string: ${value}`);
+  }
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`Invalid Nicks string (expect non-negative integer digits): ${value}`);
+  }
+  return BigInt(trimmed);
+}
 
 /**
  * Convert NOCK to whole NICK with proper rounding

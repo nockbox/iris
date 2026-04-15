@@ -15,7 +15,7 @@ import {
 } from '../shared/sign-raw-tx-compat';
 import wasm from '../shared/sdk-wasm.js';
 import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
-import type { Nicks } from '../shared/currency';
+import type { Nicks } from '@nockbox/iris-wasm';
 import {
   PROVIDER_METHODS,
   INTERNAL_METHODS,
