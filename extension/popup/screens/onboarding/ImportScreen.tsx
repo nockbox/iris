@@ -143,7 +143,7 @@ export function ImportScreen() {
           error?: string;
         }>(INTERNAL_METHODS.SETUP, [password, mnemonic]);
 
-    if (result?.error) {
+    if ('error' in result) {
       if (result.error === ERROR_CODES.INVALID_MNEMONIC) {
         setError('Invalid secret phrase. Please check your words and try again.');
       } else {

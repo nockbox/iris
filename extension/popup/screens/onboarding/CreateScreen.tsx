@@ -28,11 +28,11 @@ export function CreateScreen() {
 
     if (isAddSeedFlow) {
       const result = await createMnemonicSeedSource(undefined);
-      if (result?.error) {
+      if ('error' in result) {
         setError(`Error: ${result.error}`);
         return;
       }
-      setOnboardingMnemonic(result?.mnemonic || null);
+      setOnboardingMnemonic(result.mnemonic || null);
       navigate('wallet-add-backup');
       return;
     }
