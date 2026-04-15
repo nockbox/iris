@@ -61,7 +61,7 @@ export function V0MigrationFundsScreen() {
         const result = await buildV0MigrationTx(
           v0MigrationDraft.v0Mnemonic!,
           pkhAddressToDigest(destinationWallet!.address),
-          true
+          { debug: true }
         );
         if (ac.signal.aborted) return;
         const feeNock = result.feeNock;
@@ -155,7 +155,7 @@ export function V0MigrationFundsScreen() {
       const result = await buildV0MigrationTx(
         v0MigrationDraft.v0Mnemonic,
         pkhAddressToDigest(destinationWallet.address),
-        true
+        { debug: true }
       );
       if (!result.txId || !result.v0MigrationTxSignPayload) {
         throw new Error('Failed to build migration transaction');

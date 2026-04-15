@@ -18,6 +18,15 @@ import { createBrowserClient } from './rpc-client-browser';
 
 export type { V0BalanceResult };
 
+/** Shared optional flags for v0 migration build and sign/broadcast. */
+export type V0MigrationOptions = {
+  /**
+   * Build: use a single smallest note and log the build result.
+   * Sign/broadcast: log unsigned/signed txs and do not send to the network.
+   */
+  debug?: boolean;
+};
+
 const CONFIRM_POLL_INTERVAL_MS = 3000;
 const CONFIRM_TIMEOUT_MS = 90_000;
 const NOCK_TO_NICKS = 65536;
@@ -65,16 +74,19 @@ export async function queryV0Balance(mnemonic: string): Promise<V0BalanceResult>
  * Build v0 migration transaction (queries balance internally, then builds to `targetV1Pkh`).
  *
  * @param targetV1Pkh - Destination v1 PKH (`Digest` from iris-wasm). Use `pkhAddressToDigest` for base58 wallet addresses.
+ * @param options.debug - When true, builds with a single smallest note and logs the result (see {@link V0MigrationOptions}).
  */
 export async function buildV0MigrationTx(
   mnemonic: string,
   targetV1Pkh: Digest,
-  debug = false
+  options?: V0MigrationOptions
 ): Promise<BuildV0MigrationTxResult> {
   await ensureWasmInitialized();
   const grpcEndpoint = await getEffectiveRpcEndpoint();
   const txEngineSettings = await migrationTxEngineSettings(grpcEndpoint);
   const sourcePublicKey = v0SourcePublicKeyFromMnemonic(mnemonic);
+
+  const debug = options?.debug === true;
 
   let result = await sdkBuildV0MigrationTx(sourcePublicKey, grpcEndpoint, targetV1Pkh, {
     txEngineSettings,
@@ -127,12 +139,12 @@ export async function buildV0MigrationTx(
  * Sign a v0 migration raw transaction with the given mnemonic (master key) and broadcast.
  * Polls until the transaction is confirmed on-chain or timeout.
  *
- * @param options.debug - Pass `true` to log txs and sign only (no broadcast). Omitted or false broadcasts.
+ * @param options - See {@link V0MigrationOptions} for `debug`.
  */
 export async function signAndBroadcastV0Migration(
   mnemonic: string,
   payload: V0MigrationTxSignPayload,
-  options?: { debug?: boolean }
+  options?: V0MigrationOptions
 ): Promise<{ txId: string; confirmed: boolean; skipped?: boolean }> {
   await ensureWasmInitialized();
   const grpcEndpoint = await getEffectiveRpcEndpoint();
