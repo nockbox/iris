@@ -256,8 +256,8 @@ export class Vault {
     return `Wallet ${seedOrdinal}.${childOrdinal}`;
   }
 
-  private getDerivationForIndex(index: number): 'master' | 'slip10' {
-    return index === 0 ? 'master' : 'slip10';
+  private isMasterAccount(account: SubAccount | null | undefined): boolean {
+    return (account?.index ?? -1) === 0;
   }
 
   /** Returns a style (icon + color) not already used by any account across all seeds. */
@@ -303,7 +303,6 @@ export class Vault {
         iconColor: account.iconColor,
         hidden: account.hidden,
         createdAt: account.createdAt,
-        derivation: this.getDerivationForIndex(accountIndex),
       };
     });
 
@@ -325,8 +324,11 @@ export class Vault {
       name: seedAccount.name || this.getDefaultMasterWalletName(seedOrdinal),
       accounts: (seedAccount.accounts || []).map((account, idx) => {
         const accountIndex = typeof account.index === 'number' ? account.index : idx;
+        const { derivation: _derivation, ...accountWithoutDerivation } = account as SubAccount & {
+          derivation?: 'master' | 'slip10';
+        };
         const normalized: SubAccount = {
-          ...account,
+          ...accountWithoutDerivation,
           index: accountIndex,
           name:
             account.name ||
@@ -334,10 +336,6 @@ export class Vault {
               ? this.getDefaultMasterWalletName(seedOrdinal)
               : this.getDefaultChildWalletName(seedOrdinal, accountIndex)),
         };
-
-        if (seedAccount.type === 'mnemonic') {
-          normalized.derivation = this.getDerivationForIndex(accountIndex);
-        }
 
         return normalized;
       }),
@@ -477,7 +475,6 @@ export class Vault {
           iconStyleId: firstPreset.iconStyleId,
           iconColor: firstPreset.iconColor,
           createdAt: Date.now(),
-          derivation: 'master',
         },
       ],
     };
@@ -934,7 +931,6 @@ export class Vault {
       iconStyleId,
       iconColor,
       createdAt: Date.now(),
-      derivation: 'master',
     };
 
     const seedAccount: SeedAccount = {
@@ -1745,7 +1741,7 @@ export class Vault {
     const nextIndex = seedAccount.accounts.length;
     const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
     const nextChildOrdinal =
-      seedAccount.accounts.filter(acc => acc.derivation !== 'master').length + 1;
+      seedAccount.accounts.filter(acc => !this.isMasterAccount(acc)).length + 1;
     const accountName = name || this.getDefaultChildWalletName(seedOrdinal, nextChildOrdinal);
 
     const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
@@ -1757,7 +1753,6 @@ export class Vault {
       iconStyleId,
       iconColor,
       createdAt: Date.now(),
-      derivation: this.getDerivationForIndex(nextIndex),
     };
 
     seedAccount.accounts = [...seedAccount.accounts, newAccount];
@@ -1972,13 +1967,12 @@ export class Vault {
     const currentAccount = this.getCurrentAccount();
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-    const accountKey =
-      currentAccount?.derivation === 'master'
-        ? masterKey // Use master key directly for master-derived accounts
-        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
+    const accountKey = this.isMasterAccount(currentAccount)
+      ? masterKey // Use master key directly for master-derived accounts
+      : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
     if (!accountKey.privateKey || !accountKey.publicKey) {
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -1988,7 +1982,7 @@ export class Vault {
     // Sign: WASM expects 32-byte private key; copy to avoid view-into-WASM-memory issues
     const pk = accountKey.privateKey;
     if (pk.byteLength !== 32) {
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -2036,7 +2030,7 @@ export class Vault {
       .join('');
 
     // Signature is plain data in new API; no explicit free needed.
-    if (currentAccount?.derivation !== 'master') {
+    if (!this.isMasterAccount(currentAccount)) {
       accountKey.free();
     }
     masterKey.free();
@@ -2079,13 +2073,12 @@ export class Vault {
     const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-    const accountKey =
-      currentAccount.derivation === 'master'
-        ? masterKey // Use master key directly for master-derived accounts
-        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
+    const accountKey = this.isMasterAccount(currentAccount)
+      ? masterKey // Use master key directly for master-derived accounts
+      : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
     if (!accountKey.privateKey || !accountKey.publicKey) {
-      if (currentAccount.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -2131,7 +2124,7 @@ export class Vault {
     } finally {
       privateKey.free();
       // Clean up WASM memory (don't double-free master key)
-      if (currentAccount.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -2170,11 +2163,12 @@ export class Vault {
       // Derive keys
       const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
       const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
-      const accountKey =
-        currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+      const accountKey = this.isMasterAccount(currentAccount)
+        ? masterKey
+        : masterKey.deriveChild(childIndex);
 
       if (!accountKey.privateKey || !accountKey.publicKey) {
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2221,7 +2215,7 @@ export class Vault {
         return { fee: constructedTx.feeUsed };
       } finally {
         privateKey.free();
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2272,11 +2266,12 @@ export class Vault {
       // Derive keys
       const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
       const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
-      const accountKey =
-        currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+      const accountKey = this.isMasterAccount(currentAccount)
+        ? masterKey
+        : masterKey.deriveChild(childIndex);
 
       if (!accountKey.privateKey || !accountKey.publicKey) {
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2340,7 +2335,7 @@ export class Vault {
         };
       } finally {
         privateKey.free();
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2389,13 +2384,12 @@ export class Vault {
       const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
       // Use the account's own index, not currentAccountIndex (accounts may be reordered)
       const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-      const accountKey =
-        currentAccount.derivation === 'master'
-          ? masterKey // Use master key directly for master-derived accounts
-          : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
+      const accountKey = this.isMasterAccount(currentAccount)
+        ? masterKey // Use master key directly for master-derived accounts
+        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
       if (!accountKey.privateKey || !accountKey.publicKey) {
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2449,7 +2443,7 @@ export class Vault {
       } finally {
         privateKey.free();
         // Clean up WASM memory
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2511,11 +2505,12 @@ export class Vault {
         // Derive keys
         const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
         const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
-        const accountKey =
-          currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+        const accountKey = this.isMasterAccount(currentAccount)
+          ? masterKey
+          : masterKey.deriveChild(childIndex);
 
         if (!accountKey.privateKey || !accountKey.publicKey) {
-          if (currentAccount.derivation !== 'master') {
+          if (!this.isMasterAccount(currentAccount)) {
             accountKey.free();
           }
           masterKey.free();
@@ -2627,7 +2622,7 @@ export class Vault {
         } finally {
           privateKey.free();
           // Clean up WASM memory
-          if (currentAccount.derivation !== 'master') {
+          if (!this.isMasterAccount(currentAccount)) {
             accountKey.free();
           }
           masterKey.free();
@@ -2688,11 +2683,12 @@ export class Vault {
     const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
     const currentAccount = this.getCurrentAccount();
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-    const accountKey =
-      currentAccount?.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+    const accountKey = this.isMasterAccount(currentAccount)
+      ? masterKey
+      : masterKey.deriveChild(childIndex);
 
     if (!accountKey.privateKey) {
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -2729,7 +2725,7 @@ export class Vault {
     } finally {
       privateKey.free();
 
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();

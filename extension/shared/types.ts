@@ -15,7 +15,7 @@ export interface SubAccount {
   name: string;
   /** Nockchain V1 PKH address (40 bytes base58-encoded, ~54-55 chars) */
   address: string;
-  /** BIP-44 derivation index (0, 1, 2, ...) */
+  /** BIP-44 derivation index (0 = master/underived, 1+ = slip10 children) */
   index: number;
   /** Icon style ID (1-15, defaults to index % 3 + 1 for variety) */
   iconStyleId?: number;
@@ -25,8 +25,6 @@ export interface SubAccount {
   hidden?: boolean;
   /** Timestamp when the account was created (milliseconds since epoch) */
   createdAt?: number;
-  /** Derivation path for mnemonic-based wallets */
-  derivation?: 'master' | 'slip10';
 }
 
 /**
