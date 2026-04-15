@@ -2335,6 +2335,21 @@ export class Vault {
     const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
     const senderPKH = currentAccount.address;
 
+    // Log selected inputs before spend-condition discovery so failures still have context.
+    console.log('[Bridge Swap] Selected input notes (pre-discovery):', {
+      destinationAddress,
+      amountNicks,
+      selectedNoteIds,
+      selectedInputCount: sortedStoredNotes.length,
+      selectedNotes: sortedStoredNotes.map(n => ({
+        noteId: n.noteId,
+        assets: n.assets,
+        nameFirst: n.nameFirst,
+        originPage: n.originPage,
+        hasProtoNote: Boolean(n.protoNote),
+      })),
+    });
+
     const wasmNotes = sortedStoredNotes.map(n => {
       if (!n.protoNote) {
         throw new Error('Note missing protoNote - cannot build bridge transaction');
@@ -2343,12 +2358,25 @@ export class Vault {
     });
 
     const spendConditions = await Promise.all(
-      sortedStoredNotes.map(n =>
-        discoverSpendConditionForNote(senderPKH, {
-          nameFirst: n.nameFirst,
-          originPage: n.originPage,
-        })
-      )
+      sortedStoredNotes.map(async n => {
+        try {
+          return await discoverSpendConditionForNote(senderPKH, {
+            nameFirst: n.nameFirst,
+            originPage: n.originPage,
+          });
+        } catch (error) {
+          console.error('[Bridge Swap] Spend-condition discovery failed for input note:', {
+            noteId: n.noteId,
+            nameFirst: n.nameFirst,
+            originPage: n.originPage,
+            assets: n.assets,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw new Error(
+            `Spend condition discovery failed for note ${n.noteId} (${n.nameFirst.slice(0, 16)}...)`
+          );
+        }
+      })
     );
 
     const blockHeight = this.getAccountBlockHeight(currentAccount.address);
