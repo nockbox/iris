@@ -9,14 +9,14 @@ import { truncateAddress } from '../utils/format';
 import { useAutoFocus } from '../hooks/useAutoFocus';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { INTERNAL_METHODS } from '../../shared/constants';
-import { Account } from '../../shared/types';
+import { SubAccount } from '../../shared/types';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { PlusIcon } from './icons/PlusIcon';
 import { UploadIcon } from './icons/UploadIcon';
 import { EditIcon } from './icons/EditIcon';
 
 export function AccountSelector() {
-  const { wallet, syncWallet, navigate } = useStore();
+  const { wallet, syncWallet, navigate, refreshWalletAccounts } = useStore();
   const [isOpen, setIsOpen] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editingName, setEditingName] = useState('');
@@ -36,10 +36,10 @@ export function AccountSelector() {
     isOpen
   );
 
-  async function handleSwitchAccount(index: number) {
-    const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
+  async function handleSwitchAccount(accountAddress: string) {
+    const result = await send<{ ok?: boolean; account?: SubAccount; error?: string }>(
       INTERNAL_METHODS.SWITCH_ACCOUNT,
-      [index]
+      [accountAddress]
     );
 
     if (result?.ok && result.account) {
@@ -55,20 +55,13 @@ export function AccountSelector() {
   }
 
   async function handleCreateAccount() {
-    const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
-      INTERNAL_METHODS.CREATE_ACCOUNT,
+    const result = await send<{ account?: SubAccount; error?: string }>(
+      INTERNAL_METHODS.CREATE_CHILD_ACCOUNT,
       []
     );
 
-    if (result?.ok && result.account) {
-      // Add new account to wallet state and switch to it
-      const updatedWallet = {
-        ...wallet,
-        accounts: [...wallet.accounts, result.account],
-        currentAccount: result.account,
-        address: result.account.address,
-      };
-      syncWallet(updatedWallet);
+    if (!result?.error) {
+      await refreshWalletAccounts();
     } else if (result?.error) {
       alert(`Failed to create account: ${result.error}`);
     }
@@ -87,9 +80,9 @@ export function AccountSelector() {
     setIsOpen(false);
   }
 
-  function startEditing(account: Account, event: React.MouseEvent) {
+  function startEditing(account: SubAccount, event: React.MouseEvent) {
     event.stopPropagation(); // Prevent switching accounts
-    setEditingIndex(account.index);
+    setEditingIndex(wallet.accounts.findIndex(acc => acc.address === account.address));
     setEditingName(account.name);
   }
 
@@ -104,19 +97,30 @@ export function AccountSelector() {
       return;
     }
 
+    const account = wallet.accounts[editingIndex];
+    if (!account) {
+      cancelEditing();
+      return;
+    }
+
     const result = await send<{ ok?: boolean; error?: string }>(INTERNAL_METHODS.RENAME_ACCOUNT, [
-      editingIndex,
+      account.address,
       editingName.trim(),
     ]);
 
     if (result?.ok) {
       // Update wallet state with new name
       const updatedAccounts = wallet.accounts.map(acc =>
-        acc.index === editingIndex ? { ...acc, name: editingName.trim() } : acc
+        wallet.accounts.findIndex(a => a.address === acc.address) === editingIndex
+          ? { ...acc, name: editingName.trim() }
+          : acc
       );
       const updatedCurrentAccount =
-        wallet.currentAccount?.index === editingIndex
-          ? { ...wallet.currentAccount, name: editingName.trim() }
+        wallet.accounts.findIndex(acc => acc.address === wallet.currentAccount?.address) ===
+        editingIndex
+          ? wallet.currentAccount
+            ? { ...wallet.currentAccount, name: editingName.trim() }
+            : null
           : wallet.currentAccount;
 
       syncWallet({
@@ -172,19 +176,25 @@ export function AccountSelector() {
               .filter(acc => !acc.hidden)
               .map(account => (
                 <div
-                  key={account.index}
+                  key={account.address}
                   className={`w-full flex items-center gap-2 p-3 ${
-                    editingIndex !== account.index ? 'hover:bg-gray-700 cursor-pointer' : ''
+                    editingIndex !==
+                    wallet.accounts.findIndex(acc => acc.address === account.address)
+                      ? 'hover:bg-gray-700 cursor-pointer'
+                      : ''
                   } transition-colors ${
-                    currentAccount?.index === account.index ? 'bg-gray-700' : ''
+                    currentAccount?.address === account.address ? 'bg-gray-700' : ''
                   }`}
                   onClick={() =>
-                    editingIndex !== account.index && handleSwitchAccount(account.index)
+                    editingIndex !==
+                      wallet.accounts.findIndex(acc => acc.address === account.address) &&
+                    handleSwitchAccount(account.address)
                   }
                 >
                   <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex-shrink-0" />
                   <div className="text-left flex-1 min-w-0">
-                    {editingIndex === account.index ? (
+                    {editingIndex ===
+                    wallet.accounts.findIndex(acc => acc.address === account.address) ? (
                       <input
                         ref={editInputRef}
                         type="text"
@@ -212,9 +222,11 @@ export function AccountSelector() {
                       </>
                     )}
                   </div>
-                  {currentAccount?.index === account.index && editingIndex !== account.index && (
-                    <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0" />
-                  )}
+                  {currentAccount?.address === account.address &&
+                    editingIndex !==
+                      wallet.accounts.findIndex(acc => acc.address === account.address) && (
+                      <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0" />
+                    )}
                 </div>
               ))}
           </div>

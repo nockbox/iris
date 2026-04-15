@@ -17,7 +17,7 @@ import {
   PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
 } from './constants';
-import { Account } from './types';
+import { SubAccount, SeedAccount } from './types';
 import { buildMultiNotePayment, type Note } from './transaction-builder';
 import wasm from './sdk-wasm.js';
 import { queryV1Balance } from './balance-query';
@@ -195,14 +195,21 @@ interface EncryptedVault {
  * The decrypted vault payload (mnemonic + accounts)
  * This blob rarely changes (only on account creation/modification)
  */
-interface VaultPayload {
+interface LegacyVaultPayload {
   mnemonic: string;
-  accounts: Account[];
+  accounts: SubAccount[];
 }
+
+interface VaultPayloadV2 {
+  version: 2;
+  seedAccounts: SeedAccount[];
+}
+
+type VaultPayload = LegacyVaultPayload | VaultPayloadV2;
 
 interface VaultState {
   locked: boolean;
-  accounts: Account[];
+  accounts: SubAccount[];
   currentAccountIndex: number;
   enc: EncryptedVault | null;
 }
@@ -218,6 +225,9 @@ export class Vault {
   /** Decrypted mnemonic (only stored in memory while unlocked) */
   private mnemonic: string | null = null;
 
+  /** Decrypted seed account sources (mnemonic/external) */
+  private seedAccounts: SeedAccount[] = [];
+
   /** Derived encryption key (only stored in memory while unlocked, cleared on lock) */
   private encryptionKey: CryptoKey | null = null;
 
@@ -229,6 +239,157 @@ export class Vault {
 
   /** Cached balances per account (only stored in memory while unlocked) */
   private cachedBalances: Record<string, number> = {};
+
+  private isVaultPayloadV2(payload: VaultPayload): payload is VaultPayloadV2 {
+    return 'version' in payload && payload.version === 2 && Array.isArray(payload.seedAccounts);
+  }
+
+  private getSeedOrdinal(seedAccountId: string): number {
+    const idx = this.seedAccounts.findIndex(seed => seed.id === seedAccountId);
+    return idx >= 0 ? idx + 1 : 1;
+  }
+
+  private getDefaultMasterWalletName(seedOrdinal: number): string {
+    return `Wallet ${seedOrdinal}`;
+  }
+
+  private getDefaultChildWalletName(seedOrdinal: number, childOrdinal: number): string {
+    return `Wallet ${seedOrdinal}.${childOrdinal}`;
+  }
+
+  private isMasterAccount(account: SubAccount | null | undefined): boolean {
+    return (account?.index ?? -1) === 0;
+  }
+
+  /** Returns a style (icon + color) not already used by any account across all seeds. */
+  private pickUnusedStyleGlobally(): { iconStyleId: number; iconColor: string } {
+    const allAccounts = this.seedAccounts.flatMap(seed => seed.accounts);
+    const usedKeys = new Set(
+      allAccounts.map(
+        a => `${a.iconStyleId ?? 1}-${a.iconColor ?? PRESET_WALLET_STYLES[0].iconColor}`
+      )
+    );
+    for (const preset of PRESET_WALLET_STYLES) {
+      const key = `${preset.iconStyleId}-${preset.iconColor}`;
+      if (!usedKeys.has(key)) {
+        return { iconStyleId: preset.iconStyleId, iconColor: preset.iconColor };
+      }
+    }
+    // All presets used: pick random until we find an unused combo
+    const styleIds = Array.from({ length: 15 }, (_, i) => i + 1);
+    const colors = [...ACCOUNT_COLORS];
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const iconStyleId = styleIds[Math.floor(Math.random() * styleIds.length)];
+      const iconColor = colors[Math.floor(Math.random() * colors.length)];
+      const key = `${iconStyleId}-${iconColor}`;
+      if (!usedKeys.has(key)) return { iconStyleId, iconColor };
+    }
+    return { iconStyleId: 1, iconColor: PRESET_WALLET_STYLES[0].iconColor };
+  }
+
+  private createSeedAccountFromLegacy(mnemonic: string, legacyAccounts: SubAccount[]): SeedAccount {
+    const seedAccountId = crypto.randomUUID();
+    const seedOrdinal = this.getSeedOrdinal(seedAccountId);
+    const normalizedAccounts: SubAccount[] = legacyAccounts.map((account, idx) => {
+      const accountIndex = typeof account.index === 'number' ? account.index : idx;
+      return {
+        name:
+          account.name ||
+          (accountIndex === 0
+            ? this.getDefaultMasterWalletName(seedOrdinal)
+            : this.getDefaultChildWalletName(seedOrdinal, accountIndex)),
+        address: account.address,
+        index: accountIndex,
+        iconStyleId: account.iconStyleId,
+        iconColor: account.iconColor,
+        hidden: account.hidden,
+        createdAt: account.createdAt,
+      };
+    });
+
+    return {
+      id: seedAccountId,
+      name: this.getDefaultMasterWalletName(seedOrdinal),
+      type: 'mnemonic',
+      mnemonic,
+      createdAt: Date.now(),
+      accounts: normalizedAccounts,
+    };
+  }
+
+  private normalizeSeedAccount(seedAccount: SeedAccount, seedOrdinal: number): SeedAccount {
+    const seedId = seedAccount.id || crypto.randomUUID();
+    return {
+      ...seedAccount,
+      id: seedId,
+      name: seedAccount.name || this.getDefaultMasterWalletName(seedOrdinal),
+      accounts: (seedAccount.accounts || []).map((account, idx) => {
+        const accountIndex = typeof account.index === 'number' ? account.index : idx;
+        const { derivation: _derivation, ...accountWithoutDerivation } = account as SubAccount & {
+          derivation?: 'master' | 'slip10';
+        };
+        const normalized: SubAccount = {
+          ...accountWithoutDerivation,
+          index: accountIndex,
+          name:
+            account.name ||
+            (accountIndex === 0
+              ? this.getDefaultMasterWalletName(seedOrdinal)
+              : this.getDefaultChildWalletName(seedOrdinal, accountIndex)),
+        };
+
+        return normalized;
+      }),
+    };
+  }
+
+  private decodeVaultPayload(rawPayload: string): {
+    seedAccounts: SeedAccount[];
+    migrated: boolean;
+  } {
+    const parsed = JSON.parse(rawPayload) as VaultPayload;
+
+    if (this.isVaultPayloadV2(parsed)) {
+      return {
+        seedAccounts: parsed.seedAccounts.map((seedAccount, idx) =>
+          this.normalizeSeedAccount(seedAccount, idx + 1)
+        ),
+        migrated: false,
+      };
+    }
+
+    return {
+      seedAccounts: [this.createSeedAccountFromLegacy(parsed.mnemonic, parsed.accounts || [])],
+      migrated: true,
+    };
+  }
+
+  private rebuildFlatAccounts(): void {
+    this.state.accounts = this.seedAccounts.flatMap(seedAccount => seedAccount.accounts);
+    if (this.state.accounts.length === 0) {
+      this.state.currentAccountIndex = 0;
+      return;
+    }
+    if (this.state.currentAccountIndex >= this.state.accounts.length) {
+      this.state.currentAccountIndex = 0;
+    }
+  }
+
+  private getSeedAccountForWallet(account: SubAccount | null): SeedAccount | null {
+    if (!account) return null;
+    return (
+      this.seedAccounts.find(seed => seed.accounts.some(a => a.address === account.address)) || null
+    );
+  }
+
+  private getSigningMnemonicForCurrentAccount(): string | null {
+    const currentAccount = this.getCurrentAccount();
+    const seedAccount = this.getSeedAccountForWallet(currentAccount);
+    if (!seedAccount || seedAccount.type !== 'mnemonic') {
+      return null;
+    }
+    return seedAccount.mnemonic || null;
+  }
 
   /**
    * Check if a vault exists in storage (without decrypting)
@@ -291,8 +452,6 @@ export class Vault {
   ): Promise<{ ok: boolean; address: string; mnemonic: string } | { error: string }> {
     // Generate or validate mnemonic
     const words = mnemonic ? mnemonic.trim() : generateMnemonic();
-
-    // Validate imported mnemonic
     if (mnemonic && !validateMnemonic(words)) {
       return { error: ERROR_CODES.INVALID_MNEMONIC };
     }
@@ -303,24 +462,32 @@ export class Vault {
 
     const masterAddress = await deriveAddressFromMaster(words);
 
-    const firstAccount: Account = {
+    const firstSeedAccount: SeedAccount = {
+      id: crypto.randomUUID(),
       name: 'Wallet 1',
-      address: masterAddress,
-      index: 0,
-      iconStyleId: firstPreset.iconStyleId,
-      iconColor: firstPreset.iconColor,
+      type: 'mnemonic',
+      mnemonic: words,
       createdAt: Date.now(),
-      derivation: 'master',
+      accounts: [
+        {
+          name: 'Wallet 1',
+          address: masterAddress,
+          index: 0,
+          iconStyleId: firstPreset.iconStyleId,
+          iconColor: firstPreset.iconColor,
+          createdAt: Date.now(),
+        },
+      ],
     };
 
     // Generate PBKDF2 salt and derive encryption key
     const kdfSalt = rand(16);
     const { key } = await deriveKeyPBKDF2(password, kdfSalt);
 
-    // Encrypt mnemonic + accounts (notes are in a separate blob)
-    const vaultPayload: VaultPayload = {
-      mnemonic: words,
-      accounts: [firstAccount],
+    // Encrypt both mnemonic AND accounts together
+    const vaultPayload: VaultPayloadV2 = {
+      version: 2,
+      seedAccounts: [firstSeedAccount],
     };
     const payloadJson = JSON.stringify(vaultPayload);
     const { iv, ct } = await encryptGCM(key, new TextEncoder().encode(payloadJson));
@@ -352,23 +519,28 @@ export class Vault {
     // Auto-lock timer will handle locking after inactivity
     this.mnemonic = words;
     this.encryptionKey = key; // Cache the key for account operations (rename, create, etc.)
+    this.seedAccounts = [firstSeedAccount];
     this.state = {
       locked: false,
-      accounts: [firstAccount],
+      accounts: [...firstSeedAccount.accounts],
       currentAccountIndex: 0,
       enc: encData,
     };
 
-    return { ok: true, address: firstAccount.address, mnemonic: words };
+    return { ok: true, address: firstSeedAccount.accounts[0].address, mnemonic: words };
   }
 
   /**
    * Unlocks the vault with the provided password
    */
-  async unlock(
-    password: string
-  ): Promise<
-    | { ok: boolean; address: string; accounts: Account[]; currentAccount: Account }
+  async unlock(password: string): Promise<
+    | {
+        ok: boolean;
+        address: string;
+        accounts: SubAccount[];
+        currentAccount: SubAccount;
+        activeSeedSourceId: string | null;
+      }
     | { error: string }
   > {
     const stored = await chrome.storage.local.get([
@@ -411,10 +583,9 @@ export class Vault {
         return { error: ERROR_CODES.BAD_PASSWORD };
       }
 
-      // Parse vault payload
-      const payload = JSON.parse(pt) as VaultPayload;
-      const mnemonic = payload.mnemonic;
-      const accounts = payload.accounts;
+      const decoded = this.decodeVaultPayload(pt);
+      this.seedAccounts = decoded.seedAccounts;
+      this.rebuildFlatAccounts();
 
       // Load account data from separate encrypted blob
       let utxoStore: UTXOStore = {};
@@ -442,11 +613,10 @@ export class Vault {
           walletTxStore = accountData.walletTxStore || {};
           cachedBalances = accountData.cachedBalances || {};
           loadedFromEncrypted = true;
-          console.log('[Vault] Loaded account data from encrypted blob');
         }
       }
 
-      // Migration: if no encrypted blob, check for legacy unencrypted stores
+      // Migration: fallback from legacy unencrypted stores
       if (!loadedFromEncrypted) {
         const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
         const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as
@@ -456,56 +626,54 @@ export class Vault {
           | Record<string, number>
           | undefined;
 
-        const hasLegacyData =
-          (legacyUtxoStore && Object.keys(legacyUtxoStore).length > 0) ||
-          (legacyWalletTxStore && Object.keys(legacyWalletTxStore).length > 0) ||
-          (legacyCachedBalances && Object.keys(legacyCachedBalances).length > 0);
-
-        if (hasLegacyData) {
-          console.log('[Vault] Migrating legacy unencrypted stores to encrypted blob');
-          utxoStore = legacyUtxoStore || {};
-          walletTxStore = legacyWalletTxStore || {};
-          cachedBalances = legacyCachedBalances || {};
-        }
+        utxoStore = legacyUtxoStore || {};
+        walletTxStore = legacyWalletTxStore || {};
+        cachedBalances = legacyCachedBalances || {};
       }
 
-      // Store decrypted data in memory
-      this.mnemonic = mnemonic;
       this.encryptionKey = key;
       this.utxoStore = utxoStore;
       this.walletTxStore = walletTxStore;
       this.cachedBalances = cachedBalances;
 
-      // Complete migration: encrypt and remove legacy stores
+      const resolvedIndex =
+        currentAccountIndex >= 0 && currentAccountIndex < this.state.accounts.length
+          ? currentAccountIndex
+          : 0;
+      this.state = {
+        locked: false,
+        accounts: this.state.accounts,
+        currentAccountIndex: resolvedIndex,
+        enc,
+      };
+      this.mnemonic = this.getSigningMnemonicForCurrentAccount();
+
+      const currentAccount = this.state.accounts[resolvedIndex] || this.state.accounts[0];
+
+      // Persist legacy payload migration + legacy store migration
+      if (decoded.migrated) {
+        await this.saveAccountsToVault();
+      }
       if (!loadedFromEncrypted) {
-        const hasData =
-          Object.keys(utxoStore).length > 0 ||
-          Object.keys(walletTxStore).length > 0 ||
-          Object.keys(cachedBalances).length > 0;
-        if (hasData) {
+        const hasLegacyData =
+          Object.keys(this.utxoStore).length > 0 ||
+          Object.keys(this.walletTxStore).length > 0 ||
+          Object.keys(this.cachedBalances).length > 0;
+        if (hasLegacyData) {
           await this.saveAccountData();
           await chrome.storage.local.remove([
             STORAGE_KEYS.UTXO_STORE,
             STORAGE_KEYS.WALLET_TX_STORE,
             STORAGE_KEYS.CACHED_BALANCES,
           ]);
-          console.log('[Vault] Migration complete');
         }
       }
-
-      this.state = {
-        locked: false,
-        accounts,
-        currentAccountIndex,
-        enc,
-      };
-
-      const currentAccount = accounts[currentAccountIndex] || accounts[0];
       return {
         ok: true,
         address: currentAccount?.address || '',
-        accounts,
+        accounts: this.state.accounts,
         currentAccount,
+        activeSeedSourceId: this.getSeedAccountForWallet(currentAccount)?.id || null,
       };
     } catch (err) {
       return { error: ERROR_CODES.BAD_PASSWORD };
@@ -515,10 +683,14 @@ export class Vault {
   /**
    * Unlocks the vault using a cached encryption key (used for session restore)
    */
-  async unlockWithKey(
-    key: CryptoKey
-  ): Promise<
-    | { ok: boolean; address: string; accounts: Account[]; currentAccount: Account }
+  async unlockWithKey(key: CryptoKey): Promise<
+    | {
+        ok: boolean;
+        address: string;
+        accounts: SubAccount[];
+        currentAccount: SubAccount;
+        activeSeedSourceId: string | null;
+      }
     | { error: string }
   > {
     const stored = await chrome.storage.local.get([
@@ -547,14 +719,9 @@ export class Vault {
       return { error: ERROR_CODES.BAD_PASSWORD };
     }
 
-    const payload = JSON.parse(pt) as VaultPayload;
-    const accounts = payload.accounts;
-
-    // Load account data (same as password unlock) so transaction history displays
-    let utxoStore: UTXOStore = {};
-    let walletTxStore: WalletTxStore = {};
-    let cachedBalances: Record<string, number> = {};
-    let loadedFromEncrypted = false;
+    const decoded = this.decodeVaultPayload(pt);
+    this.seedAccounts = decoded.seedAccounts;
+    this.rebuildFlatAccounts();
 
     if (encAccountData) {
       const accountDataPt = await decryptGCM(
@@ -562,37 +729,47 @@ export class Vault {
         new Uint8Array(encAccountData.cipher.iv),
         new Uint8Array(encAccountData.cipher.ct)
       ).catch(() => null);
-
       if (accountDataPt) {
         const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
-        utxoStore = accountData.utxoStore || {};
-        walletTxStore = accountData.walletTxStore || {};
-        cachedBalances = accountData.cachedBalances || {};
-        loadedFromEncrypted = true;
+        this.utxoStore = accountData.utxoStore || {};
+        this.walletTxStore = accountData.walletTxStore || {};
+        this.cachedBalances = accountData.cachedBalances || {};
+      } else {
+        this.utxoStore = {};
+        this.walletTxStore = {};
+        this.cachedBalances = {};
       }
+    } else {
+      this.utxoStore = {};
+      this.walletTxStore = {};
+      this.cachedBalances = {};
     }
 
-    // Key is only cached after unlock() runs, so migration has always happened.
-    // No legacy fallback needed.
-    this.mnemonic = payload.mnemonic;
     this.encryptionKey = key;
-    this.utxoStore = utxoStore;
-    this.walletTxStore = walletTxStore;
-    this.cachedBalances = cachedBalances;
+
+    const resolvedIndex =
+      currentAccountIndex >= 0 && currentAccountIndex < this.state.accounts.length
+        ? currentAccountIndex
+        : 0;
 
     this.state = {
       locked: false,
-      accounts,
-      currentAccountIndex,
+      accounts: this.state.accounts,
+      currentAccountIndex: resolvedIndex,
       enc,
     };
+    this.mnemonic = this.getSigningMnemonicForCurrentAccount();
 
-    const currentAccount = accounts[currentAccountIndex] || accounts[0];
+    const currentAccount = this.state.accounts[resolvedIndex] || this.state.accounts[0];
+    if (decoded.migrated) {
+      await this.saveAccountsToVault();
+    }
     return {
       ok: true,
       address: currentAccount?.address || '',
-      accounts,
+      accounts: this.state.accounts,
       currentAccount,
+      activeSeedSourceId: this.getSeedAccountForWallet(currentAccount)?.id || null,
     };
   }
 
@@ -609,14 +786,14 @@ export class Vault {
    * Requires wallet to be unlocked (encryptionKey must be in memory)
    */
   private async saveAccountsToVault(): Promise<void> {
-    if (!this.mnemonic || !this.state.enc || !this.encryptionKey) {
+    if (!this.state.enc || !this.encryptionKey) {
       throw new Error('Cannot save accounts: vault is locked or not initialized');
     }
 
-    // Re-encrypt mnemonic + accounts together with the key stored in memory
-    const vaultPayload: VaultPayload = {
-      mnemonic: this.mnemonic,
-      accounts: this.state.accounts,
+    // Re-encrypt seed accounts + child accounts together
+    const vaultPayload: VaultPayloadV2 = {
+      version: 2,
+      seedAccounts: this.seedAccounts,
     };
     const payloadJson = JSON.stringify(vaultPayload);
     const { iv, ct } = await encryptGCM(this.encryptionKey, new TextEncoder().encode(payloadJson));
@@ -649,6 +826,7 @@ export class Vault {
     // Clear sensitive data from memory for security
     this.state.accounts = []; // Clear accounts to enforce "no addresses while locked"
     this.mnemonic = null;
+    this.seedAccounts = [];
     this.encryptionKey = null;
     this.utxoStore = {};
     this.walletTxStore = {};
@@ -671,6 +849,7 @@ export class Vault {
       enc: null,
     };
     this.mnemonic = null;
+    this.seedAccounts = [];
     this.encryptionKey = null; // Clear encryption key as well
     this.utxoStore = {};
 
@@ -685,9 +864,11 @@ export class Vault {
   }
 
   /**
-   * Gets the current account
+   * Gets the currently selected sub-account from the flattened account list.
    */
-  getCurrentAccount(): Account | null {
+  getCurrentAccount(): SubAccount | null {
+    // currentAccountIndex refers to the flattened `state.accounts` array position,
+    // not the per-seed derivation index on SubAccount.index.
     const account = this.state.accounts[this.state.currentAccountIndex];
     return account || this.state.accounts[0] || null;
   }
@@ -701,10 +882,149 @@ export class Vault {
   }
 
   /**
-   * Gets all accounts
+   * Returns the flattened sub-account list across all seed sources.
    */
-  getAccounts(): Account[] {
+  getAccounts(): SubAccount[] {
     return this.state.accounts;
+  }
+
+  /**
+   * Gets the seed source ID for the currently selected account
+   */
+  getActiveSeedSourceId(): string | null {
+    const currentAccount = this.getCurrentAccount();
+    return this.getSeedAccountForWallet(currentAccount)?.id || null;
+  }
+
+  /**
+   * Gets top-level seed/external account sources (mnemonic removed)
+   */
+  getSeedSources(): Array<Omit<SeedAccount, 'mnemonic'>> {
+    return this.seedAccounts.map(({ mnemonic: _mnemonic, ...seed }) => seed);
+  }
+
+  /**
+   * Creates a new mnemonic-based top-level account source (master derivation account)
+   */
+  async createMnemonicSeedSource(
+    mnemonic?: string,
+    name?: string
+  ): Promise<
+    | { seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount; mnemonic: string }
+    | { error: string }
+  > {
+    if (this.state.locked || !this.state.enc || !this.encryptionKey) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const words = mnemonic ? mnemonic.trim() : generateMnemonic();
+
+    const seedOrdinal = this.seedAccounts.length + 1;
+    const seedId = crypto.randomUUID();
+    const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
+    const masterName = name?.trim() || this.getDefaultMasterWalletName(seedOrdinal);
+    const masterAddress = await deriveAddressFromMaster(words);
+
+    const masterAccount: SubAccount = {
+      name: masterName,
+      address: masterAddress,
+      index: 0,
+      iconStyleId,
+      iconColor,
+      createdAt: Date.now(),
+    };
+
+    const seedAccount: SeedAccount = {
+      id: seedId,
+      name: masterName,
+      type: 'mnemonic',
+      mnemonic: words,
+      createdAt: Date.now(),
+      accounts: [masterAccount],
+    };
+
+    this.seedAccounts.push(seedAccount);
+    this.rebuildFlatAccounts();
+
+    const newFlatIndex = this.state.accounts.findIndex(acc => acc.address === masterAddress);
+    this.state.currentAccountIndex =
+      newFlatIndex >= 0 ? newFlatIndex : this.state.accounts.length - 1;
+    this.mnemonic = words;
+
+    await Promise.all([
+      this.saveAccountsToVault(),
+      chrome.storage.local.set({
+        [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: this.state.currentAccountIndex,
+      }),
+    ]);
+
+    const { mnemonic: _mnemonic, ...publicSeed } = seedAccount;
+    return { seedSource: publicSeed, account: masterAccount, mnemonic: words };
+  }
+
+  /**
+   * Creates an external top-level account source (e.g. Ledger)
+   */
+  async createExternalSeedSource(params: {
+    address: string;
+    name?: string;
+    provider?: 'ledger' | 'unknown';
+    sourceRef?: string;
+    accountRef?: string;
+  }): Promise<
+    { seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount } | { error: string }
+  > {
+    if (this.state.locked || !this.state.enc || !this.encryptionKey) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+    if (!params.address || typeof params.address !== 'string') {
+      return { error: ERROR_CODES.INVALID_PARAMS };
+    }
+
+    const seedOrdinal = this.seedAccounts.length + 1;
+    const seedId = crypto.randomUUID();
+    const provider = params.provider || 'unknown';
+    const masterName = params.name?.trim() || this.getDefaultMasterWalletName(seedOrdinal);
+    const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
+
+    const externalMasterAccount: SubAccount = {
+      name: masterName,
+      address: params.address,
+      index: 0,
+      iconStyleId,
+      iconColor,
+      createdAt: Date.now(),
+    };
+
+    const seedAccount: SeedAccount = {
+      id: seedId,
+      name: masterName,
+      type: 'external',
+      createdAt: Date.now(),
+      accounts: [externalMasterAccount],
+      external: {
+        provider,
+        sourceRef: params.sourceRef,
+      },
+    };
+
+    this.seedAccounts.push(seedAccount);
+    this.rebuildFlatAccounts();
+
+    const newFlatIndex = this.state.accounts.findIndex(acc => acc.address === params.address);
+    this.state.currentAccountIndex =
+      newFlatIndex >= 0 ? newFlatIndex : this.state.accounts.length - 1;
+    this.mnemonic = null;
+
+    await Promise.all([
+      this.saveAccountsToVault(),
+      chrome.storage.local.set({
+        [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: this.state.currentAccountIndex,
+      }),
+    ]);
+
+    const { mnemonic: _mnemonic, ...publicSeed } = seedAccount;
+    return { seedSource: publicSeed, account: externalMasterAccount };
   }
 
   /**
@@ -1401,89 +1721,91 @@ export class Vault {
   }
 
   /**
-   * Creates a new account by deriving the next index
+   * Creates a child sub-account under the specified seed source.
    */
-  async createAccount(
+  async createChildAccount(
+    seedAccountId?: string,
     name?: string
-  ): Promise<{ ok: boolean; account: Account } | { error: string }> {
+  ): Promise<{ account: SubAccount } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (!this.mnemonic) {
+    const currentAccount = this.getCurrentAccount();
+    const seedAccount = seedAccountId
+      ? this.seedAccounts.find(seed => seed.id === seedAccountId) || null
+      : this.getSeedAccountForWallet(currentAccount);
+    if (!seedAccount || seedAccount.type !== 'mnemonic' || !seedAccount.mnemonic) {
       return { error: ERROR_CODES.NO_VAULT };
     }
 
-    const nextIndex = this.state.accounts.length;
-    const accountName = name || `Wallet ${nextIndex + 1}`;
+    const nextIndex = seedAccount.accounts.length;
+    const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
+    const nextChildOrdinal =
+      seedAccount.accounts.filter(acc => !this.isMasterAccount(acc)).length + 1;
+    const accountName = name || this.getDefaultChildWalletName(seedOrdinal, nextChildOrdinal);
 
-    // Use preset style if available, otherwise random
-    let iconStyleId: number;
-    let iconColor: string;
+    const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
 
-    if (nextIndex < PRESET_WALLET_STYLES.length) {
-      // Use predetermined style for first 21 wallets
-      const preset = PRESET_WALLET_STYLES[nextIndex];
-      iconStyleId = preset.iconStyleId;
-      iconColor = preset.iconColor;
-    } else {
-      // After presets exhausted, use random selection
-      iconColor = ACCOUNT_COLORS[Math.floor(Math.random() * ACCOUNT_COLORS.length)];
-      iconStyleId = Math.floor(Math.random() * 15) + 1;
-    }
-
-    const newAccount: Account = {
+    const newAccount: SubAccount = {
       name: accountName,
-      address: await deriveAddress(this.mnemonic, nextIndex),
+      address: await deriveAddress(seedAccount.mnemonic, nextIndex),
       index: nextIndex,
       iconStyleId,
       iconColor,
       createdAt: Date.now(),
-      derivation: 'slip10', // Additional accounts use child derivation
     };
 
-    const updatedAccounts = [...this.state.accounts, newAccount];
-    this.state.accounts = updatedAccounts;
+    seedAccount.accounts = [...seedAccount.accounts, newAccount];
+    this.rebuildFlatAccounts();
 
-    // Save accounts to encrypted vault
     await this.saveAccountsToVault();
 
-    return { ok: true, account: newAccount };
+    return { account: newAccount };
   }
 
   /**
-   * Switches to a different account
+   * Switch current account by address
    */
   async switchAccount(
-    index: number
-  ): Promise<{ ok: boolean; account: Account } | { error: string }> {
+    address: string
+  ): Promise<
+    { ok: boolean; account: SubAccount; activeSeedSourceId: string | null } | { error: string }
+  > {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
     this.state.currentAccountIndex = index;
+    this.mnemonic = this.getSigningMnemonicForCurrentAccount();
 
     await chrome.storage.local.set({
       [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: index,
     });
 
-    return { ok: true, account: this.state.accounts[index] };
+    return {
+      ok: true,
+      account: this.state.accounts[index],
+      activeSeedSourceId: this.getActiveSeedSourceId(),
+    };
   }
 
   /**
    * Renames an account
    */
-  async renameAccount(index: number, name: string): Promise<{ ok: boolean } | { error: string }> {
+  async renameAccount(address: string, name: string): Promise<{ ok: boolean } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
     this.state.accounts[index].name = name;
@@ -1498,7 +1820,7 @@ export class Vault {
    * Updates account styling (icon and color)
    */
   async updateAccountStyling(
-    index: number,
+    address: string,
     iconStyleId: number,
     iconColor: string
   ): Promise<{ ok: boolean } | { error: string }> {
@@ -1506,8 +1828,9 @@ export class Vault {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
     this.state.accounts[index].iconStyleId = iconStyleId;
@@ -1525,14 +1848,15 @@ export class Vault {
    * - Prevents hiding if it's the last visible account
    */
   async hideAccount(
-    index: number
-  ): Promise<{ ok: boolean; switchedTo?: number } | { error: string }> {
+    address: string
+  ): Promise<{ ok: boolean; switchedTo?: string } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
     // Check if this is the last visible account
@@ -1544,14 +1868,15 @@ export class Vault {
     // Mark account as hidden
     this.state.accounts[index].hidden = true;
 
-    let switchedTo: number | undefined;
+    let switchedTo: string | undefined;
 
     // If hiding the current account, switch to first visible account
     if (this.state.currentAccountIndex === index) {
       const firstVisibleIndex = this.state.accounts.findIndex(acc => !acc.hidden);
       if (firstVisibleIndex !== -1) {
         this.state.currentAccountIndex = firstVisibleIndex;
-        switchedTo = firstVisibleIndex;
+        this.mnemonic = this.getSigningMnemonicForCurrentAccount();
+        switchedTo = this.state.accounts[firstVisibleIndex].address;
         await chrome.storage.local.set({
           [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: firstVisibleIndex,
         });
@@ -1598,9 +1923,20 @@ export class Vault {
         return { error: ERROR_CODES.BAD_PASSWORD };
       }
 
-      // Parse the vault payload and return only the mnemonic
-      const payload = JSON.parse(pt) as VaultPayload;
-      return { ok: true, mnemonic: payload.mnemonic };
+      // Parse payload and return the mnemonic for the currently selected seed source
+      const decoded = this.decodeVaultPayload(pt);
+      const currentAccount = this.getCurrentAccount();
+      const selectedSeed = currentAccount
+        ? decoded.seedAccounts.find(seed =>
+            seed.accounts.some(a => a.address === currentAccount.address)
+          )
+        : decoded.seedAccounts.find(seed => seed.type === 'mnemonic');
+
+      if (!selectedSeed || selectedSeed.type !== 'mnemonic' || !selectedSeed.mnemonic) {
+        return { error: 'Selected account has no mnemonic (external account source).' };
+      }
+
+      return { ok: true, mnemonic: selectedSeed.mnemonic };
     } catch (err) {
       return { error: ERROR_CODES.BAD_PASSWORD };
     }
@@ -1612,7 +1948,7 @@ export class Vault {
    * @returns Object containing signature JSON and public key (hex-encoded)
    */
   async signMessage(params: unknown): Promise<{ signature: string; publicKeyHex: string }> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
@@ -1622,18 +1958,22 @@ export class Vault {
     const msg = (Array.isArray(params) ? params[0] : params) ?? '';
     const msgString = String(msg);
 
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      throw new Error('Current account is external and cannot sign locally');
+    }
+
     // Derive the account's private key based on derivation method
-    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
     const currentAccount = this.getCurrentAccount();
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-    const accountKey =
-      currentAccount?.derivation === 'master'
-        ? masterKey // Use master key directly for master-derived accounts
-        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
+    const accountKey = this.isMasterAccount(currentAccount)
+      ? masterKey // Use master key directly for master-derived accounts
+      : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
     if (!accountKey.privateKey || !accountKey.publicKey) {
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -1643,7 +1983,7 @@ export class Vault {
     // Sign: WASM expects 32-byte private key; copy to avoid view-into-WASM-memory issues
     const pk = accountKey.privateKey;
     if (pk.byteLength !== 32) {
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -1691,7 +2031,7 @@ export class Vault {
       .join('');
 
     // Signature is plain data in new API; no explicit free needed.
-    if (currentAccount?.derivation !== 'master') {
+    if (!this.isMasterAccount(currentAccount)) {
       accountKey.free();
     }
     masterKey.free();
@@ -1713,7 +2053,7 @@ export class Vault {
    * @returns Transaction ID as digest string
    */
   async signTransaction(to: string, amount: Nicks, fee?: Nicks): Promise<string> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
@@ -1722,20 +2062,24 @@ export class Vault {
       throw new Error('No account selected');
     }
 
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      throw new Error('Current account is external and cannot sign locally');
+    }
+
     // Initialize WASM modules
     await initWasmModules();
 
     // Derive the account's private and public keys based on derivation method
-    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-    const accountKey =
-      currentAccount.derivation === 'master'
-        ? masterKey // Use master key directly for master-derived accounts
-        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
+    const accountKey = this.isMasterAccount(currentAccount)
+      ? masterKey // Use master key directly for master-derived accounts
+      : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
     if (!accountKey.privateKey || !accountKey.publicKey) {
-      if (currentAccount.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -1781,7 +2125,7 @@ export class Vault {
     } finally {
       privateKey.free();
       // Clean up WASM memory (don't double-free master key)
-      if (currentAccount.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -1800,7 +2144,7 @@ export class Vault {
     to: string,
     amount: Nicks
   ): Promise<{ fee: number } | { error: string }> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
@@ -1808,19 +2152,24 @@ export class Vault {
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
     }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
+    }
 
     try {
       // Initialize WASM modules (same as sign/send)
       await initWasmModules();
 
       // Derive keys
-      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
       const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
-      const accountKey =
-        currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+      const accountKey = this.isMasterAccount(currentAccount)
+        ? masterKey
+        : masterKey.deriveChild(childIndex);
 
       if (!accountKey.privateKey || !accountKey.publicKey) {
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -1867,7 +2216,7 @@ export class Vault {
         return { fee: constructedTx.feeUsed };
       } finally {
         privateKey.free();
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -1898,7 +2247,7 @@ export class Vault {
     | { maxAmount: number; fee: number; totalAvailable: number; utxoCount: number }
     | { error: string }
   > {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
@@ -1906,19 +2255,24 @@ export class Vault {
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
     }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
+    }
 
     try {
       // Initialize WASM modules
       await initWasmModules();
 
       // Derive keys
-      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
       const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
-      const accountKey =
-        currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+      const accountKey = this.isMasterAccount(currentAccount)
+        ? masterKey
+        : masterKey.deriveChild(childIndex);
 
       if (!accountKey.privateKey || !accountKey.publicKey) {
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -1982,7 +2336,7 @@ export class Vault {
         };
       } finally {
         privateKey.free();
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2010,7 +2364,7 @@ export class Vault {
     amount: Nicks,
     fee?: Nicks
   ): Promise<{ txId: string; broadcasted: boolean; protobufTx?: any } | { error: string }> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
@@ -2018,22 +2372,25 @@ export class Vault {
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
     }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
+    }
 
     try {
       // Initialize WASM modules
       await initWasmModules();
 
       // Derive the account's private and public keys based on derivation method
-      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
       // Use the account's own index, not currentAccountIndex (accounts may be reordered)
       const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-      const accountKey =
-        currentAccount.derivation === 'master'
-          ? masterKey // Use master key directly for master-derived accounts
-          : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
+      const accountKey = this.isMasterAccount(currentAccount)
+        ? masterKey // Use master key directly for master-derived accounts
+        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
       if (!accountKey.privateKey || !accountKey.publicKey) {
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2087,7 +2444,7 @@ export class Vault {
       } finally {
         privateKey.free();
         // Clean up WASM memory
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2123,13 +2480,17 @@ export class Vault {
   ): Promise<
     { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
   > {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
     const currentAccount = this.getCurrentAccount();
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
     }
 
     // Use account lock to prevent race conditions
@@ -2143,13 +2504,14 @@ export class Vault {
         await initWasmModules();
 
         // Derive keys
-        const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic!, '');
+        const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
         const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
-        const accountKey =
-          currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+        const accountKey = this.isMasterAccount(currentAccount)
+          ? masterKey
+          : masterKey.deriveChild(childIndex);
 
         if (!accountKey.privateKey || !accountKey.publicKey) {
-          if (currentAccount.derivation !== 'master') {
+          if (!this.isMasterAccount(currentAccount)) {
             accountKey.free();
           }
           masterKey.free();
@@ -2261,7 +2623,7 @@ export class Vault {
         } finally {
           privateKey.free();
           // Clean up WASM memory
-          if (currentAccount.derivation !== 'master') {
+          if (!this.isMasterAccount(currentAccount)) {
             accountKey.free();
           }
           masterKey.free();
@@ -2300,7 +2662,7 @@ export class Vault {
     notes: wasm.Note[];
     spendConditions: wasm.SpendCondition[];
   }): Promise<wasm.NockchainTx> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
@@ -2312,15 +2674,21 @@ export class Vault {
     notes.forEach(assertNativeNote);
     spendConditions.forEach(assertNativeSpendCondition);
 
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      throw new Error('Current account is external and cannot sign locally');
+    }
+
     // Derive the account's private key
-    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
     const currentAccount = this.getCurrentAccount();
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-    const accountKey =
-      currentAccount?.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+    const accountKey = this.isMasterAccount(currentAccount)
+      ? masterKey
+      : masterKey.deriveChild(childIndex);
 
     if (!accountKey.privateKey) {
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -2355,7 +2723,7 @@ export class Vault {
     } finally {
       privateKey.free();
 
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -2363,7 +2731,7 @@ export class Vault {
   }
 
   async computeOutputs(rawTx: wasm.RawTx): Promise<any[]> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 

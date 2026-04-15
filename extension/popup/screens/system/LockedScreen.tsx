@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { INTERNAL_METHODS, ERROR_CODES } from '../../../shared/constants';
+import type { SubAccount } from '../../../shared/types';
 import { useStore } from '../../store';
 import { send } from '../../utils/messaging';
 import { Alert } from '../../components/Alert';
@@ -45,8 +46,9 @@ export function LockedScreen() {
     const result = await send<{
       ok?: boolean;
       address?: string;
-      accounts?: Array<{ name: string; address: string; index: number }>;
-      currentAccount?: { name: string; address: string; index: number };
+      accounts?: SubAccount[];
+      currentAccount?: SubAccount;
+      activeSeedSourceId?: string | null;
       error?: string;
     }>(INTERNAL_METHODS.UNLOCK, [password]);
 
@@ -74,6 +76,7 @@ export function LockedScreen() {
         address: result.address || null,
         accounts,
         currentAccount,
+        activeSeedSourceId: result.activeSeedSourceId || null,
         balance: cachedBalance,
         availableBalance: cachedBalance,
         accountBalances: cachedBalances,

@@ -31,14 +31,23 @@ export const INTERNAL_METHODS = {
   /** Set auto-lock timeout in minutes */
   SET_AUTO_LOCK: 'wallet:setAutoLock',
 
-  /** Create a new account */
-  CREATE_ACCOUNT: 'wallet:createAccount',
+  /** Create a child sub-account under a specific seed source */
+  CREATE_CHILD_ACCOUNT: 'wallet:createChildAccount',
 
-  /** Switch to a different account */
+  /** Create/import mnemonic-based seed source */
+  CREATE_MNEMONIC_SEED_SOURCE: 'wallet:createMnemonicSeedSource',
+
+  /** Create external seed source (e.g. Ledger) */
+  CREATE_EXTERNAL_SEED_SOURCE: 'wallet:createExternalSeedSource',
+
+  /** Switch to a different account (by address) */
   SWITCH_ACCOUNT: 'wallet:switchAccount',
 
-  /** Get all accounts */
+  /** Get flattened account list */
   GET_ACCOUNTS: 'wallet:getAccounts',
+
+  /** Get all top-level seed/external account sources */
+  GET_SEED_SOURCES: 'wallet:getSeedSources',
 
   /** Rename an account */
   RENAME_ACCOUNT: 'wallet:renameAccount',
@@ -318,7 +327,9 @@ export const USER_ACTIVITY_METHODS = new Set([
   // Internal methods (user actions in the UI)
   INTERNAL_METHODS.UNLOCK,
   INTERNAL_METHODS.SWITCH_ACCOUNT,
-  INTERNAL_METHODS.CREATE_ACCOUNT,
+  INTERNAL_METHODS.CREATE_CHILD_ACCOUNT,
+  INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE,
+  INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE,
   INTERNAL_METHODS.RENAME_ACCOUNT,
   INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING,
   INTERNAL_METHODS.HIDE_ACCOUNT,
