@@ -14,6 +14,7 @@ import {
 } from '@nockbox/iris-sdk';
 import type { Digest } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
+import { NOCK_TO_NICKS } from './constants';
 import { createBrowserClient } from './rpc-client-browser';
 
 export type { V0BalanceResult };
@@ -29,7 +30,6 @@ export type V0MigrationOptions = {
 
 const CONFIRM_POLL_INTERVAL_MS = 3000;
 const CONFIRM_TIMEOUT_MS = 90_000;
-const NOCK_TO_NICKS = 65536;
 
 async function migrationTxEngineSettings(grpcEndpoint: string): Promise<wasm.TxEngineSettings> {
   const client = createBrowserClient(grpcEndpoint);
