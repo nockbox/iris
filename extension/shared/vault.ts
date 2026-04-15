@@ -41,13 +41,13 @@ import {
   matchChangeOutputs,
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
-import type { Nicks } from '@nockbox/iris-wasm';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
 import {
   assertNativeRawTx,
   assertNativeNote,
   assertNativeSpendCondition,
 } from './sign-raw-tx-compat';
-import * as guard from '@nockbox/iris-wasm/iris_wasm.guard';
+import { guard } from '@nockbox/iris-sdk/wasm';
 import { getTxEngineSettingsForHeight } from './rpc-config';
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {

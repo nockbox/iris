@@ -4,7 +4,7 @@
  */
 
 import wasm from './sdk-wasm.js';
-import type { Nicks } from '@nockbox/iris-wasm';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
 import { nicksToBigInt } from './currency.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';

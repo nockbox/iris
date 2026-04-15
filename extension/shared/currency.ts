@@ -8,7 +8,7 @@
  * 1 NICK = 0.0000152587890625 NOCK
  */
 
-import type { Nicks } from '@nockbox/iris-wasm';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
 import { NOCK_TO_NICKS } from './constants';
 
 /**

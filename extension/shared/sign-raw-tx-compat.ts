@@ -2,7 +2,7 @@
  * Native helpers for signTx at the RPC boundary.
  */
 
-import * as guard from '@nockbox/iris-wasm/iris_wasm.guard';
+import { guard } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
 
 /** Convert native note to protobuf for popup display. */
