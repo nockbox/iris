@@ -47,6 +47,7 @@ import {
   assertNativeNote,
   assertNativeSpendCondition,
 } from './sign-raw-tx-compat';
+import * as guard from '@nockbox/iris-wasm/iris_wasm.guard';
 import { getTxEngineSettingsForHeight } from './rpc-config';
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
@@ -2338,7 +2339,7 @@ export class Vault {
         : await rpcClient.getCurrentBlockHeight();
 
       const settings = await txEngineSettings(blockHeight);
-      if (!('spends' in rawTx)) {
+      if (!guard.isRawTxV1(rawTx)) {
         throw new Error('Only v1 raw transactions are supported');
       }
       const builder = wasm.TxBuilder.fromNockchainTx(wasm.rawTxV1ToNockchainTx(rawTx), settings);
