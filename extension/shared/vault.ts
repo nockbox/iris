@@ -2337,6 +2337,7 @@ export class Vault {
 
     // Log selected inputs before spend-condition discovery so failures still have context.
     console.log('[Bridge Swap] Selected input notes (pre-discovery):', {
+      senderPKH,
       destinationAddress,
       amountNicks,
       selectedNoteIds,
@@ -2345,6 +2346,9 @@ export class Vault {
         noteId: n.noteId,
         assets: n.assets,
         nameFirst: n.nameFirst,
+        protoNameFirst:
+          (n.protoNote as { note_version?: { V1?: { name?: { first?: string } } } } | undefined)
+            ?.note_version?.V1?.name?.first ?? null,
         originPage: n.originPage,
         hasProtoNote: Boolean(n.protoNote),
       })),
@@ -2382,17 +2386,51 @@ export class Vault {
     const blockHeight = this.getAccountBlockHeight(currentAccount.address);
     const txEngineSettings = await getTxEngineSettingsForHeight(blockHeight);
 
-    const bridgeResult = await buildBridgeTransaction(
-      {
-        inputNotes: wasmNotes,
-        spendConditions,
-        amountInNicks: amountNicks as WasmNicks,
+    const spendConditionSummaries = spendConditions.map((condition, idx) => {
+      let derivedNameFirst: string | null = null;
+      try {
+        derivedNameFirst = wasm.spendConditionFirstName(condition);
+      } catch {
+        // Keep null; we'll surface mismatch in debug object.
+      }
+      return {
+        noteId: sortedStoredNotes[idx]?.noteId,
+        expectedNameFirst: sortedStoredNotes[idx]?.nameFirst ?? null,
+        derivedNameFirst,
+        match:
+          derivedNameFirst !== null && derivedNameFirst === (sortedStoredNotes[idx]?.nameFirst ?? null),
+      };
+    });
+
+    console.log('[Bridge Swap] Resolved spend conditions:', {
+      senderPKH,
+      spendConditionSummaries,
+    });
+
+    let bridgeResult: Awaited<ReturnType<typeof buildBridgeTransaction>>;
+    try {
+      bridgeResult = await buildBridgeTransaction(
+        {
+          inputNotes: wasmNotes,
+          spendConditions,
+          amountInNicks: amountNicks as WasmNicks,
+          destinationAddress,
+          refundPkh: senderPKH,
+        },
+        BRIDGE_CONFIG,
+        { txEngineSettings }
+      );
+    } catch (error) {
+      console.error('[Bridge Swap] buildBridgeTransaction failed:', {
+        senderPKH,
         destinationAddress,
-        refundPkh: senderPKH,
-      },
-      BRIDGE_CONFIG,
-      { txEngineSettings }
-    );
+        amountNicks,
+        selectedNoteIds,
+        spendConditionSummaries,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
 
     console.log('[Bridge Swap] Build context:', {
       destinationAddress,
