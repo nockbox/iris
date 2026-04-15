@@ -20,7 +20,7 @@ export function V0MigrationReviewScreen() {
     Boolean(v0MigrationDraft.v0Mnemonic) &&
     !isSending;
 
-  async function handleSend(skipBroadcast = false) {
+  async function handleSend() {
     if (!canSend || !v0MigrationDraft.v0Mnemonic || !v0MigrationDraft.v0MigrationTxSignPayload) return;
 
     setSendError('');
@@ -29,7 +29,8 @@ export function V0MigrationReviewScreen() {
       const { txId, confirmed, skipped } = await signAndBroadcastV0Migration(
         v0MigrationDraft.v0Mnemonic,
         v0MigrationDraft.v0MigrationTxSignPayload,
-        { debug: true, skipBroadcast }
+        // TEMP: sign + log only, no broadcast — remove before shipping
+        { debug: true }
       );
       setV0MigrationDraft({
         v0Mnemonic: undefined,
@@ -133,22 +134,12 @@ export function V0MigrationReviewScreen() {
           </button>
           <button
             type="button"
-            onClick={() => handleSend(false)}
+            onClick={() => handleSend()}
             disabled={!canSend}
             className="flex-1 h-12 rounded-[14px] text-[16px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
           >
             {isSending ? 'Sending...' : 'Send'}
-          </button>
-          <button
-            type="button"
-            onClick={() => handleSend(true)}
-            disabled={!canSend}
-            title="Sign and log to console, but do not broadcast"
-            className="h-12 px-3 rounded-[14px] text-[12px] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-            style={{ backgroundColor: 'var(--color-surface-800)', color: 'var(--color-text-muted)' }}
-          >
-            Debug
           </button>
         </div>
       </div>

@@ -21,8 +21,6 @@ export type { V0BalanceResult };
 const CONFIRM_POLL_INTERVAL_MS = 3000;
 const CONFIRM_TIMEOUT_MS = 90_000;
 const NOCK_TO_NICKS = 65536;
-/** [TEMPORARY] Set true to log unsigned tx before signing. Remove when migration is validated. */
-const DEBUG_V0_MIGRATION = true;
 
 async function migrationTxEngineSettings(grpcEndpoint: string): Promise<wasm.TxEngineSettings> {
   const client = createBrowserClient(grpcEndpoint);
@@ -133,13 +131,12 @@ export async function buildV0MigrationTx(
  * Sign a v0 migration raw transaction with the given mnemonic (master key) and broadcast.
  * Polls until the transaction is confirmed on-chain or timeout.
  *
- * @param options.debug - Log unsigned transaction to console before signing
- * @param options.skipBroadcast - Sign but do not broadcast (for debugging)
+ * @param options.debug - Pass `true` to log txs and sign only (no broadcast). Omitted or false broadcasts.
  */
 export async function signAndBroadcastV0Migration(
   mnemonic: string,
   payload: V0MigrationTxSignPayload,
-  options?: { debug?: boolean; skipBroadcast?: boolean }
+  options?: { debug?: boolean }
 ): Promise<{ txId: string; confirmed: boolean; skipped?: boolean }> {
   await ensureWasmInitialized();
   const grpcEndpoint = await getEffectiveRpcEndpoint();
@@ -151,8 +148,7 @@ export async function signAndBroadcastV0Migration(
     throw new Error('Cannot derive signing key from mnemonic');
   }
 
-  const debug = options?.debug ?? DEBUG_V0_MIGRATION;
-  const skipBroadcast = options?.skipBroadcast ?? debug;
+  const debug = options?.debug === true;
 
   try {
     const { rawTx, notes, spendConditions, refundLock } = payload;
@@ -204,9 +200,6 @@ export async function signAndBroadcastV0Migration(
         txId: signedTx.id,
         spendsCount: signedRawTx?.spends?.length ?? 0,
       });
-    }
-
-    if (skipBroadcast) {
       console.log('[V0 Migration] Skipping broadcast (debug mode)');
       return { txId: signedTx.id, confirmed: false, skipped: true };
     }
