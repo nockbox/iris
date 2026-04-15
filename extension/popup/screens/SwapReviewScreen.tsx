@@ -11,6 +11,8 @@ import { BRIDGE_PROTOCOL_FEE_RATE } from '@nockbox/iris-sdk';
 import { INTERNAL_METHODS } from '../../shared/constants';
 import { nockToNick, nickToNock } from '../../shared/currency';
 
+const BRIDGE_DEBUG_NO_BROADCAST = true;
+
 function truncate(addr: string): string {
   if (!addr) return '';
   return `${addr.slice(0, 6)}...${addr.slice(-6)}`;
@@ -87,6 +89,7 @@ export function SwapReviewScreen() {
         prepared.destinationAddress,
         amountNicks,
         priceUsd > 0 ? priceUsd : undefined,
+        BRIDGE_DEBUG_NO_BROADCAST,
       ]);
 
       if (result?.error) {

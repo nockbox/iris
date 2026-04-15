@@ -1535,13 +1535,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION:
-        // params: [destinationAddress, amountNicks, priceUsdAtTime?] - EVM address (Base), amount in nicks
+        // params: [destinationAddress, amountNicks, priceUsdAtTime?, debugNoBroadcast?]
+        // EVM address (Base), amount in nicks
         if (vault.isLocked()) {
           sendResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
-        const [bridgeDest, bridgeAmountNicks, bridgePriceUsd] = payload.params || [];
+        const [bridgeDest, bridgeAmountNicks, bridgePriceUsd, bridgeDebugNoBroadcast] =
+          payload.params || [];
         if (!bridgeDest || !isEvmAddress(bridgeDest)) {
           sendResponse({ error: 'Invalid destination address. Expected EVM address (0x...).' });
           return;
@@ -1558,7 +1560,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           const bridgeResult = await vault.sendBridgeTransaction(
             bridgeDest,
             bridgeAmountNicksParsed,
-            typeof bridgePriceUsd === 'number' ? bridgePriceUsd : undefined
+            typeof bridgePriceUsd === 'number' ? bridgePriceUsd : undefined,
+            { debugNoBroadcast: bridgeDebugNoBroadcast === true }
           );
 
           if ('error' in bridgeResult) {
