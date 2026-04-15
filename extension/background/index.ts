@@ -12,12 +12,7 @@ import {
   assertNativeNote,
   assertNativeSpendCondition,
 } from '../shared/sign-raw-tx-compat';
-import {
-  isSignTxRequest,
-  mapRpcRequest,
-  mapRpcResponse,
-  RPC_API_VERSION,
-} from '@nockbox/iris-sdk';
+import { isSignTxRequest, mapRpcRequest, mapRpcResponse, RPC_API_VERSION } from '@nockbox/iris-sdk';
 import type { RpcRequest, RpcResponse } from '@nockbox/iris-sdk';
 import wasm from '../shared/sdk-wasm.js';
 import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
@@ -316,11 +311,7 @@ async function bridgeIncomingProviderPayload(
     };
   }
 
-  const mappedRequest = mapRpcRequest(
-    sourceRequest as RpcRequest,
-    sourceApi,
-    RPC_API_VERSION
-  );
+  const mappedRequest = mapRpcRequest(sourceRequest as RpcRequest, sourceApi, RPC_API_VERSION);
 
   return {
     ...(mappedRequest as IncomingRpcRequest),
@@ -329,7 +320,11 @@ async function bridgeIncomingProviderPayload(
 }
 
 function toRpcResponse(response: unknown): RpcResponse<unknown> {
-  if (response && typeof response === 'object' && 'error' in (response as Record<string, unknown>)) {
+  if (
+    response &&
+    typeof response === 'object' &&
+    'error' in (response as Record<string, unknown>)
+  ) {
     return response as RpcResponse<unknown>;
   }
   return { result: response };
@@ -344,11 +339,7 @@ async function bridgeOutgoingProviderResponse(
   }
 
   const sourceApi = resolveSourceApiVersion(sourceRequest.api);
-  const mappedRequest = mapRpcRequest(
-    sourceRequest as RpcRequest,
-    sourceApi,
-    RPC_API_VERSION
-  );
+  const mappedRequest = mapRpcRequest(sourceRequest as RpcRequest, sourceApi, RPC_API_VERSION);
   const bridged = mapRpcResponse(
     mappedRequest.method,
     toRpcResponse(response),
@@ -740,8 +731,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const signRequest: SignRequest = {
           id: newSignRequestId,
           origin: signMessageOrigin,
-          message:
-            typeof signMessageParams?.message === 'string' ? signMessageParams.message : '',
+          message: typeof signMessageParams?.message === 'string' ? signMessageParams.message : '',
           timestamp: Date.now(),
         };
 
@@ -838,7 +828,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           amountNicks = parseNicksParam(amount, 'amount');
           feeNicks = parseNicksParam(fee, 'fee', { allowZero: true });
         } catch (err) {
-          await sendBridgedResponse({ error: err instanceof Error ? err.message : 'Invalid params' });
+          await sendBridgedResponse({
+            error: err instanceof Error ? err.message : 'Invalid params',
+          });
           return;
         }
 
