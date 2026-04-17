@@ -8,7 +8,16 @@ import { signAndBroadcastV0Migration } from '../../shared/v0-migration';
 import { Alert } from '../components/Alert';
 
 export function V0MigrationReviewScreen() {
-  const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft, priceUsd } = useStore();
+  const {
+    navigate,
+    wallet,
+    v0MigrationDraft,
+    setLastTransaction,
+    resetV0MigrationDraft,
+    fetchBalance,
+    fetchWalletTransactions,
+    priceUsd,
+  } = useStore();
   const [sendError, setSendError] = useState('');
   const [isSending, setIsSending] = useState(false);
   const destinationWallet =
@@ -26,19 +35,25 @@ export function V0MigrationReviewScreen() {
     setSendError('');
     setIsSending(true);
     try {
-      const { txId, confirmed, skipped } = await signAndBroadcastV0Migration(
+      const { txId } = await signAndBroadcastV0Migration(
         v0MigrationDraft.v0Mnemonic,
         v0MigrationDraft.v0MigrationTxSignPayload,
         // TEMP: sign + log only, no broadcast — remove before shipping
         { debug: true }
       );
-      setV0MigrationDraft({
-        v0Mnemonic: undefined,
-        txId,
-        v0TxConfirmed: skipped ? false : confirmed,
-        v0TxSkipped: skipped,
+      const sentAmount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock ?? 0;
+      const feeNock = v0MigrationDraft.feeNock ?? 0;
+      setLastTransaction({
+        txid: txId,
+        amount: sentAmount,
+        fee: feeNock,
+        from: v0MigrationDraft.sourceAddress,
+        to: destinationWallet?.address,
       });
-      navigate('v0-migration-submitted');
+      resetV0MigrationDraft();
+      void fetchBalance();
+      void fetchWalletTransactions();
+      navigate('send-submitted');
     } catch (err) {
       const msg =
         err instanceof Error

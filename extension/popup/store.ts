@@ -37,8 +37,6 @@ export interface V0MigrationDraftState {
   keyfileName?: string;
   v0MigrationTxSignPayload?: V0MigrationTxSignPayload | null;
   txId?: string;
-  v0TxSkipped?: boolean;
-  v0TxConfirmed?: boolean;
 }
 
 /**
@@ -91,7 +89,6 @@ export type Screen =
   | 'v0-migration-setup'
   | 'v0-migration-funds'
   | 'v0-migration-review'
-  | 'v0-migration-submitted'
 
   // Approval screens
   | 'connect-approval'

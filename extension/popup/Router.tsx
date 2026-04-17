@@ -43,7 +43,6 @@ import { V0MigrationIntroScreen } from './screens/V0MigrationIntroScreen';
 import { V0MigrationSetupScreen } from './screens/V0MigrationSetupScreen';
 import { V0MigrationFundsScreen } from './screens/V0MigrationFundsScreen';
 import { V0MigrationReviewScreen } from './screens/V0MigrationReviewScreen';
-import { V0MigrationSubmittedScreen } from './screens/V0MigrationSubmittedScreen';
 
 export function Router() {
   const { currentScreen } = useStore();
@@ -111,8 +110,6 @@ export function Router() {
       return <V0MigrationFundsScreen />;
     case 'v0-migration-review':
       return <V0MigrationReviewScreen />;
-    case 'v0-migration-submitted':
-      return <V0MigrationSubmittedScreen />;
 
     // Transactions
     case 'send':
