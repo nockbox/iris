@@ -2481,7 +2481,10 @@ export class Vault {
         spendConditions: buildCtx.spendConditions,
       });
 
-      const validation = await validateBridgeTransaction(signedTx, BRIDGE_CONFIG, {
+      const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+      const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
+
+      const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
         txEngineSettings: buildCtx.txEngineSettings,
         debug: true,
       });
@@ -2494,9 +2497,6 @@ export class Vault {
         expectedDestination === reconstructedDestination ||
         `0x${expectedDestination.replace(/^0x/, '')}` ===
           `0x${reconstructedDestination.replace(/^0x/, '')}`;
-
-      const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
-      const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
       const rpcEndpoint = await getEffectiveRpcEndpoint();
       const rpcClient = createBrowserClient(rpcEndpoint);
       const blockHeight = await rpcClient.getCurrentBlockHeight();
@@ -2539,7 +2539,7 @@ export class Vault {
         };
       }
 
-      await rpcClient.sendTransaction(signedTx);
+      await rpcClient.sendTransaction(signedProtobufTx);
 
       walletTx.fee = Number(buildCtx.bridgeResult.fee);
       walletTx.txHash = buildCtx.bridgeResult.txId;
