@@ -2721,7 +2721,7 @@ export class Vault {
       if (!guard.isRawTxV1(rawTx)) {
         throw new Error('Only v1 raw transactions are supported');
       }
-      const builder = wasm.TxBuilder.fromNockchainTx(wasm.rawTxV1ToNockchainTx(rawTx), settings);
+      const builder = wasm.TxBuilder.fromRawTx(rawTx, settings);
 
       await builder.sign(privateKey);
 
