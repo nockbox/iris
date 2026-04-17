@@ -16,6 +16,7 @@ import {
   ACCOUNT_COLORS,
   PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
+  MAX_SUBWALLET_DISCOVERY_SCAN,
 } from './constants';
 import { SubAccount, SeedAccount } from './types';
 import {
@@ -2241,6 +2242,77 @@ export class Vault {
   }
 
   /**
+   * For one mnemonic seed: scan slip10 indices 1..MAX_SUBWALLET_DISCOVERY_SCAN for on-chain
+   * balance, then ensure an account exists for every index from 1 through the highest index that
+   * has funds (fills gaps).
+   */
+  async discoverAndEnsureSubwalletsForSeed(
+    seedAccountId: string
+  ): Promise<{ ok: true; added: number } | { error: string }> {
+    if (this.state.locked) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const seedAccount = this.seedAccounts.find(s => s.id === seedAccountId);
+    if (!seedAccount || seedAccount.type !== 'mnemonic' || !seedAccount.mnemonic) {
+      return { ok: true, added: 0 };
+    }
+
+    const masterForSeed = seedAccount.accounts.find(a => a.index === 0);
+    if (!masterForSeed || masterForSeed.hidden) {
+      return { ok: true, added: 0 };
+    }
+
+    await initWasmModules();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
+
+    const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
+    let lastWithBalance = 0;
+
+    for (let i = 1; i <= MAX_SUBWALLET_DISCOVERY_SCAN; i++) {
+      try {
+        const addr = await deriveAddress(seedAccount.mnemonic, i);
+        const balanceResult = await queryV1Balance(addr, rpcClient);
+        if (balanceResult.totalNock > 0) {
+          lastWithBalance = i;
+        }
+      } catch {
+        // Skip this index on RPC failure
+      }
+    }
+
+    const existingIndices = new Set(seedAccount.accounts.map(a => a.index));
+    let added = 0;
+
+    for (let j = 1; j <= lastWithBalance; j++) {
+      if (existingIndices.has(j)) continue;
+
+      const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
+      const address = await deriveAddress(seedAccount.mnemonic, j);
+      const newAccount: SubAccount = {
+        name: this.getDefaultChildWalletName(seedOrdinal, j),
+        address,
+        index: j,
+        iconStyleId,
+        iconColor,
+        createdAt: Date.now(),
+      };
+      seedAccount.accounts.push(newAccount);
+      existingIndices.add(j);
+      added++;
+    }
+
+    if (added > 0) {
+      seedAccount.accounts.sort((a, b) => a.index - b.index);
+      this.rebuildFlatAccounts();
+      await this.saveAccountsToVault();
+    }
+
+    return { ok: true, added };
+  }
+
+  /**
    * Creates a child sub-account under the specified seed source.
    */
   async createChildAccount(
@@ -2264,11 +2336,23 @@ export class Vault {
       return { error: ERROR_CODES.MASTER_WALLET_HIDDEN };
     }
 
-    const nextIndex = seedAccount.accounts.length;
+    const hiddenSubs = seedAccount.accounts
+      .filter(a => a.index > 0 && a.hidden)
+      .sort((a, b) => a.index - b.index);
+    if (hiddenSubs.length > 0) {
+      const toRestore = hiddenSubs[0];
+      toRestore.hidden = false;
+      this.rebuildFlatAccounts();
+      await this.saveAccountsToVault();
+      return { account: toRestore };
+    }
+
+    const indices = seedAccount.accounts.map(a => a.index);
+    const nextIndex = Math.max(0, ...indices) + 1;
+
     const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
-    const nextChildOrdinal =
-      seedAccount.accounts.filter(acc => !this.isMasterAccount(acc)).length + 1;
-    const accountName = name || this.getDefaultChildWalletName(seedOrdinal, nextChildOrdinal);
+    const trimmedName = name?.trim();
+    const accountName = trimmedName || this.getDefaultChildWalletName(seedOrdinal, nextIndex);
 
     const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
 
@@ -2281,7 +2365,8 @@ export class Vault {
       createdAt: Date.now(),
     };
 
-    seedAccount.accounts = [...seedAccount.accounts, newAccount];
+    seedAccount.accounts.push(newAccount);
+    seedAccount.accounts.sort((a, b) => a.index - b.index);
     this.rebuildFlatAccounts();
 
     await this.saveAccountsToVault();

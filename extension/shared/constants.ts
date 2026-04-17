@@ -314,6 +314,9 @@ export const CHAIN_ID = 'nockchain-1';
 /** Conversion rate: 1 NOCK = 65,536 nicks (2^16) */
 export const NOCK_TO_NICKS = 65_536;
 
+/** How many slip10 child indices (1..N) to scan on-chain when discovering funded sub-wallets. */
+export const MAX_SUBWALLET_DISCOVERY_SCAN = 10;
+
 /** Default transaction fee in nicks (3,407,872 nicks = 52 NOCK)
  * Used only for UI defaults in send form and approval screens.
  * Actual fees are ALWAYS auto-calculated by WASM based on transaction size.

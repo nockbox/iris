@@ -148,7 +148,7 @@ export function ImportScreen() {
       address?: string;
       mnemonic?: string;
       error?: string;
-    }>(INTERNAL_METHODS.SETUP, [password, mnemonic]);
+    }>(INTERNAL_METHODS.SETUP, [password, mnemonic, true]);
 
     if ('error' in result) {
       if (result.error === ERROR_CODES.INVALID_MNEMONIC) {
