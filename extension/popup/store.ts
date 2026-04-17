@@ -4,7 +4,7 @@
 
 import { create } from 'zustand';
 import { INTERNAL_METHODS, APPROVAL_CONSTANTS, NOCK_TO_NICKS } from '../shared/constants';
-import { hasIncompleteOnboarding } from '../shared/onboarding';
+import { clearOnboardingState, hasIncompleteOnboarding } from '../shared/onboarding';
 import {
   SubAccount,
   AccountBalance,
@@ -120,6 +120,9 @@ interface AppStore {
   // Temporary onboarding state (cleared after completion)
   onboardingMnemonic: string | null;
   setOnboardingMnemonic: (mnemonic: string | null) => void;
+  /** Password held only until main onboarding SETUP runs after verify (never persisted). */
+  onboardingPassword: string | null;
+  setOnboardingPassword: (password: string | null) => void;
 
   // Last transaction details (for showing confirmation screen)
   lastTransaction: TransactionDetails | null;
@@ -206,6 +209,7 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   onboardingMnemonic: null,
+  onboardingPassword: null,
   lastTransaction: null,
   pendingConnectRequest: null,
   pendingSignRequest: null,
@@ -326,6 +330,10 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ onboardingMnemonic: mnemonic });
   },
 
+  setOnboardingPassword: (password: string | null) => {
+    set({ onboardingPassword: password });
+  },
+
   // Set last transaction details
   setLastTransaction: (transaction: TransactionDetails | null) => {
     set({ lastTransaction: transaction });
@@ -425,7 +433,10 @@ export const useStore = create<AppStore>((set, get) => ({
         // Let the approval useEffect handle navigation
         initialScreen = walletState.locked ? 'locked' : 'home';
       } else if (!state.hasVault) {
-        // No vault exists - start onboarding
+        const incompleteOnboardingNoVault = await hasIncompleteOnboarding();
+        if (incompleteOnboardingNoVault) {
+          await clearOnboardingState();
+        }
         initialScreen = 'onboarding-start';
       } else {
         // Check if user has incomplete onboarding (created wallet but didn't complete backup)

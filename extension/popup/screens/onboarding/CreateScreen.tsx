@@ -3,10 +3,10 @@
  */
 
 import { useState } from 'react';
-import { INTERNAL_METHODS, UI_CONSTANTS } from '../../../shared/constants';
+import { UI_CONSTANTS } from '../../../shared/constants';
 import { setOnboardingInProgress } from '../../../shared/onboarding';
+import { generateMnemonic } from '../../../shared/wallet-crypto';
 import { useStore } from '../../store';
-import { send } from '../../utils/messaging';
 import { Alert } from '../../components/Alert';
 import lockIcon from '../../assets/lock-icon.svg';
 import { EyeIcon } from '../../components/icons/EyeIcon';
@@ -18,8 +18,12 @@ export function CreateScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
-  const { navigate, syncWallet, setOnboardingMnemonic, currentScreen, createMnemonicSeedSource } =
-    useStore();
+  const {
+    navigate,
+    setOnboardingMnemonic,
+    setOnboardingPassword,
+    currentScreen,
+  } = useStore();
   const isAddSeedFlow = currentScreen === 'wallet-add-create';
 
   async function handleCreate() {
@@ -27,12 +31,8 @@ export function CreateScreen() {
     setError('');
 
     if (isAddSeedFlow) {
-      const result = await createMnemonicSeedSource(undefined);
-      if ('error' in result) {
-        setError(`Error: ${result.error}`);
-        return;
-      }
-      setOnboardingMnemonic(result.mnemonic || null);
+      const mnemonic = generateMnemonic();
+      setOnboardingMnemonic(mnemonic);
       navigate('wallet-add-backup');
       return;
     }
@@ -53,44 +53,12 @@ export function CreateScreen() {
       return;
     }
 
-    // Create wallet
-    const result = await send<{
-      ok?: boolean;
-      address?: string;
-      mnemonic?: string;
-      error?: string;
-    }>(INTERNAL_METHODS.SETUP, [password]);
+    const mnemonic = generateMnemonic();
 
-    if (result?.error) {
-      setError(`Error: ${result.error}`);
-    } else {
-      // Mark onboarding as in-progress (backup not yet complete)
-      await setOnboardingInProgress();
-
-      // Store mnemonic temporarily for backup/verification flow
-      setOnboardingMnemonic(result.mnemonic || '');
-      // After setup, we have the first account (Wallet 1)
-      const firstAccount = {
-        name: 'Wallet 1',
-        address: result.address || '',
-        index: 0,
-      };
-      syncWallet({
-        locked: false,
-        address: result.address || null,
-        accounts: [firstAccount],
-        seedSources: [],
-        currentAccount: firstAccount,
-        activeSeedSourceId: null,
-        balance: 0, // New wallet starts with 0 balance
-        availableBalance: 0,
-        spendableBalance: 0,
-        accountBalances: {},
-        accountSpendableBalances: {},
-        accountBalanceDetails: {},
-      });
-      navigate('onboarding-backup');
-    }
+    await setOnboardingInProgress();
+    setOnboardingPassword(password);
+    setOnboardingMnemonic(mnemonic);
+    navigate('onboarding-backup');
   }
 
   return (
