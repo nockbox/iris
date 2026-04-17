@@ -821,13 +821,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case INTERNAL_METHODS.SETUP:
         // params: password, mnemonic (optional). If no mnemonic, generates one automatically.
         const setupResult = await vault.setup(payload.params?.[0], payload.params?.[1]);
-        sendResponse(setupResult);
 
         if ('ok' in setupResult && setupResult.ok) {
           manuallyLocked = false;
           await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
           await persistUnlockSession();
+          // Only scan for existing on-chain sub-wallets when importing a phrase (not brand-new generation).
+          const importedExistingPhrase = payload.params?.[2] === true;
+          if (importedExistingPhrase) {
+            const firstSeedId = vault.getSeedSources()[0]?.id;
+            if (firstSeedId) {
+              try {
+                await vault.discoverAndEnsureSubwalletsForSeed(firstSeedId);
+              } catch (discErr) {
+                console.warn('[Background] Sub-wallet discovery after setup failed:', discErr);
+              }
+            }
+          }
         }
+        sendResponse(setupResult);
         return;
 
       case INTERNAL_METHODS.GET_STATE:
@@ -916,9 +928,17 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           payload.params?.[0],
           payload.params?.[1]
         );
+        if (!('error' in createSeedResult) && payload.params?.[2] === true) {
+          try {
+            await vault.discoverAndEnsureSubwalletsForSeed(createSeedResult.seedSource.id);
+          } catch (discErr) {
+            console.warn('[Background] Sub-wallet discovery for imported seed failed:', discErr);
+          }
+        }
         sendResponse(createSeedResult);
         if (!('error' in createSeedResult)) {
-          await emitWalletEvent('accountsChanged', [createSeedResult.account.address]);
+          const cur = vault.getCurrentAccount();
+          await emitWalletEvent('accountsChanged', [cur?.address ?? createSeedResult.account.address]);
         }
         return;
 

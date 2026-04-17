@@ -107,7 +107,12 @@ interface AppStore {
   wallet: WalletState;
   syncWallet: (state: WalletState) => void;
   refreshWalletAccounts: () => Promise<void>;
-  createMnemonicSeedSource: (mnemonic?: string, name?: string) => Promise<any>;
+  /** @param importedExistingPhrase - if true, scan chain for funded sub-wallets (import path only). */
+  createMnemonicSeedSource: (
+    mnemonic?: string,
+    name?: string,
+    importedExistingPhrase?: boolean
+  ) => Promise<any>;
   createExternalSeedSource: (params: {
     address: string;
     name?: string;
@@ -292,8 +297,12 @@ export const useStore = create<AppStore>((set, get) => ({
     }
   },
 
-  createMnemonicSeedSource: async (mnemonic?: string, name?: string) => {
-    const result = await send<any>(INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE, [mnemonic, name]);
+  createMnemonicSeedSource: async (mnemonic?: string, name?: string, importedExistingPhrase?: boolean) => {
+    const result = await send<any>(INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE, [
+      mnemonic,
+      name,
+      importedExistingPhrase === true,
+    ]);
     if (!result?.error) {
       await get().refreshWalletAccounts();
       // Non-blocking refresh: avoid delaying backup flow UX.
