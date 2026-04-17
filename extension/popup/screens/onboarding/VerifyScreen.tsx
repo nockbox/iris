@@ -95,18 +95,22 @@ export function VerifyScreen() {
           setError(`Error: ${result.error}`);
           return;
         }
-        setOnboardingMnemonic(null);
-        await fetchBalance();
+        // Navigate BEFORE clearing onboardingMnemonic / awaiting balance sync.
+        // Otherwise VerifyScreen stays mounted while `fetchBalance` is in flight
+        // and its `if (!onboardingMnemonic)` guard renders the "No mnemonic
+        // found" error until navigation finally happens.
         navigate('home');
+        setOnboardingMnemonic(null);
+        void fetchBalance();
         return;
       }
 
       const vaultSnap = await send<{ hasVault?: boolean }>(INTERNAL_METHODS.GET_STATE);
       if (vaultSnap?.hasVault) {
+        navigate('onboarding-success');
         setOnboardingPassword(null);
         setOnboardingMnemonic(null);
-        await refreshWalletAccounts();
-        navigate('onboarding-success');
+        void refreshWalletAccounts();
         return;
       }
 
@@ -132,9 +136,6 @@ export function VerifyScreen() {
         return;
       }
 
-      setOnboardingPassword(null);
-      setOnboardingMnemonic(null);
-
       const firstAccount = {
         name: 'Wallet 1',
         address: result.address || '',
@@ -154,8 +155,10 @@ export function VerifyScreen() {
         accountSpendableBalances: {},
         accountBalanceDetails: {},
       });
-      await refreshWalletAccounts();
       navigate('onboarding-success');
+      setOnboardingPassword(null);
+      setOnboardingMnemonic(null);
+      void refreshWalletAccounts();
     } finally {
       setIsSubmitting(false);
     }
