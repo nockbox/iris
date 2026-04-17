@@ -23,7 +23,7 @@ import WalletStyle14 from '../assets/wallet-icon-style-14.svg';
 import WalletStyle15 from '../assets/wallet-icon-style-15.svg';
 
 export function WalletStylingScreen() {
-  const { navigate, wallet, syncWallet, settingsAccountAddress } = useStore();
+  const { navigate, wallet, refreshWalletAccounts, settingsAccountAddress } = useStore();
 
   // Style the account selected in wallet settings (if present), otherwise current account
   const currentAccount =
@@ -100,23 +100,7 @@ export function WalletStylingScreen() {
     );
 
     if (result?.ok) {
-      // Update wallet state
-      const updatedAccounts = wallet.accounts.map(acc =>
-        acc.address === currentAccount.address
-          ? { ...acc, iconStyleId: styleId, iconColor: selectedColor }
-          : acc
-      );
-      const updatedCurrentAccount =
-        wallet.currentAccount?.address === currentAccount.address
-          ? (updatedAccounts.find(acc => acc.address === currentAccount.address) ??
-            wallet.currentAccount)
-          : wallet.currentAccount;
-
-      syncWallet({
-        ...wallet,
-        accounts: updatedAccounts,
-        currentAccount: updatedCurrentAccount,
-      });
+      await refreshWalletAccounts();
     } else if (result?.error) {
       console.error('Failed to update styling:', result.error);
     }
@@ -133,23 +117,7 @@ export function WalletStylingScreen() {
     );
 
     if (result?.ok) {
-      // Update wallet state
-      const updatedAccounts = wallet.accounts.map(acc =>
-        acc.address === currentAccount.address
-          ? { ...acc, iconStyleId: selectedStyle, iconColor: color }
-          : acc
-      );
-      const updatedCurrentAccount =
-        wallet.currentAccount?.address === currentAccount.address
-          ? (updatedAccounts.find(acc => acc.address === currentAccount.address) ??
-            wallet.currentAccount)
-          : wallet.currentAccount;
-
-      syncWallet({
-        ...wallet,
-        accounts: updatedAccounts,
-        currentAccount: updatedCurrentAccount,
-      });
+      await refreshWalletAccounts();
     } else if (result?.error) {
       console.error('Failed to update styling:', result.error);
     }

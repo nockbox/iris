@@ -14,8 +14,14 @@ import PencilEditIcon from '../assets/pencil-edit-icon.svg';
 import SettingsGearIcon from '../assets/settings-gear-icon.svg';
 
 export function WalletSettingsScreen() {
-  const { navigate, wallet, syncWallet, settingsAccountAddress, setSettingsAccountAddress } =
-    useStore();
+  const {
+    navigate,
+    wallet,
+    refreshWalletAccounts,
+    fetchBalance,
+    settingsAccountAddress,
+    setSettingsAccountAddress,
+  } = useStore();
 
   // Use the account we're editing (when opened from dropdown) or current account
   const currentAccount =
@@ -74,22 +80,7 @@ export function WalletSettingsScreen() {
     ]);
 
     if (result?.ok) {
-      // Update wallet state with new name
-      const updatedAccounts = wallet.accounts.map(acc =>
-        acc.address === currentAccount.address ? { ...acc, name: editedName.trim() } : acc
-      );
-      const updatedCurrentAccount =
-        wallet.currentAccount?.address === currentAccount.address
-          ? (updatedAccounts.find(acc => acc.address === currentAccount.address) ??
-            wallet.currentAccount)
-          : wallet.currentAccount;
-
-      syncWallet({
-        ...wallet,
-        accounts: updatedAccounts,
-        currentAccount: updatedCurrentAccount,
-      });
-
+      await refreshWalletAccounts();
       setIsEditingName(false);
     } else if (result?.error) {
       alert(`Failed to rename account: ${result.error}`);
@@ -130,29 +121,11 @@ export function WalletSettingsScreen() {
     );
 
     if (result?.ok) {
-      // Update wallet state - filter out hidden account
-      const updatedAccounts = wallet.accounts.map(acc =>
-        acc.address === currentAccount.address ? { ...acc, hidden: true } : acc
-      );
+      // Reload accounts + seedSources from vault — only patching flat `accounts` left
+      // `seedSources` stale so Home grouped list / "Add sub-wallet" rows were wrong.
+      await refreshWalletAccounts();
+      void fetchBalance();
 
-      // Keep current account stable unless vault switched it
-      let updatedCurrentAccount = wallet.currentAccount;
-      if (result.switchedTo !== undefined) {
-        updatedCurrentAccount =
-          updatedAccounts.find(acc => acc.address === result.switchedTo) || wallet.currentAccount;
-      }
-      if (updatedCurrentAccount?.hidden) {
-        updatedCurrentAccount = updatedAccounts.find(acc => !acc.hidden) || null;
-      }
-
-      syncWallet({
-        ...wallet,
-        accounts: updatedAccounts,
-        currentAccount: updatedCurrentAccount,
-        address: updatedCurrentAccount?.address || null,
-      });
-
-      // Close settings and go back to home
       setShowRemoveConfirm(false);
       setSettingsAccountAddress(null);
       navigate('home');
