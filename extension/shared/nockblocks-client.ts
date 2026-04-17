@@ -135,22 +135,43 @@ export class NockblocksClient {
       throw new Error('Nockblocks API key is not configured')
     }
 
-    const response = await fetch(this.apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': this.apiKey,
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        method,
-        params: [params],
-        id: crypto.randomUUID(),
-      }),
-    })
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 20_000)
+
+    let response: Response
+    try {
+      response = await fetch(this.apiUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': this.apiKey,
+        },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          method,
+          params: [params],
+          id: crypto.randomUUID(),
+        }),
+        signal: controller.signal,
+      })
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Nockblocks ${method} timed out after 20s`)
+      }
+      throw error
+    } finally {
+      clearTimeout(timeoutId)
+    }
 
     if (!response.ok) {
-      throw new Error(`Nockblocks API error: ${response.status}`)
+      let bodySnippet = ''
+      try {
+        const text = await response.text()
+        if (text) bodySnippet = `: ${text.slice(0, 500)}`
+      } catch {
+        // ignore body read failure
+      }
+      throw new Error(`Nockblocks API error ${response.status}${bodySnippet}`)
     }
 
     const payload = (await response.json()) as JsonRpcResponse<T>
@@ -167,10 +188,11 @@ export class NockblocksClient {
 
   async getMempoolTransactionByTxid(transactionId: string): Promise<NockblocksTransaction | null> {
     try {
-      const result = await this.request<NockblocksTransaction>('getMempoolTransactionByTxid', {
-        transactionId,
-      })
-      return normalizeTransaction(result)
+      const result = await this.request<NockblocksTransaction | null>(
+        'getMempoolTransactionByTxid',
+        { transactionId }
+      )
+      return result ? normalizeTransaction(result) : null
     } catch (error) {
       if (error instanceof Error && /no result|not found/i.test(error.message)) {
         return null
@@ -181,10 +203,11 @@ export class NockblocksClient {
 
   async getTransactionByTxid(transactionId: string): Promise<NockblocksTransaction | null> {
     try {
-      const result = await this.request<NockblocksTransaction>('getTransactionByTxid', {
-        transactionId,
-      })
-      return normalizeTransaction(result)
+      const result = await this.request<NockblocksTransaction | null>(
+        'getTransactionByTxid',
+        { transactionId }
+      )
+      return result ? normalizeTransaction(result) : null
     } catch (error) {
       if (error instanceof Error && /no result|not found/i.test(error.message)) {
         return null
