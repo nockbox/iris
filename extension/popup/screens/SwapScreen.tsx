@@ -8,6 +8,7 @@ import NockText from '../assets/NockText.svg';
 import JustNText from '../assets/JustNText.svg';
 import UpDownVec from '../assets/upDownvec.svg';
 import { MIN_BRIDGE_AMOUNT_NOCK } from '@nockbox/iris-sdk';
+import { formatWithCommas, parseAmount } from '../utils/format';
 
 function isEvmAddress(value: string): boolean {
   const s = value.trim();
@@ -27,7 +28,7 @@ export function SwapScreen() {
   const measureInputRef = useRef<HTMLSpanElement>(null);
 
   const spendableNock = wallet.spendableBalance;
-  const amountNum = parseFloat(amount);
+  const amountNum = parseAmount(amount);
 
   // Single consolidated message: never show two at once. Uses same wallet.spendableBalance as Home.
   // Don't show spendable-below-min while balance is loading (same pattern as HomeScreen skeleton).
@@ -71,9 +72,9 @@ export function SwapScreen() {
     }
   }
 
-  const hasDecimalPart = /\.\d/.test(amount);
+  const hasDecimalPart = /\.\d/.test(amount.replace(/,/g, ''));
   const displayAmount = amount
-    ? Number(amount).toLocaleString('en-US', {
+    ? amountNum.toLocaleString('en-US', {
         minimumFractionDigits: hasDecimalPart ? 2 : 0,
         maximumFractionDigits: hasDecimalPart ? 2 : 0,
       })
@@ -178,7 +179,10 @@ export function SwapScreen() {
                 type="text"
                 inputMode="decimal"
                 value={amount}
-                onChange={e => setAmount(e.target.value.replace(/[^\d.]/g, ''))}
+                onChange={e => setAmount(e.target.value.replace(/[^0-9.,]/g, ''))}
+                onBlur={() => {
+                  if (amount.trim()) setAmount(formatWithCommas(amount));
+                }}
                 placeholder="0.00"
                 className="w-full bg-transparent border-0 outline-none font-[Lora] font-semibold placeholder:text-[var(--color-text-muted)]"
                 style={{

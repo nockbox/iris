@@ -3,6 +3,26 @@
  */
 
 /**
+ * Parse a formatted number string (with commas) to a number
+ */
+export function parseAmount(value: string): number {
+  const cleaned = value.replace(/,/g, '');
+  return parseFloat(cleaned) || 0;
+}
+
+/**
+ * Format a number string with thousand separators 
+ */
+export function formatWithCommas(value: string): string {
+  const cleaned = value.replace(/[^0-9.]/g, '');
+  if (!cleaned) return '';
+
+  const parts = cleaned.split('.');
+  parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return parts.join('.');
+}
+
+/**
  * Truncate an address for display
  * @param address - Full address string
  * @param startChars - Number of characters to show at start (default: 6)
