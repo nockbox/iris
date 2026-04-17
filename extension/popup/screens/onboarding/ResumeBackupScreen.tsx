@@ -24,7 +24,13 @@ export function ResumeBackupScreen() {
       return;
     }
 
-    // Retrieve mnemonic using password
+    const vaultState = await send<{ hasVault?: boolean }>(INTERNAL_METHODS.GET_STATE);
+
+    if (!vaultState?.hasVault) {
+      navigate('onboarding-start');
+      return;
+    }
+
     const result = await send<{
       ok?: boolean;
       mnemonic?: string;
@@ -37,14 +43,12 @@ export function ResumeBackupScreen() {
       } else {
         setError(`Error: ${result.error}`);
       }
-      setPassword(''); // Clear password on error
-    } else {
-      // Store mnemonic in Zustand for backup flow
-      setOnboardingMnemonic(result.mnemonic || '');
       setPassword('');
-      // Navigate to backup screen
-      navigate('onboarding-backup');
+      return;
     }
+    setOnboardingMnemonic(result.mnemonic || '');
+    setPassword('');
+    navigate('onboarding-backup');
   }
 
   return (

@@ -14,6 +14,7 @@ import { EyeIcon } from '../../components/icons/EyeIcon';
 import { EyeOffIcon } from '../../components/icons/EyeOffIcon';
 import { InfoIcon } from '../../components/icons/InfoIcon';
 import { importKeyfile, type Keyfile } from '../../../shared/keyfile';
+import { validateMnemonic } from '../../../shared/wallet-crypto';
 
 export function ImportScreen() {
   const {
@@ -22,7 +23,6 @@ export function ImportScreen() {
     onboardingMnemonic,
     setOnboardingMnemonic,
     currentScreen,
-    createMnemonicSeedSource,
   } = useStore();
   const isAddSeedFlow = currentScreen === 'wallet-add-import';
 
@@ -133,15 +133,22 @@ export function ImportScreen() {
       }
     }
 
-    // Import wallet (onboarding) or add a new seed source (add-wallet flow)
-    const result = isAddSeedFlow
-      ? await createMnemonicSeedSource(mnemonic)
-      : await send<{
-          ok?: boolean;
-          address?: string;
-          mnemonic?: string;
-          error?: string;
-        }>(INTERNAL_METHODS.SETUP, [password, mnemonic]);
+    if (isAddSeedFlow) {
+      if (!validateMnemonic(mnemonic)) {
+        setError('Invalid secret phrase. Please check your words and try again.');
+        return;
+      }
+      setOnboardingMnemonic(mnemonic);
+      navigate('wallet-add-backup');
+      return;
+    }
+
+    const result = await send<{
+      ok?: boolean;
+      address?: string;
+      mnemonic?: string;
+      error?: string;
+    }>(INTERNAL_METHODS.SETUP, [password, mnemonic]);
 
     if ('error' in result) {
       if (result.error === ERROR_CODES.INVALID_MNEMONIC) {
@@ -150,35 +157,30 @@ export function ImportScreen() {
         setError(`Error: ${result.error}`);
       }
     } else {
-      if (isAddSeedFlow) {
-        setOnboardingMnemonic(null);
-        navigate('home');
-      } else {
-        // Successfully imported - mark onboarding complete (user already has their seed)
-        await markOnboardingComplete();
+      // Successfully imported - mark onboarding complete (user already has their seed)
+      await markOnboardingComplete();
 
-        const firstAccount = {
-          name: 'Wallet 1',
-          address: result.address || '',
-          index: 0,
-        };
-        syncWallet({
-          locked: false,
-          address: result.address || null,
-          accounts: [firstAccount],
-          seedSources: [],
-          currentAccount: firstAccount,
-          activeSeedSourceId: null,
-          balance: 0,
-          availableBalance: 0,
-          spendableBalance: 0,
-          accountBalances: {},
-          accountSpendableBalances: {},
-          accountBalanceDetails: {},
-        });
-        setOnboardingMnemonic(null);
-        navigate('onboarding-import-success');
-      }
+      const firstAccount = {
+        name: 'Wallet 1',
+        address: result.address || '',
+        index: 0,
+      };
+      syncWallet({
+        locked: false,
+        address: result.address || null,
+        accounts: [firstAccount],
+        seedSources: [],
+        currentAccount: firstAccount,
+        activeSeedSourceId: null,
+        balance: 0,
+        availableBalance: 0,
+        spendableBalance: 0,
+        accountBalances: {},
+        accountSpendableBalances: {},
+        accountBalanceDetails: {},
+      });
+      setOnboardingMnemonic(null);
+      navigate('onboarding-import-success');
     }
   }
 
