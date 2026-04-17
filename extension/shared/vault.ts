@@ -1738,6 +1738,11 @@ export class Vault {
       return { error: ERROR_CODES.NO_VAULT };
     }
 
+    const masterForSeed = seedAccount.accounts.find(a => a.index === 0);
+    if (!masterForSeed || masterForSeed.hidden) {
+      return { error: ERROR_CODES.MASTER_WALLET_HIDDEN };
+    }
+
     const nextIndex = seedAccount.accounts.length;
     const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
     const nextChildOrdinal =

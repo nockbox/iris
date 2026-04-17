@@ -193,6 +193,9 @@ export const ERROR_CODES = {
   /** Cannot hide the last visible account */
   CANNOT_HIDE_LAST_ACCOUNT: 'CANNOT_HIDE_LAST_ACCOUNT',
 
+  /** Master wallet for this seed is *deleted* (hidden)*/
+  MASTER_WALLET_HIDDEN: 'MASTER_WALLET_HIDDEN',
+
   /** Unsupported RPC method requested */
   METHOD_NOT_SUPPORTED: 'METHOD_NOT_SUPPORTED',
 
