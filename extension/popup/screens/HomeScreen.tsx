@@ -3,7 +3,12 @@ import { useStore } from '../store';
 import { useTheme } from '../contexts/ThemeContext';
 import { truncateAddress } from '../utils/format';
 import { send } from '../utils/messaging';
-import { INTERNAL_METHODS, NOCK_TO_NICKS, STORAGE_KEYS } from '../../shared/constants';
+import {
+  ERROR_CODES,
+  INTERNAL_METHODS,
+  NOCK_TO_NICKS,
+  STORAGE_KEYS,
+} from '../../shared/constants';
 import type { SubAccount } from '../../shared/types';
 import { AccountIcon } from '../components/AccountIcon';
 import { EyeIcon } from '../components/icons/EyeIcon';
@@ -275,7 +280,13 @@ export function HomeScreen() {
   async function handleAddSubWallet(seedAccountId?: string) {
     const result = await createChildAccount(seedAccountId || undefined);
     if (result?.error) {
-      alert(`Failed to create sub-wallet: ${result.error}`);
+      if (result.error === ERROR_CODES.MASTER_WALLET_HIDDEN) {
+        alert(
+          "You can't add a sub-wallet while this phrase's primary wallet is hidden."
+        );
+      } else {
+        alert(`Failed to create sub-wallet: ${result.error}`);
+      }
     }
   }
 
@@ -643,7 +654,9 @@ export function HomeScreen() {
                           </button>
                         );
                       })}
-                      {group.seed.type === 'mnemonic' && (
+                      {group.seed.type === 'mnemonic' &&
+                        group.accounts.length > 0 &&
+                        group.accounts.some(a => a.index === 0) && (
                         <button
                           className="w-full flex items-center gap-2 rounded-tile transition"
                           style={{
