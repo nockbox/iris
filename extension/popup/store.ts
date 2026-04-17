@@ -487,6 +487,14 @@ export const useStore = create<AppStore>((set, get) => ({
   // Also syncs UTXOs from chain (runs in popup context where WASM works)
   fetchBalance: async () => {
     try {
+      // Don't attempt to sync UTXOs while the vault is locked. SYNC_UTXOS
+      // requires the encryption key to persist results; calling it while locked
+      // yields cascading "Cannot save account data" / "Vault is locked" errors.
+      if (get().wallet.locked) {
+        set({ isBalanceFetching: false });
+        return;
+      }
+
       set({ isBalanceFetching: true });
 
       const accounts = get().wallet.accounts;
