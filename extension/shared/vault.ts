@@ -1507,6 +1507,7 @@ export class Vault {
         recipient: existing.recipient || tx.recipient,
         sender: existing.sender || tx.sender,
         priceUsdAtTime: existing.priceUsdAtTime ?? tx.priceUsdAtTime,
+        migrationFromV0: existing.migrationFromV0 || tx.migrationFromV0,
         updatedAt: Date.now(),
       };
     }
@@ -1546,6 +1547,7 @@ export class Vault {
       recipient: existing.recipient || updates.recipient,
       sender: existing.sender || updates.sender,
       priceUsdAtTime: existing.priceUsdAtTime ?? updates.priceUsdAtTime,
+      migrationFromV0: existing.migrationFromV0 || updates.migrationFromV0,
       updatedAt: Date.now(),
     };
 
@@ -1741,6 +1743,14 @@ export class Vault {
         ? this.getUniqueLockRootFromSpends(externalSpends)
         : accountAddress
 
+    const migrationFromV0 =
+      direction === 'incoming' &&
+      typeof sender === 'string' &&
+      sender.length >= 60 &&
+      typeof recipient === 'string' &&
+      recipient.length > 0 &&
+      recipient.length < 60
+
     return {
       id: txId,
       txHash: txId,
@@ -1755,6 +1765,7 @@ export class Vault {
       fee: direction === 'incoming' ? undefined : fee,
       recipient,
       sender,
+      ...(migrationFromV0 ? { migrationFromV0: true as const } : {}),
       blockId: tx.blockId,
       confirmedAtBlock: tx.blockHeight,
       confirmedAtTimestamp: tx.timestamp,

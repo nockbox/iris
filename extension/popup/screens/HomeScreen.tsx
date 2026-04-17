@@ -28,7 +28,9 @@ import SettingsGearIcon from '../assets/settings-gear-icon.svg';
 import PencilEditIcon from '../assets/pencil-edit-icon.svg';
 import RefreshIcon from '../assets/refresh-icon.svg';
 import ReceiptIcon from '../assets/receipt-icon.svg';
+import TransferV0Icon from '../assets/transferv0_icon.svg';
 import { resolveCounterpartyAccount } from '../../shared/account-lock-roots';
+import { isMigrationWalletTx } from '../../shared/v0-migration';
 import { useLockRootAccountMap } from '../hooks/useLockRootAccountMap';
 import SwapIconAsset from '../assets/swap_icon.svg';
 import BaseIconAsset from '../assets/base_icon.svg';
@@ -368,16 +370,20 @@ export function HomeScreen() {
         ? `$${(amountNock * tx.priceUsdAtTime).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
         : null;
 
+      const isMigration = isMigrationWalletTx(tx);
+      const counterpartyShort =
+        type === 'self'
+          ? 'Your wallets'
+          : address
+            ? truncateAddress(address)
+            : type === 'received'
+              ? 'Unknown sender'
+              : 'Unknown recipient';
+
       acc[date].push({
         type,
-        from:
-          type === 'self'
-            ? 'Your wallets'
-            : address
-              ? truncateAddress(address)
-              : type === 'received'
-                ? 'Unknown sender'
-                : 'Unknown recipient',
+        isMigration,
+        from: isMigration ? `Legacy · ${counterpartyShort}` : counterpartyShort,
         amount:
           type === 'sent'
             ? `-${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
@@ -939,7 +945,17 @@ export function HomeScreen() {
                     {group.items.map((t, i) => (
                       <button
                         key={i}
-                        className="w-full flex items-center gap-3 py-3 rounded-lg px-0 -mx-0 overflow-hidden"
+                        className={`w-full flex items-center gap-3 py-3 rounded-lg overflow-hidden ${
+                          t.isMigration ? 'pl-2 pr-0 -mx-0 border-l-2' : 'px-0 -mx-0'
+                        }`}
+                        style={
+                          t.isMigration
+                            ? {
+                                borderLeftColor: 'var(--color-primary)',
+                                backgroundColor: 'var(--color-surface-900)',
+                              }
+                            : undefined
+                        }
                         onClick={() => {
                           setSelectedTransaction(t.originalTx);
                           navigate('tx-details');
@@ -949,7 +965,9 @@ export function HomeScreen() {
                           className="h-10 w-10 shrink-0 rounded-full grid place-items-center"
                           style={{ backgroundColor: 'var(--color-tx-icon)' }}
                         >
-                          {t.type === 'received' ? (
+                          {t.isMigration ? (
+                            <img src={TransferV0Icon} alt="" className="h-5 w-5" />
+                          ) : t.type === 'received' ? (
                             <ReceiveArrowIcon
                               className="h-4 w-4"
                               style={{ color: 'var(--color-text-muted)' }}
@@ -966,11 +984,13 @@ export function HomeScreen() {
                             className="text-[14px] font-medium truncate"
                             style={{ color: 'var(--color-text-primary)' }}
                           >
-                            {t.type === 'received'
-                              ? 'Received'
-                              : t.type === 'self'
-                                ? 'Internal'
-                                : 'Sent'}
+                            {t.isMigration
+                              ? 'Migration'
+                              : t.type === 'received'
+                                ? 'Received'
+                                : t.type === 'self'
+                                  ? 'Internal'
+                                  : 'Sent'}
                           </div>
                           <div
                             className="text-[12px] flex items-center gap-1.5 truncate"
