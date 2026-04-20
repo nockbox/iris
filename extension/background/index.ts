@@ -76,10 +76,16 @@ type UnlockSessionCache = {
 let sessionRestorePromise: Promise<void> | null = null;
 
 // In-flight UTXO sync to prevent concurrent sync passes from racing with each other.
-let utxoSyncInFlight: Promise<{
-  ok: boolean;
-  results: Record<string, { success: boolean; error?: string }>;
-}> | null = null;
+// Keyed by account address (or "*" for all-accounts sync) so that a sync for one
+// account doesn't cause a caller asking for a different account to receive a
+// stale reused result.
+const utxoSyncInFlight = new Map<
+  string,
+  Promise<{
+    ok: boolean;
+    results: Record<string, { success: boolean; error?: string }>;
+  }>
+>();
 
 // Track pending sub-wallet discoveries (fire-and-forget) so we don't double-schedule.
 const subwalletDiscoveryInFlight = new Set<string>();
@@ -1034,7 +1040,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case INTERNAL_METHODS.SYNC_UTXOS:
-        // Sync UTXOs for all accounts - runs in background with encrypted Vault.
+        // Sync UTXOs - runs in background with encrypted Vault.
+        // Optional param: account address. If provided, only that account is
+        // synced. If omitted, only the currently-selected account is synced
+        // (callers can still pass an explicit address to sync a specific one).
         // Guard on lock state: without the encryption key loaded we cannot persist
         // sync results (saveAccountData throws), and iterating accounts while the
         // vault is locked produces a cascade of misleading "Vault is locked" errors.
@@ -1043,46 +1052,59 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        // Serialize across concurrent callers (popup refreshes, multiple screens):
-        // a single in-flight sync is reused rather than kicking off parallel passes
-        // that race on saveAccountData.
         try {
-          if (!utxoSyncInFlight) {
-            utxoSyncInFlight = (async () => {
-              const accounts = vault.getAccounts();
+          const requestedAddress =
+            (payload.params?.[0] as string | undefined) || vault.getCurrentAccount()?.address;
+
+          if (!requestedAddress) {
+            sendResponse({ ok: true, results: {} });
+            return;
+          }
+
+          const accounts = vault.getAccounts();
+          const account = accounts.find(a => a.address === requestedAddress);
+          if (!account) {
+            sendResponse({ error: 'Account not found' });
+            return;
+          }
+
+          // Serialize across concurrent callers for the same account (popup
+          // refreshes, multiple screens): a single in-flight sync is reused
+          // rather than kicking off parallel passes that race on
+          // saveAccountData. Keyed by address so different accounts can sync
+          // in parallel if ever requested concurrently.
+          let inFlight = utxoSyncInFlight.get(requestedAddress);
+          if (!inFlight) {
+            inFlight = (async () => {
               const results: Record<string, { success: boolean; error?: string }> = {};
 
-              for (const account of accounts) {
-                // Re-check each iteration: the vault can be locked mid-sync by
-                // auto-lock, manual lock, or a service-worker restart. Skip the
-                // remaining accounts instead of logging cascading failures.
-                if (vault.isLocked()) {
-                  results[account.address] = {
-                    success: false,
-                    error: ERROR_CODES.LOCKED,
-                  };
-                  continue;
-                }
+              if (vault.isLocked()) {
+                results[account.address] = {
+                  success: false,
+                  error: ERROR_CODES.LOCKED,
+                };
+                return { ok: true, results };
+              }
 
-                try {
-                  await vault.syncAccountUTXOs(account.address);
-                  results[account.address] = { success: true };
-                } catch (syncErr) {
-                  console.warn(`[Background] UTXO sync failed for ${account.name}:`, syncErr);
-                  results[account.address] = {
-                    success: false,
-                    error: syncErr instanceof Error ? syncErr.message : String(syncErr),
-                  };
-                }
+              try {
+                await vault.syncAccountUTXOs(account.address);
+                results[account.address] = { success: true };
+              } catch (syncErr) {
+                console.warn(`[Background] UTXO sync failed for ${account.name}:`, syncErr);
+                results[account.address] = {
+                  success: false,
+                  error: syncErr instanceof Error ? syncErr.message : String(syncErr),
+                };
               }
 
               return { ok: true, results };
             })().finally(() => {
-              utxoSyncInFlight = null;
+              utxoSyncInFlight.delete(requestedAddress);
             });
+            utxoSyncInFlight.set(requestedAddress, inFlight);
           }
 
-          const syncOutcome = await utxoSyncInFlight;
+          const syncOutcome = await inFlight;
           sendResponse(syncOutcome);
         } catch (err) {
           console.error('[Background] SYNC_UTXOS error:', err);

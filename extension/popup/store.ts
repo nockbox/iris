@@ -505,12 +505,15 @@ export const useStore = create<AppStore>((set, get) => ({
         return;
       }
 
-      // Sync UTXOs from chain for all accounts (runs in background with encrypted Vault)
+      // Only sync + fetch balance for the currently-selected account. Other
+      // accounts keep whatever cached balances they had; they'll be refreshed
+      // when the user switches to them. This avoids scaling balance-refresh
+      // latency with wallet count.
       try {
         const syncResult = await send<{
           ok: boolean;
           results?: Record<string, { success: boolean; error?: string }>;
-        }>(INTERNAL_METHODS.SYNC_UTXOS, []);
+        }>(INTERNAL_METHODS.SYNC_UTXOS, [currentAccount.address]);
         if (!syncResult.ok) {
           console.warn('[Store] UTXO sync failed:', syncResult);
         }
@@ -518,33 +521,56 @@ export const useStore = create<AppStore>((set, get) => ({
         console.warn('[Store] UTXO sync error:', syncErr);
       }
 
-      // Fetch UTXO store balance for ALL accounts
-      const accountBalances: Record<string, number> = {};
-      const accountSpendableBalances: Record<string, number> = {};
+      // Start from existing cached balances so non-current accounts keep their
+      // last-known values in the UI.
+      const accountBalances: Record<string, number> = { ...get().wallet.accountBalances };
+      const accountSpendableBalances: Record<string, number> = {
+        ...get().wallet.accountSpendableBalances,
+      };
+      const accountBalanceDetails: Record<string, AccountBalance> = {
+        ...get().wallet.accountBalanceDetails,
+      };
 
-      for (const account of accounts) {
-        try {
-          const storeBalance = await send<{
-            available: number;
-            spendableNow: number;
-            pendingOut: number;
-            pendingChange: number;
-            total: number;
-            utxoCount: number;
-            availableUtxoCount: number;
-          }>(INTERNAL_METHODS.GET_BALANCE_FROM_STORE, [account.address]);
+      try {
+        const storeBalance = await send<{
+          available: number;
+          spendableNow: number;
+          pendingOut: number;
+          pendingChange: number;
+          total: number;
+          utxoCount: number;
+          availableUtxoCount: number;
+        }>(INTERNAL_METHODS.GET_BALANCE_FROM_STORE, [currentAccount.address]);
 
-          // Convert from nicks to NOCK for display
-          const availableNock = storeBalance.available / NOCK_TO_NICKS;
-          const spendableNock = storeBalance.spendableNow / NOCK_TO_NICKS;
-          accountBalances[account.address] = availableNock;
-          accountSpendableBalances[account.address] = spendableNock;
-        } catch (err) {
-          console.warn(`[Store] Could not get balance for ${account.name}:`, err);
-          // Keep previous balance if fetch fails
-          accountBalances[account.address] = get().wallet.accountBalances[account.address] ?? 0;
-          accountSpendableBalances[account.address] =
-            get().wallet.accountSpendableBalances[account.address] ?? 0;
+        // Convert from nicks to NOCK for display
+        const availableNock = storeBalance.available / NOCK_TO_NICKS;
+        const spendableNock = storeBalance.spendableNow / NOCK_TO_NICKS;
+        const totalNock = storeBalance.total / NOCK_TO_NICKS;
+        const pendingOutNock = storeBalance.pendingOut / NOCK_TO_NICKS;
+        accountBalances[currentAccount.address] = availableNock;
+        accountSpendableBalances[currentAccount.address] = spendableNock;
+        accountBalanceDetails[currentAccount.address] = {
+          confirmed: totalNock,
+          pendingOut: pendingOutNock,
+          pendingIn: 0,
+          available: availableNock,
+        };
+      } catch (err) {
+        console.warn(`[Store] Could not get balance for ${currentAccount.name}:`, err);
+        // Keep previous balance if fetch fails
+        if (accountBalances[currentAccount.address] === undefined) {
+          accountBalances[currentAccount.address] = 0;
+        }
+        if (accountSpendableBalances[currentAccount.address] === undefined) {
+          accountSpendableBalances[currentAccount.address] = 0;
+        }
+        if (accountBalanceDetails[currentAccount.address] === undefined) {
+          accountBalanceDetails[currentAccount.address] = {
+            confirmed: accountBalances[currentAccount.address],
+            pendingOut: 0,
+            pendingIn: 0,
+            available: accountBalances[currentAccount.address],
+          };
         }
       }
 
