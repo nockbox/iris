@@ -946,7 +946,10 @@ export class Vault {
     // currentAccountIndex refers to the flattened `state.accounts` array position,
     // not the per-seed derivation index on SubAccount.index.
     const account = this.state.accounts[this.state.currentAccountIndex];
-    return account || this.state.accounts[0] || null;
+    if (account && !account.hidden) return account;
+    // Safety net: if the stored index points at a hidden account (e.g. after a
+    // hide operation left a stale index), fall back to the first visible account.
+    return this.state.accounts.find(a => !a.hidden) || null;
   }
 
   /**
@@ -2422,6 +2425,10 @@ export class Vault {
     const index = this.state.accounts.findIndex(acc => acc.address === address);
     if (index < 0) {
       return { error: ERROR_CODES.BAD_ADDRESS };
+    }
+
+    if (this.state.accounts[index].hidden) {
+      return { error: ERROR_CODES.ACCOUNT_HIDDEN };
     }
 
     this.state.currentAccountIndex = index;

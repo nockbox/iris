@@ -214,6 +214,9 @@ export const ERROR_CODES = {
 
   /** Seed phrase is already present in the vault */
   DUPLICATE_SEED: 'DUPLICATE_SEED',
+
+  /** Cannot perform operation on a hidden (deleted) account */
+  ACCOUNT_HIDDEN: 'ACCOUNT_HIDDEN',
 } as const;
 
 /**
