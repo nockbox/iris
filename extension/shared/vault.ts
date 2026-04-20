@@ -919,6 +919,39 @@ export class Vault {
 
     const words = mnemonic ? mnemonic.trim() : generateMnemonic();
 
+    // Detect duplicate: same mnemonic already exists in the vault
+    const existing = this.seedAccounts.find(
+      s => s.type === 'mnemonic' && s.mnemonic === words
+    );
+    if (existing) {
+      // If the master account is hidden, restore it (and all its sub-accounts)
+      const masterHidden = existing.accounts.some(a => a.index === 0 && a.hidden);
+      if (masterHidden) {
+        existing.accounts.forEach(a => {
+          a.hidden = false;
+        });
+        this.rebuildFlatAccounts();
+        const newFlatIndex = this.state.accounts.findIndex(
+          acc => acc.address === existing.accounts.find(a => a.index === 0)?.address
+        );
+        if (newFlatIndex >= 0) {
+          this.state.currentAccountIndex = newFlatIndex;
+          await chrome.storage.local.set({
+            [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: newFlatIndex,
+          });
+        }
+        this.mnemonic = words;
+        await this.saveAccountsToVault();
+        const { mnemonic: _m, ...publicSeed } = existing;
+        return {
+          seedSource: publicSeed,
+          account: existing.accounts.find(a => a.index === 0)!,
+          mnemonic: words,
+        };
+      }
+      return { error: ERROR_CODES.DUPLICATE_SEED };
+    }
+
     const seedOrdinal = this.seedAccounts.length + 1;
     const seedId = crypto.randomUUID();
     const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
@@ -1948,19 +1981,38 @@ export class Vault {
       return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
-    // Check if this is the last visible account
+    const accountToHide = this.state.accounts[index];
+
+    // When hiding a master account (index 0), collect all sibling sub-accounts
+    // from the same seed source so they are hidden together.
+    const seedForAccount = this.getSeedAccountForWallet(accountToHide);
+    const siblingAddresses =
+      accountToHide.index === 0 && seedForAccount
+        ? new Set(seedForAccount.accounts.map(a => a.address))
+        : new Set<string>();
+
+    // All accounts that will become hidden (the target + any siblings)
+    const addressesToHide = new Set([address, ...siblingAddresses]);
+
+    // Check that hiding all of them won't leave zero visible accounts
     const visibleAccounts = this.state.accounts.filter(acc => !acc.hidden);
-    if (visibleAccounts.length <= 1) {
+    const remainingVisible = visibleAccounts.filter(acc => !addressesToHide.has(acc.address));
+    if (remainingVisible.length === 0) {
       return { error: ERROR_CODES.CANNOT_HIDE_LAST_ACCOUNT };
     }
 
-    // Mark account as hidden
-    this.state.accounts[index].hidden = true;
+    // Mark the target and all siblings as hidden
+    for (const acc of this.state.accounts) {
+      if (addressesToHide.has(acc.address)) {
+        acc.hidden = true;
+      }
+    }
 
     let switchedTo: string | undefined;
 
-    // If hiding the current account, switch to first visible account
-    if (this.state.currentAccountIndex === index) {
+    // If the current account was among those hidden, switch to first still-visible account
+    const currentAddress = this.state.accounts[this.state.currentAccountIndex]?.address;
+    if (currentAddress && addressesToHide.has(currentAddress)) {
       const firstVisibleIndex = this.state.accounts.findIndex(acc => !acc.hidden);
       if (firstVisibleIndex !== -1) {
         this.state.currentAccountIndex = firstVisibleIndex;
