@@ -1545,6 +1545,7 @@ export class Vault {
         sender: existing.sender || tx.sender,
         priceUsdAtTime: existing.priceUsdAtTime ?? tx.priceUsdAtTime,
         migrationFromV0: existing.migrationFromV0 || tx.migrationFromV0,
+        kind: existing.kind || tx.kind,
         updatedAt: Date.now(),
       };
     }
@@ -1585,6 +1586,7 @@ export class Vault {
       sender: existing.sender || updates.sender,
       priceUsdAtTime: existing.priceUsdAtTime ?? updates.priceUsdAtTime,
       migrationFromV0: existing.migrationFromV0 || updates.migrationFromV0,
+      kind: existing.kind || updates.kind,
       updatedAt: Date.now(),
     };
 
@@ -3674,6 +3676,7 @@ export class Vault {
           id: walletTxId,
           accountAddress: currentAccount.address,
           direction: 'outgoing',
+          kind: 'bridge',
           createdAt: Date.now(),
           updatedAt: Date.now(),
           priceUsdAtTime,

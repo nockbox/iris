@@ -36,6 +36,7 @@ import ReceiptIcon from '../assets/receipt-icon.svg';
 import TransferV0Icon from '../assets/transferv0_icon.svg';
 import { resolveCounterpartyAccount } from '../../shared/account-lock-roots';
 import { isMigrationWalletTx } from '../../shared/v0-migration';
+import { isBridgeWalletTx } from '../../shared/bridge-config';
 import { useLockRootAccountMap } from '../hooks/useLockRootAccountMap';
 import SwapIconAsset from '../assets/swap_icon.svg';
 import BaseIconAsset from '../assets/base_icon.svg';
@@ -382,6 +383,7 @@ export function HomeScreen() {
         : null;
 
       const isMigration = isMigrationWalletTx(tx);
+      const isBridge = isBridgeWalletTx(tx);
       const counterpartyShort =
         type === 'self'
           ? 'Your wallets'
@@ -394,7 +396,12 @@ export function HomeScreen() {
       acc[date].push({
         type,
         isMigration,
-        from: isMigration ? `Legacy · ${counterpartyShort}` : counterpartyShort,
+        isBridge,
+        from: isMigration
+          ? `Legacy · ${counterpartyShort}`
+          : isBridge
+            ? `Base · ${counterpartyShort}`
+            : counterpartyShort,
         amount:
           type === 'sent'
             ? `-${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
@@ -959,10 +966,10 @@ export function HomeScreen() {
                       <button
                         key={i}
                         className={`w-full flex items-center gap-3 py-3 rounded-lg overflow-hidden ${
-                          t.isMigration ? 'pl-2 pr-0 -mx-0 border-l-2' : 'px-0 -mx-0'
+                          t.isMigration || t.isBridge ? 'pl-2 pr-0 -mx-0 border-l-2' : 'px-0 -mx-0'
                         }`}
                         style={
-                          t.isMigration
+                          t.isMigration || t.isBridge
                             ? {
                                 borderLeftColor: 'var(--color-primary)',
                                 backgroundColor: 'var(--color-surface-900)',
@@ -978,7 +985,9 @@ export function HomeScreen() {
                           className="h-10 w-10 shrink-0 rounded-full grid place-items-center"
                           style={{ backgroundColor: 'var(--color-tx-icon)' }}
                         >
-                          {t.isMigration ? (
+                          {t.isBridge ? (
+                            <img src={BaseIconAsset} alt="" className="h-5 w-5" />
+                          ) : t.isMigration ? (
                             <img src={TransferV0Icon} alt="" className="h-5 w-5" />
                           ) : t.type === 'received' ? (
                             <ReceiveArrowIcon
@@ -997,13 +1006,15 @@ export function HomeScreen() {
                             className="text-[14px] font-medium truncate"
                             style={{ color: 'var(--color-text-primary)' }}
                           >
-                            {t.isMigration
-                              ? 'Migration'
-                              : t.type === 'received'
-                                ? 'Received'
-                                : t.type === 'self'
-                                  ? 'Internal'
-                                  : 'Sent'}
+                            {t.isBridge
+                              ? 'Bridge'
+                              : t.isMigration
+                                ? 'Migration'
+                                : t.type === 'received'
+                                  ? 'Received'
+                                  : t.type === 'self'
+                                    ? 'Internal'
+                                    : 'Sent'}
                           </div>
                           <div
                             className="text-[12px] flex items-center gap-1.5 truncate"
