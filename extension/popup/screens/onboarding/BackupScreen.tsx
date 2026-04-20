@@ -31,7 +31,23 @@ export function BackupScreen() {
     // Should never happen, but handle gracefully
     return (
       <div className="w-[357px] h-[600px] bg-[var(--color-bg)] flex items-center justify-center p-4">
-        <Alert type="error">No mnemonic found. Please restart onboarding.</Alert>
+        <div className="w-full flex flex-col gap-4">
+          <Alert type="error">No mnemonic found. Please restart onboarding.</Alert>
+          <button
+            type="button"
+            onClick={() => navigate(isAddWalletFlow ? 'home' : 'onboarding-start')}
+            className="w-full h-12 px-5 py-[15px] bg-[var(--color-text-primary)] text-[var(--color-bg)] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90"
+            style={{
+              fontFamily: 'var(--font-sans)',
+              fontSize: 'var(--font-size-base)',
+              fontWeight: 500,
+              lineHeight: 'var(--line-height-snug)',
+              letterSpacing: '0.01em',
+            }}
+          >
+            {isAddWalletFlow ? 'Back to wallet' : 'Restart onboarding'}
+          </button>
+        </div>
       </div>
     );
   }

@@ -95,18 +95,18 @@ export function VerifyScreen() {
           setError(`Error: ${result.error}`);
           return;
         }
+        navigate('home');
         setOnboardingMnemonic(null);
         await fetchBalance();
-        navigate('home');
         return;
       }
 
       const vaultSnap = await send<{ hasVault?: boolean }>(INTERNAL_METHODS.GET_STATE);
       if (vaultSnap?.hasVault) {
-        setOnboardingPassword(null);
-        setOnboardingMnemonic(null);
         await refreshWalletAccounts();
         navigate('onboarding-success');
+        setOnboardingPassword(null);
+        setOnboardingMnemonic(null);
         return;
       }
 
@@ -132,9 +132,6 @@ export function VerifyScreen() {
         return;
       }
 
-      setOnboardingPassword(null);
-      setOnboardingMnemonic(null);
-
       const firstAccount = {
         name: 'Wallet 1',
         address: result.address || '',
@@ -156,6 +153,8 @@ export function VerifyScreen() {
       });
       await refreshWalletAccounts();
       navigate('onboarding-success');
+      setOnboardingPassword(null);
+      setOnboardingMnemonic(null);
     } finally {
       setIsSubmitting(false);
     }

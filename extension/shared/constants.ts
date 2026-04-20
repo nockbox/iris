@@ -211,6 +211,9 @@ export const ERROR_CODES = {
 
   /** Invalid parameters provided to method */
   INVALID_PARAMS: 'INVALID_PARAMS',
+
+  /** Seed phrase is already present in the vault */
+  DUPLICATE_SEED: 'DUPLICATE_SEED',
 } as const;
 
 /**

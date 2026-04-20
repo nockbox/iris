@@ -20,6 +20,8 @@ export function ImportScreen() {
   const {
     navigate,
     syncWallet,
+    refreshWalletAccounts,
+    createMnemonicSeedSource,
     onboardingMnemonic,
     setOnboardingMnemonic,
     currentScreen,
@@ -38,6 +40,7 @@ export function ImportScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [step, setStep] = useState<'mnemonic' | 'password'>('mnemonic');
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const firstInputRef = useAutoFocus<HTMLInputElement>();
@@ -138,8 +141,21 @@ export function ImportScreen() {
         setError('Invalid secret phrase. Please check your words and try again.');
         return;
       }
-      setOnboardingMnemonic(mnemonic);
-      navigate('wallet-add-backup');
+      setIsSubmitting(true);
+      try {
+        const result = await createMnemonicSeedSource(mnemonic, undefined, true);
+        if (result?.error) {
+          setError(
+            result.error === ERROR_CODES.DUPLICATE_SEED
+              ? 'This secret phrase is already in your wallet.'
+              : `Error: ${result.error}`
+          );
+          return;
+        }
+        navigate('home');
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
@@ -179,6 +195,7 @@ export function ImportScreen() {
         accountSpendableBalances: {},
         accountBalanceDetails: {},
       });
+      await refreshWalletAccounts();
       setOnboardingMnemonic(null);
       navigate('onboarding-import-success');
     }
@@ -441,7 +458,8 @@ export function ImportScreen() {
               </button>
               <button
                 onClick={() => void handleImport()}
-                className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90"
+                disabled={isSubmitting}
+                className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   fontFamily: 'var(--font-sans)',
                   fontSize: 'var(--font-size-base)',
@@ -450,7 +468,7 @@ export function ImportScreen() {
                   letterSpacing: '0.01em',
                 }}
               >
-                Import wallet
+                {isSubmitting ? 'Importing…' : 'Import wallet'}
               </button>
             </div>
           </div>
@@ -620,8 +638,8 @@ export function ImportScreen() {
         {/* Bottom button */}
         <div className="border-t border-[var(--color-surface-800)] px-4 py-3">
           <button
-            onClick={handleContinue}
-            disabled={words.some(w => !w)}
+            onClick={() => void handleContinue()}
+            disabled={words.some(w => !w) || isSubmitting}
             className="w-full h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               fontFamily: 'var(--font-sans)',
@@ -631,7 +649,7 @@ export function ImportScreen() {
               letterSpacing: '0.01em',
             }}
           >
-            Import wallet
+            {isSubmitting ? 'Importing…' : 'Import wallet'}
           </button>
         </div>
       </div>
