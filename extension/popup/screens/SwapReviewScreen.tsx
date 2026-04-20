@@ -46,28 +46,30 @@ export function SwapReviewScreen() {
     };
   }, [prepared.destinationAddress, prepared.amountNock]);
 
-  const amountNock = prepared.amountNock.toLocaleString('en-US', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
+  const formatNock = (value: number, digits = 2) =>
+    value.toLocaleString('en-US', {
+      minimumFractionDigits: digits,
+      maximumFractionDigits: digits,
+    });
 
-  const usdValue =
-    priceUsd > 0
-      ? (prepared.amountNock * priceUsd).toLocaleString('en-US', {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        })
-      : null;
+  const formatUsd = (value: number) =>
+    value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-  const networkFeeDisplay =
-    networkFeeNicks != null
-      ? nickToNock(networkFeeNicks).toLocaleString('en-US', {
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        })
-      : '—';
+  const sendAmountNock = prepared.amountNock;
+  const bridgeProtocolFeeNock = sendAmountNock * BRIDGE_PROTOCOL_FEE_RATE;
+  // Only the bridge protocol fee is deducted from the bridged amount.
+  // Network fee is paid separately in NOCK on Nockchain and does not reduce
+  // what lands on the destination chain.
+  const receiveAmountNock = Math.max(sendAmountNock - bridgeProtocolFeeNock, 0);
 
-  const bridgeProtocolFeeNock = prepared.amountNock * BRIDGE_PROTOCOL_FEE_RATE;
+  const sendAmountDisplay = formatNock(sendAmountNock);
+  const receiveAmountDisplay = formatNock(receiveAmountNock);
+
+  const sendUsdValue = priceUsd > 0 ? formatUsd(sendAmountNock * priceUsd) : null;
+  const receiveUsdValue = priceUsd > 0 ? formatUsd(receiveAmountNock * priceUsd) : null;
+
+  const networkFeeDisplay = networkFeeNicks != null ? formatNock(nickToNock(networkFeeNicks)) : '—';
+
   const bridgeProtocolFeeAmountDisplay = bridgeProtocolFeeNock.toLocaleString('en-US', {
     minimumFractionDigits: 0,
     maximumFractionDigits: 4,
@@ -150,13 +152,13 @@ export function SwapReviewScreen() {
               className="font-[Lora] font-medium text-[24px] leading-7"
               style={{ letterSpacing: '-0.48px', color: 'var(--color-text-primary)' }}
             >
-              {amountNock} NOCK
+              {sendAmountDisplay} NOCK
             </div>
             <div
               className="text-[12px] font-medium"
               style={{ color: 'var(--color-text-muted)', letterSpacing: '0.24px', lineHeight: '16px' }}
             >
-              {usdValue !== null ? `≈${usdValue} USD` : '—'}
+              {sendUsdValue !== null ? `≈${sendUsdValue} USD` : '—'}
             </div>
           </div>
           <div className="relative h-10 w-10 shrink-0">
@@ -190,13 +192,13 @@ export function SwapReviewScreen() {
               className="font-[Lora] font-medium text-[24px] leading-7"
               style={{ letterSpacing: '-0.48px', color: 'var(--color-text-primary)' }}
             >
-              {amountNock} NOCK
+              {receiveAmountDisplay} NOCK
             </div>
             <div
               className="text-[12px] font-medium"
               style={{ color: 'var(--color-text-muted)', letterSpacing: '0.24px', lineHeight: '16px' }}
             >
-              {usdValue !== null ? `≈${usdValue} USD` : '—'}
+              {receiveUsdValue !== null ? `≈${receiveUsdValue} USD` : '—'}
             </div>
           </div>
           <div className="relative h-10 w-10 shrink-0">
