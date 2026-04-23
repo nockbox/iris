@@ -654,12 +654,22 @@ export const useStore = create<AppStore>((set, get) => ({
         console.warn('[Store] Failed to cache balances:', cacheErr);
       }
 
+      // If the user switched accounts while we were awaiting the sync/fetch,
+      // don't clobber the top-level `balance` / `availableBalance` / etc. with
+      // stale numbers from the previous account.
+      const latestCurrent = get().wallet.currentAccount;
+      const accountStillCurrent = latestCurrent?.address === currentAccount.address;
+
       set({
         wallet: {
           ...get().wallet,
-          balance: currentBalance,
-          availableBalance: currentBalance,
-          spendableBalance: currentSpendable,
+          ...(accountStillCurrent
+            ? {
+                balance: currentBalance,
+                availableBalance: currentBalance,
+                spendableBalance: currentSpendable,
+              }
+            : {}),
           accountBalances,
           accountSpendableBalances,
           accountBalanceDetails,
