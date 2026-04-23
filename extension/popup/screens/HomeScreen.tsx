@@ -961,17 +961,7 @@ export function HomeScreen() {
                     {group.items.map((t, i) => (
                       <button
                         key={i}
-                        className={`w-full flex items-center gap-3 py-3 rounded-lg overflow-hidden ${
-                          t.isMigration ? 'pl-2 pr-0 -mx-0 border-l-2' : 'px-0 -mx-0'
-                        }`}
-                        style={
-                          t.isMigration
-                            ? {
-                                borderLeftColor: 'var(--color-primary)',
-                                backgroundColor: 'var(--color-surface-900)',
-                              }
-                            : undefined
-                        }
+                        className="w-full flex items-center gap-3 py-3 rounded-lg overflow-hidden px-0 -mx-0"
                         onClick={() => {
                           setSelectedTransaction(t.originalTx);
                           navigate('tx-details');
