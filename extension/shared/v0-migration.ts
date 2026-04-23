@@ -302,7 +302,9 @@ export async function signAndBroadcastV0Migration(
     }
 
     const rpcClient = createBrowserClient(grpcEndpoint);
-    const txId = await rpcClient.sendTransaction(protobuf);
+    // Note: the node's WalletSendTransaction ACK is an empty Acknowledged
+    await rpcClient.sendTransaction(protobuf);
+    const txId = signedTx.id;
 
     // Confirmation is driven by the normal wallet history-sync loop (see vault.ts),
     // which uses the same mempool/peek path as regular sends. Blocking here on
