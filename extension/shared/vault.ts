@@ -2307,13 +2307,19 @@ export class Vault {
 
     const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
     let lastWithBalance = 0;
+    // Keep balances found during the scan so we can seed cachedBalances for
+    // freshly-added sub-wallets.
+    const discoveredAddressByIndex = new Map<number, string>();
+    const discoveredBalanceByIndex = new Map<number, number>();
 
     for (let i = 1; i <= MAX_SUBWALLET_DISCOVERY_SCAN; i++) {
       try {
         const addr = await deriveAddress(seedAccount.mnemonic, i);
+        discoveredAddressByIndex.set(i, addr);
         const balanceResult = await queryV1Balance(addr, rpcClient);
         if (balanceResult.totalNock > 0) {
           lastWithBalance = i;
+          discoveredBalanceByIndex.set(i, balanceResult.totalNock);
         }
       } catch {
         // Skip this index on RPC failure
@@ -2327,7 +2333,8 @@ export class Vault {
       if (existingIndices.has(j)) continue;
 
       const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
-      const address = await deriveAddress(seedAccount.mnemonic, j);
+      const address =
+        discoveredAddressByIndex.get(j) ?? (await deriveAddress(seedAccount.mnemonic, j));
       const newAccount: SubAccount = {
         name: this.getDefaultChildWalletName(seedOrdinal, j),
         address,
@@ -2344,7 +2351,18 @@ export class Vault {
     if (added > 0) {
       seedAccount.accounts.sort((a, b) => a.index - b.index);
       this.rebuildFlatAccounts();
+
+      // Seed cachedBalances for the newly added accounts so the dropdown shows
+      // the right number immediately
+      const merged = { ...this.cachedBalances };
+      for (const [idx, balance] of discoveredBalanceByIndex) {
+        const addr = discoveredAddressByIndex.get(idx);
+        if (addr) merged[addr] = balance;
+      }
+      this.cachedBalances = merged;
+
       await this.saveAccountsToVault();
+      await this.saveAccountData();
     }
 
     return { ok: true, added };

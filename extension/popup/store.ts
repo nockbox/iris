@@ -316,16 +316,23 @@ export const useStore = create<AppStore>((set, get) => ({
 
   refreshWalletAccounts: async () => {
     try {
-      const [accountsResult, seedSourcesResult] = await Promise.all([
+      const [accountsResult, seedSourcesResult, cachedBalancesResult] = await Promise.all([
         send<{
           accounts: SubAccount[];
           currentAccount: SubAccount | null;
           activeSeedSourceId: string | null;
         }>(INTERNAL_METHODS.GET_ACCOUNTS),
         send<{ seedSources: WalletState['seedSources'] }>(INTERNAL_METHODS.GET_SEED_SOURCES),
+        send<{ balances?: Record<string, number> }>(INTERNAL_METHODS.GET_CACHED_BALANCES).catch(
+          () => ({ balances: undefined })
+        ),
       ]);
 
       const accounts = accountsResult.accounts || [];
+      const fetchedBalances = cachedBalancesResult?.balances;
+      const mergedAccountBalances = fetchedBalances
+        ? { ...get().wallet.accountBalances, ...fetchedBalances }
+        : get().wallet.accountBalances;
 
       set({
         wallet: {
@@ -335,6 +342,7 @@ export const useStore = create<AppStore>((set, get) => ({
           currentAccount: accountsResult.currentAccount || null,
           address: accountsResult.currentAccount?.address || null,
           activeSeedSourceId: accountsResult.activeSeedSourceId || null,
+          accountBalances: mergedAccountBalances,
         },
       });
     } catch (error) {
