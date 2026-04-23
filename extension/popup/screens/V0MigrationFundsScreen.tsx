@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../components/AccountIcon';
@@ -12,6 +12,13 @@ import { truncateAddress } from '../utils/format';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { pkhAddressToDigest } from '../../shared/address-encoding';
 import { buildV0MigrationTx } from '../../shared/v0-migration';
+
+function formatNockAmount(value: number): string {
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
 
 export function V0MigrationFundsScreen() {
   const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft } = useStore();
@@ -32,11 +39,49 @@ export function V0MigrationFundsScreen() {
   const [minimumFee, setMinimumFee] = useState<number | null>(null);
   const estimateAbortRef = useRef<AbortController | null>(null);
 
+  // Shrink the big v0 balance number to fit its card when the value is wide
+  // (e.g. 236,807.58). Starts at 56px, floors at 28px.
+  const balanceContainerRef = useRef<HTMLDivElement | null>(null);
+  const balanceTextRef = useRef<HTMLSpanElement | null>(null);
+  const [balanceFontSize, setBalanceFontSize] = useState(56);
+
   useEffect(() => {
     if (v0MigrationDraft.destinationWalletIndex === null && visibleAccounts.length > 0) {
       setV0MigrationDraft({ destinationWalletIndex: visibleAccounts[0].index });
     }
   }, [v0MigrationDraft.destinationWalletIndex, visibleAccounts, setV0MigrationDraft]);
+
+  const v0BalanceDisplay = formatNockAmount(v0MigrationDraft.v0BalanceNock ?? 0);
+
+  useLayoutEffect(() => {
+    const container = balanceContainerRef.current;
+    const text = balanceTextRef.current;
+    if (!container || !text) return;
+
+    let raf = 0;
+    const fit = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const maxWidth = container.clientWidth;
+        if (!maxWidth) return;
+        let size = 56;
+        text.style.fontSize = `${size}px`;
+        while (text.scrollWidth > maxWidth && size > 28) {
+          size -= 1;
+          text.style.fontSize = `${size}px`;
+        }
+        setBalanceFontSize(size);
+      });
+    };
+
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(container);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [v0BalanceDisplay]);
 
   const destinationWallet =
     visibleAccounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) ||
@@ -219,8 +264,22 @@ export function V0MigrationFundsScreen() {
 
         <div className="rounded-[14px] p-4" style={{ backgroundColor: 'var(--color-surface-900)' }}>
           <div className="text-[12px] leading-[18px] font-medium">v0 Wallet Balance</div>
-          <div className="mt-2 text-[56px] leading-[56px] font-display tracking-[-0.03em]">
-            {v0BalanceNock.toLocaleString('en-US')}
+          <div
+            ref={balanceContainerRef}
+            className="mt-2 font-display tracking-[-0.03em]"
+            style={{ width: '100%' }}
+          >
+            <span
+              ref={balanceTextRef}
+              style={{
+                display: 'inline-block',
+                whiteSpace: 'nowrap',
+                fontSize: `${balanceFontSize}px`,
+                lineHeight: '56px',
+              }}
+            >
+              {v0BalanceDisplay}
+            </span>
           </div>
         </div>
 
@@ -231,7 +290,7 @@ export function V0MigrationFundsScreen() {
           >
             <span className="text-[14px] font-medium">Debug note spend</span>
             <span className="text-[14px] font-medium">
-              {debugSpendAmount.toLocaleString('en-US')} NOCK
+              {formatNockAmount(debugSpendAmount)} NOCK
             </span>
           </div>
         )}
