@@ -25,11 +25,45 @@ export type V0MigrationOptions = {
   /**
    * Build: cap inputs to two legacy notes (prefer each >= 100 NOCK, smallest
    * first — same fee heuristic as the SDK capped-note path) and log the build
-   * result. Sign/broadcast: log signed tx + protobuf (unsigned is always
-   * logged once before signing, even when `debug` is false).
+   * result. Sign/broadcast: when true, log signed tx + protobuf after signing.
+   * Unsigned raw tx is logged on the review screen (before Send) via
+   * {@link logV0MigrationUnsignedTxPayload}.
    */
   debug?: boolean;
 };
+
+/** Dedupes React Strict Mode double-mount for the same built tx id. */
+let lastLoggedV0MigrationUnsignedTxId: string | undefined;
+
+/**
+ * Log the unsigned migration tx for inspection before the user taps Send.
+ * Call from the review screen when {@link V0MigrationTxSignPayload} is ready.
+ */
+export function logV0MigrationUnsignedTxPayload(
+  payload: V0MigrationTxSignPayload,
+  message = '[V0 Migration] Unsigned transaction (review — before Send):'
+): void {
+  const { rawTx, notes, spendConditions } = payload;
+  const dbgTx = rawTx as { id?: string; version?: number; spends?: unknown[] };
+  const id = dbgTx.id;
+  if (typeof id === 'string' && lastLoggedV0MigrationUnsignedTxId === id) {
+    return;
+  }
+  if (typeof id === 'string') {
+    lastLoggedV0MigrationUnsignedTxId = id;
+  }
+
+  console.log(message, {
+    rawTx: { id: dbgTx.id, version: dbgTx.version, spendsCount: dbgTx.spends?.length ?? 0 },
+    notesCount: notes.length,
+    spendConditionsCount: spendConditions?.length ?? 0,
+    inputNotesSummary: notes.map((n, i) => ({
+      index: i,
+      assetsNicks: n.assets,
+    })),
+    fullRawTx: rawTx,
+  });
+}
 
 function summarizeSmallestV0Note(
   notes: Array<{ assets: string }>
@@ -223,20 +257,6 @@ export async function signAndBroadcastV0Migration(
 
   try {
     const { rawTx, notes, spendConditions, refundLock } = payload;
-
-    {
-      const dbgTx = rawTx as { id?: string; version?: number; spends?: unknown[] };
-      console.log('[V0 Migration] Unsigned transaction (verify before signing):', {
-        rawTx: { id: dbgTx.id, version: dbgTx.version, spendsCount: dbgTx.spends?.length ?? 0 },
-        notesCount: notes.length,
-        spendConditionsCount: spendConditions?.length ?? 0,
-        inputNotesSummary: notes.map((n, i) => ({
-          index: i,
-          assetsNicks: n.assets,
-        })),
-        fullRawTx: rawTx,
-      });
-    }
 
     let builder: wasm.TxBuilder;
     try {
