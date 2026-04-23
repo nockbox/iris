@@ -22,8 +22,9 @@ export type { V0BalanceResult };
 /** Shared optional flags for v0 migration build and sign/broadcast. */
 export type V0MigrationOptions = {
   /**
-   * Build: use a single smallest note and log the build result.
-   * Sign/broadcast: log unsigned/signed txs.
+   * Build: cap inputs to the two smallest legacy notes (sorted by value) and
+   * log the build result. Sign/broadcast: log signed tx + protobuf (unsigned
+   * is always logged once before signing, even when `debug` is false).
    */
   debug?: boolean;
 };
@@ -110,7 +111,7 @@ export async function queryV0Balance(mnemonic: string): Promise<V0BalanceResult>
  * Build v0 migration transaction (queries balance internally, then builds to `targetV1Pkh`).
  *
  * @param targetV1Pkh - Destination v1 PKH (`Digest` from iris-wasm). Use `pkhAddressToDigest` for base58 wallet addresses.
- * @param options.debug - When true, builds with a single smallest note and logs the result (see {@link V0MigrationOptions}).
+ * @param options.debug - When true, builds with the two smallest notes and logs the result (see {@link V0MigrationOptions}).
  */
 export async function buildV0MigrationTx(
   mnemonic: string,
@@ -126,7 +127,7 @@ export async function buildV0MigrationTx(
 
   let result = await sdkBuildV0MigrationTx(sourcePublicKey, grpcEndpoint, targetV1Pkh, {
     txEngineSettings,
-    maxNotes: debug ? 1 : undefined,
+    maxNotes: debug ? 2 : undefined,
   });
 
   if (result.v0MigrationTxSignPayload) {
@@ -181,11 +182,11 @@ export async function buildV0MigrationTx(
       smallestDiscoveredNote: smallestNote,
       txId: result.txId,
       feeNock: result.feeNock,
-      sdkDebugUsesSingleSmallestNote: debug,
+      sdkDebugMaxNotes: debug ? 2 : undefined,
     });
     if (!result.v0MigrationTxSignPayload) {
       console.warn(
-        '[V0 Migration] Build returned discovery-only result (no sign payload). This usually means the selected single note could not produce a valid migration tx with current fees/settings.',
+        '[V0 Migration] Build returned discovery-only result (no sign payload). This usually means the selected notes could not produce a valid migration tx with current fees/settings.',
         {
           endpoint: grpcEndpoint,
           txEngineSettings,
@@ -224,12 +225,16 @@ export async function signAndBroadcastV0Migration(
   try {
     const { rawTx, notes, spendConditions, refundLock } = payload;
 
-    if (debug) {
+    {
       const dbgTx = rawTx as { id?: string; version?: number; spends?: unknown[] };
-      console.log('[V0 Migration] Unsigned transaction (before signing):', {
+      console.log('[V0 Migration] Unsigned transaction (verify before signing):', {
         rawTx: { id: dbgTx.id, version: dbgTx.version, spendsCount: dbgTx.spends?.length ?? 0 },
         notesCount: notes.length,
         spendConditionsCount: spendConditions?.length ?? 0,
+        inputNotesSummary: notes.map((n, i) => ({
+          index: i,
+          assetsNicks: n.assets,
+        })),
         fullRawTx: rawTx,
       });
     }
