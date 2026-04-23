@@ -304,7 +304,9 @@ export async function signAndBroadcastV0Migration(
     }
 
     const rpcClient = createBrowserClient(grpcEndpoint);
-    const txId = await rpcClient.sendTransaction(protobuf);
+    // Note: the node's WalletSendTransaction ACK is an empty Acknowledged
+    await rpcClient.sendTransaction(protobuf);
+    const txId = signedTx.id;
 
     const deadline = Date.now() + CONFIRM_TIMEOUT_MS;
     while (Date.now() < deadline) {
