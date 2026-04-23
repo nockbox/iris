@@ -3518,6 +3518,8 @@ export class Vault {
 
       const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
       const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
+      // Signing changes the tx bytes (witness data), so the id recomputes.
+      const signedTxId = signedRawTx.id;
 
       const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
         txEngineSettings: buildCtx.txEngineSettings,
@@ -3551,7 +3553,8 @@ export class Vault {
       });
 
       console.log('[Bridge Swap] Signed transaction (before broadcast):', {
-        txId: buildCtx.bridgeResult.txId,
+        unsignedTxId: buildCtx.bridgeResult.txId,
+        signedTxId,
         feeNicks: Number(buildCtx.bridgeResult.fee),
         refundPkh: buildCtx.refundPkh,
         destinationRoundtrip: {
@@ -3568,7 +3571,7 @@ export class Vault {
       if (debugNoBroadcast) {
         console.log('[Bridge Swap] Debug no-broadcast mode enabled; skipping sendTransaction');
         return {
-          txId: buildCtx.bridgeResult.txId,
+          txId: signedTxId,
           walletTx,
           broadcasted: false,
         };
@@ -3577,16 +3580,16 @@ export class Vault {
       await rpcClient.sendTransaction(signedProtobufTx);
 
       walletTx.fee = Number(buildCtx.bridgeResult.fee);
-      walletTx.txHash = buildCtx.bridgeResult.txId;
+      walletTx.txHash = signedTxId;
       walletTx.status = 'broadcasted_unconfirmed';
       await this.updateWalletTransaction(currentAccount.address, walletTxId, {
         fee: walletTx.fee,
-        txHash: buildCtx.bridgeResult.txId,
+        txHash: signedTxId,
         status: 'broadcasted_unconfirmed',
       });
 
       return {
-        txId: buildCtx.bridgeResult.txId,
+        txId: signedTxId,
         walletTx,
         broadcasted: true,
       };
