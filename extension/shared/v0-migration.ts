@@ -22,11 +22,10 @@ export type { V0BalanceResult };
 /** Shared optional flags for v0 migration build and sign/broadcast. */
 export type V0MigrationOptions = {
   /**
-   * Build: cap inputs to two legacy notes (prefer each >= 100 NOCK, smallest
-   * first — same fee heuristic as the SDK capped-note path) and log the build
-   * result. Sign/broadcast: when true, log signed tx + protobuf after signing.
-   * Unsigned raw tx is logged on the review screen (before Send) via
-   * {@link logV0MigrationUnsignedTxPayload}.
+   * Build: extra console logging around the migration build (same tx shape as
+   * production: all legacy notes). Sign/broadcast: when true, log signed tx +
+   * protobuf after signing. Unsigned raw tx is logged on the review screen
+   * (before Send) via {@link logV0MigrationUnsignedTxPayload}.
    */
   debug?: boolean;
 };
@@ -146,7 +145,7 @@ export async function queryV0Balance(mnemonic: string): Promise<V0BalanceResult>
  * Build v0 migration transaction (queries balance internally, then builds to `targetV1Pkh`).
  *
  * @param targetV1Pkh - Destination v1 PKH (`Digest` from iris-wasm). Use `pkhAddressToDigest` for base58 wallet addresses.
- * @param options.debug - When true, builds with two capped notes (prefer >= 100 NOCK each) and logs the result (see {@link V0MigrationOptions}).
+ * @param options.debug - When true, emits extra build logs (see {@link V0MigrationOptions}).
  */
 export async function buildV0MigrationTx(
   mnemonic: string,
@@ -162,7 +161,6 @@ export async function buildV0MigrationTx(
 
   let result = await sdkBuildV0MigrationTx(sourcePublicKey, grpcEndpoint, targetV1Pkh, {
     txEngineSettings,
-    maxNotes: debug ? 2 : undefined,
   });
 
   if (result.v0MigrationTxSignPayload) {
@@ -217,7 +215,7 @@ export async function buildV0MigrationTx(
       smallestDiscoveredNote: smallestNote,
       txId: result.txId,
       feeNock: result.feeNock,
-      sdkDebugMaxNotes: debug ? 2 : undefined,
+      notesInBuiltTx: result.v0MigrationTxSignPayload?.notes.length,
     });
     if (!result.v0MigrationTxSignPayload) {
       console.warn(
