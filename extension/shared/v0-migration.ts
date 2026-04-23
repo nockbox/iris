@@ -16,7 +16,7 @@ import type { Digest } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
 import { NOCK_TO_NICKS } from './constants';
 import { createBrowserClient } from './rpc-client-browser';
-import type { WalletTransaction } from './types';
+import type { TransactionDetails, WalletTransaction } from './types';
 
 export type { V0BalanceResult };
 
@@ -325,4 +325,17 @@ export function isMigrationWalletTx(tx: WalletTransaction): boolean {
   const to = (tx.recipient ?? '').trim();
   if (tx.direction !== 'incoming' || !from || !to) return false;
   return from.length >= 60 && to.length < 60;
+}
+
+/**
+ * Whether {@link TransactionDetails} on the post-send screen came from the
+ * v0 migration flow (legacy pubkey as `from`, shorter v1 account as `to`).
+ * Regular send uses the current v1 account as `from`, which is shorter.
+ */
+export function isV0MigrationSubmittedTx(
+  tx: Pick<TransactionDetails, 'from' | 'to'> | null | undefined
+): boolean {
+  const from = (tx?.from ?? '').trim();
+  const to = (tx?.to ?? '').trim();
+  return from.length >= 100 && to.length > 0 && to.length < from.length;
 }

@@ -9,6 +9,7 @@ import {
   createNockblocksClient,
   isNockblocksConfigured,
 } from '../../shared/nockblocks-client';
+import { isV0MigrationSubmittedTx } from '../../shared/v0-migration';
 
 type SubmittedStatus = 'pending' | 'mempool' | 'confirmed';
 
@@ -21,9 +22,11 @@ export function SendSubmittedScreen() {
   const [status, setStatus] = useState<SubmittedStatus>('pending');
 
   const txIdForPoll = lastTransaction?.txid ?? '';
+  const isMigrationSubmission = isV0MigrationSubmittedTx(lastTransaction);
 
   useEffect(() => {
     if (!txIdForPoll) return;
+    if (isMigrationSubmission) return;
     if (!isNockblocksConfigured()) return;
 
     const client = createNockblocksClient();
@@ -64,7 +67,7 @@ export function SendSubmittedScreen() {
       cancelled = true;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [txIdForPoll]);
+  }, [txIdForPoll, isMigrationSubmission]);
 
   function handleBack() {
     navigate('home');
@@ -190,34 +193,36 @@ export function SendSubmittedScreen() {
 
             {txId && (
               <>
-                <div
-                  className="rounded-lg p-3 flex items-center justify-between gap-2.5"
-                  style={{ backgroundColor: 'var(--color-surface-900)' }}
-                >
+                {!isMigrationSubmission && (
                   <div
-                    className="text-sm font-medium leading-[18px] tracking-[0.14px]"
-                    style={{ color: 'var(--color-text-primary)' }}
+                    className="rounded-lg p-3 flex items-center justify-between gap-2.5"
+                    style={{ backgroundColor: 'var(--color-surface-900)' }}
                   >
-                    Status
+                    <div
+                      className="text-sm font-medium leading-[18px] tracking-[0.14px]"
+                      style={{ color: 'var(--color-text-primary)' }}
+                    >
+                      Status
+                    </div>
+                    <div
+                      className="text-sm font-medium leading-[18px] tracking-[0.14px] whitespace-nowrap"
+                      style={{
+                        color:
+                          status === 'confirmed'
+                            ? 'var(--color-green)'
+                            : status === 'mempool'
+                              ? 'var(--color-primary)'
+                              : 'var(--color-text-muted)',
+                      }}
+                    >
+                      {status === 'confirmed'
+                        ? 'Confirmed'
+                        : status === 'mempool'
+                          ? 'Accepted'
+                          : 'Pending'}
+                    </div>
                   </div>
-                  <div
-                    className="text-sm font-medium leading-[18px] tracking-[0.14px] whitespace-nowrap"
-                    style={{
-                      color:
-                        status === 'confirmed'
-                          ? 'var(--color-green)'
-                          : status === 'mempool'
-                            ? 'var(--color-primary)'
-                            : 'var(--color-text-muted)',
-                    }}
-                  >
-                    {status === 'confirmed'
-                      ? 'Confirmed'
-                      : status === 'mempool'
-                        ? 'Accepted'
-                        : 'Pending'}
-                  </div>
-                </div>
+                )}
 
                 <div
                   className="rounded-lg p-3 flex items-center justify-between gap-2.5"
