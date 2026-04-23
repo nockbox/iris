@@ -23,9 +23,10 @@ export type { V0BalanceResult };
 /** Shared optional flags for v0 migration build and sign/broadcast. */
 export type V0MigrationOptions = {
   /**
-   * Build: cap inputs to the two smallest legacy notes (sorted by value) and
-   * log the build result. Sign/broadcast: log signed tx + protobuf (unsigned
-   * is always logged once before signing, even when `debug` is false).
+   * Build: cap inputs to two legacy notes (prefer each >= 100 NOCK, smallest
+   * first — same fee heuristic as the SDK capped-note path) and log the build
+   * result. Sign/broadcast: log signed tx + protobuf (unsigned is always
+   * logged once before signing, even when `debug` is false).
    */
   debug?: boolean;
 };
@@ -109,7 +110,7 @@ export async function queryV0Balance(mnemonic: string): Promise<V0BalanceResult>
  * Build v0 migration transaction (queries balance internally, then builds to `targetV1Pkh`).
  *
  * @param targetV1Pkh - Destination v1 PKH (`Digest` from iris-wasm). Use `pkhAddressToDigest` for base58 wallet addresses.
- * @param options.debug - When true, builds with the two smallest notes and logs the result (see {@link V0MigrationOptions}).
+ * @param options.debug - When true, builds with two capped notes (prefer >= 100 NOCK each) and logs the result (see {@link V0MigrationOptions}).
  */
 export async function buildV0MigrationTx(
   mnemonic: string,
