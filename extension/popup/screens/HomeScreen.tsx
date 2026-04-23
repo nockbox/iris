@@ -397,11 +397,7 @@ export function HomeScreen() {
         type,
         isMigration,
         isBridge,
-        from: isMigration
-          ? `Legacy · ${counterpartyShort}`
-          : isBridge
-            ? `Base · ${counterpartyShort}`
-            : counterpartyShort,
+        from: isMigration ? `Legacy · ${counterpartyShort}` : counterpartyShort,
         amount:
           type === 'sent'
             ? `-${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
@@ -966,10 +962,10 @@ export function HomeScreen() {
                       <button
                         key={i}
                         className={`w-full flex items-center gap-3 py-3 rounded-lg overflow-hidden ${
-                          t.isMigration || t.isBridge ? 'pl-2 pr-0 -mx-0 border-l-2' : 'px-0 -mx-0'
+                          t.isMigration ? 'pl-2 pr-0 -mx-0 border-l-2' : 'px-0 -mx-0'
                         }`}
                         style={
-                          t.isMigration || t.isBridge
+                          t.isMigration
                             ? {
                                 borderLeftColor: 'var(--color-primary)',
                                 backgroundColor: 'var(--color-surface-900)',
