@@ -1,14 +1,70 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStore } from '../store';
 import { formatNock } from '../../shared/currency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { CheckIcon } from '../components/icons/CheckIcon';
 import { SendPaperPlaneIcon } from '../components/icons/SendPaperPlaneIcon';
 import { truncateAddress } from '../utils/format';
+import {
+  createNockblocksClient,
+  isNockblocksConfigured,
+} from '../../shared/nockblocks-client';
+
+type SubmittedStatus = 'pending' | 'mempool' | 'confirmed';
+
+const MEMPOOL_POLL_INTERVAL_MS = 5000;
+const MEMPOOL_POLL_TIMEOUT_MS = 2 * 60 * 1000;
 
 export function SendSubmittedScreen() {
   const { navigate, lastTransaction, priceUsd, blockExplorerUrl } = useStore();
   const [copiedTxId, setCopiedTxId] = useState(false);
+  const [status, setStatus] = useState<SubmittedStatus>('pending');
+
+  const txIdForPoll = lastTransaction?.txid ?? '';
+
+  useEffect(() => {
+    if (!txIdForPoll) return;
+    if (!isNockblocksConfigured()) return;
+
+    const client = createNockblocksClient();
+    const startedAt = Date.now();
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    async function pollOnce(): Promise<void> {
+      if (cancelled) return;
+      try {
+        const confirmed = await client.getTransactionByTxid(txIdForPoll);
+        if (cancelled) return;
+        if (confirmed) {
+          setStatus('confirmed');
+          return;
+        }
+
+        const mempoolTx = await client.getMempoolTransactionByTxid(txIdForPoll);
+        if (cancelled) return;
+        if (mempoolTx) {
+          setStatus(prev => (prev === 'confirmed' ? prev : 'mempool'));
+        }
+      } catch {
+        // Transient errors (including the node's peek/indexer being late on
+        // freshly-broadcast v0→v1 migration txs) are silently ignored — we
+        // simply retry until the timeout. Confirmation is ultimately driven
+        // by the wallet's history-sync loop.
+      }
+
+      if (cancelled) return;
+      if (Date.now() - startedAt >= MEMPOOL_POLL_TIMEOUT_MS) return;
+      timeoutId = setTimeout(pollOnce, MEMPOOL_POLL_INTERVAL_MS);
+    }
+
+    void pollOnce();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [txIdForPoll]);
 
   function handleBack() {
     navigate('home');
@@ -134,6 +190,35 @@ export function SendSubmittedScreen() {
 
             {txId && (
               <>
+                <div
+                  className="rounded-lg p-3 flex items-center justify-between gap-2.5"
+                  style={{ backgroundColor: 'var(--color-surface-900)' }}
+                >
+                  <div
+                    className="text-sm font-medium leading-[18px] tracking-[0.14px]"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    Status
+                  </div>
+                  <div
+                    className="text-sm font-medium leading-[18px] tracking-[0.14px] whitespace-nowrap"
+                    style={{
+                      color:
+                        status === 'confirmed'
+                          ? 'var(--color-green)'
+                          : status === 'mempool'
+                            ? 'var(--color-primary)'
+                            : 'var(--color-text-muted)',
+                    }}
+                  >
+                    {status === 'confirmed'
+                      ? 'Confirmed'
+                      : status === 'mempool'
+                        ? 'Accepted'
+                        : 'Pending'}
+                  </div>
+                </div>
+
                 <div
                   className="rounded-lg p-3 flex items-center justify-between gap-2.5"
                   style={{ backgroundColor: 'var(--color-surface-900)' }}

@@ -29,9 +29,6 @@ export type V0MigrationOptions = {
   debug?: boolean;
 };
 
-const CONFIRM_POLL_INTERVAL_MS = 3000;
-const CONFIRM_TIMEOUT_MS = 90_000;
-
 function summarizeSmallestV0Note(
   notes: Array<{ assets: string }>
 ): { index: number; assetsNicks: string; assetsNock: number } | null {
@@ -307,15 +304,10 @@ export async function signAndBroadcastV0Migration(
     const rpcClient = createBrowserClient(grpcEndpoint);
     const txId = await rpcClient.sendTransaction(protobuf);
 
-    const deadline = Date.now() + CONFIRM_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      const accepted = await rpcClient.isTransactionAccepted(txId);
-      if (accepted) {
-        return { txId, confirmed: true };
-      }
-      await new Promise(resolve => setTimeout(resolve, CONFIRM_POLL_INTERVAL_MS));
-    }
-
+    // Confirmation is driven by the normal wallet history-sync loop (see vault.ts),
+    // which uses the same mempool/peek path as regular sends. Blocking here on
+    // `transactionAccepted` caused stalls because some nodes' peek path returns
+    // "Peek operation failed" for freshly-broadcast v0→v1 migration txs.
     return { txId, confirmed: false };
   } finally {
     masterKey.free();

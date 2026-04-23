@@ -1777,18 +1777,26 @@ export class Vault {
         : direction === 'self'
           ? accountAddress
           : this.getUniqueLockRootFromOutputs(externalOutputs)
+    // v0→v1 migration spends carry `version: "v0_to_v1"` and a `signaturesV0[]`
+    const migrationSpend = externalSpends.find(
+      (spend: NockblocksSpend) => spend.version === 'v0_to_v1'
+    )
+    const migrationV0Pubkey =
+      migrationSpend?.signaturesV0?.find(sig => typeof sig?.pubkey === 'string' && sig.pubkey.length > 0)?.pubkey
+
     const sender =
       direction === 'incoming'
-        ? this.getUniqueLockRootFromSpends(externalSpends)
+        ? migrationV0Pubkey ?? this.getUniqueLockRootFromSpends(externalSpends)
         : accountAddress
 
     const migrationFromV0 =
       direction === 'incoming' &&
-      typeof sender === 'string' &&
-      sender.length >= 60 &&
-      typeof recipient === 'string' &&
-      recipient.length > 0 &&
-      recipient.length < 60
+      (Boolean(migrationSpend) ||
+        (typeof sender === 'string' &&
+          sender.length >= 60 &&
+          typeof recipient === 'string' &&
+          recipient.length > 0 &&
+          recipient.length < 60))
 
     return {
       id: txId,
