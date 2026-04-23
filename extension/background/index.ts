@@ -297,7 +297,9 @@ function isProviderMethod(method: unknown): method is string {
     method === PROVIDER_METHODS.SIGN_MESSAGE ||
     method === PROVIDER_METHODS.SEND_TRANSACTION ||
     method === PROVIDER_METHODS.GET_WALLET_INFO ||
-    method === PROVIDER_METHODS.SIGN_TX
+    method === PROVIDER_METHODS.SIGN_TX ||
+    // Legacy v0 API method
+    method === 'nock_signRawTx'
   );
 }
 
