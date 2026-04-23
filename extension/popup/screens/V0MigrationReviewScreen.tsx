@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../components/AccountIcon';
@@ -15,6 +15,46 @@ export function V0MigrationReviewScreen() {
     wallet.accounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) || null;
   const amount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock ?? 0;
   const usdAmount = amount * priceUsd;
+
+  const amountDisplay = amount.toLocaleString('en-US', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+
+  // Shrink the hero amount to fit when the value is wide.
+  const amountContainerRef = useRef<HTMLDivElement | null>(null);
+  const amountTextRef = useRef<HTMLSpanElement | null>(null);
+  const [amountFontSize, setAmountFontSize] = useState(32);
+
+  useLayoutEffect(() => {
+    const container = amountContainerRef.current;
+    const text = amountTextRef.current;
+    if (!container || !text) return;
+
+    let raf = 0;
+    const fit = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const maxWidth = container.clientWidth;
+        if (!maxWidth) return;
+        let size = 32;
+        text.style.fontSize = `${size}px`;
+        while (text.scrollWidth > maxWidth && size > 20) {
+          size -= 1;
+          text.style.fontSize = `${size}px`;
+        }
+        setAmountFontSize(size);
+      });
+    };
+
+    fit();
+    const ro = new ResizeObserver(fit);
+    ro.observe(container);
+    return () => {
+      ro.disconnect();
+      cancelAnimationFrame(raf);
+    };
+  }, [amountDisplay]);
   const canSend =
     Boolean(v0MigrationDraft.v0MigrationTxSignPayload) &&
     Boolean(v0MigrationDraft.v0Mnemonic) &&
@@ -73,8 +113,22 @@ export function V0MigrationReviewScreen() {
       <div className="flex-1 px-4 py-3 flex flex-col gap-3">
         <div className="flex flex-col items-center text-center gap-2">
           <img src={WalletIconYellow} alt="" className="w-10 h-10" />
-          <div className="font-display text-[32px] leading-[40px] tracking-[-0.03em]">
-            {amount.toLocaleString('en-US')} <span style={{ color: 'var(--color-text-muted)' }}>NOCK</span>
+          <div
+            ref={amountContainerRef}
+            className="font-display tracking-[-0.03em]"
+            style={{ width: '100%', textAlign: 'center' }}
+          >
+            <span
+              ref={amountTextRef}
+              style={{
+                display: 'inline-block',
+                whiteSpace: 'nowrap',
+                fontSize: `${amountFontSize}px`,
+                lineHeight: '40px',
+              }}
+            >
+              {amountDisplay} <span style={{ color: 'var(--color-text-muted)' }}>NOCK</span>
+            </span>
           </div>
           <div className="text-[16px] font-medium">
             ${usdAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
