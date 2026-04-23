@@ -1,10 +1,13 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../components/AccountIcon';
 import WalletIconYellow from '../assets/wallet-icon-yellow.svg';
 import { truncateAddress } from '../utils/format';
-import { signAndBroadcastV0Migration } from '../../shared/v0-migration';
+import {
+  logV0MigrationUnsignedTxPayload,
+  signAndBroadcastV0Migration,
+} from '../../shared/v0-migration';
 import { Alert } from '../components/Alert';
 
 export function V0MigrationReviewScreen() {
@@ -55,6 +58,13 @@ export function V0MigrationReviewScreen() {
       cancelAnimationFrame(raf);
     };
   }, [amountDisplay]);
+
+  useEffect(() => {
+    const payload = v0MigrationDraft.v0MigrationTxSignPayload;
+    if (!payload) return;
+    logV0MigrationUnsignedTxPayload(payload);
+  }, [v0MigrationDraft.v0MigrationTxSignPayload]);
+
   const canSend =
     Boolean(v0MigrationDraft.v0MigrationTxSignPayload) &&
     Boolean(v0MigrationDraft.v0Mnemonic) &&
