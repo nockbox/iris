@@ -112,10 +112,12 @@ export function AccountSelector() {
     ]);
 
     if (result?.ok) {
+      const renamedAccount = { ...account, name: editingName.trim() };
+
       // Update wallet state with new name
       const updatedAccounts = wallet.accounts.map(acc =>
         wallet.accounts.findIndex(a => a.address === acc.address) === editingIndex
-          ? { ...acc, name: editingName.trim() }
+          ? renamedAccount
           : acc
       );
       const updatedCurrentAccount =
@@ -125,10 +127,24 @@ export function AccountSelector() {
             ? { ...wallet.currentAccount, name: editingName.trim() }
             : null
           : wallet.currentAccount;
+      const updatedSeedSources = wallet.seedSources.map(seed => {
+        const updatedSeedAccounts = seed.accounts.map(seedAccount =>
+          seedAccount.address === account.address ? renamedAccount : seedAccount
+        );
+
+        return {
+          ...seed,
+          ...(account.index === 0 && seed.accounts.some(seedAccount => seedAccount.address === account.address)
+            ? { name: editingName.trim() }
+            : {}),
+          accounts: updatedSeedAccounts,
+        };
+      });
 
       syncWallet({
         ...wallet,
         accounts: updatedAccounts,
+        seedSources: updatedSeedSources,
         currentAccount: updatedCurrentAccount,
       });
     } else if (result?.error) {
