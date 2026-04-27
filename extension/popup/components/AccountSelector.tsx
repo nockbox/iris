@@ -37,16 +37,19 @@ export function AccountSelector() {
   );
 
   async function handleSwitchAccount(accountAddress: string) {
-    const result = await send<{ ok?: boolean; account?: SubAccount; error?: string }>(
-      INTERNAL_METHODS.SWITCH_ACCOUNT,
-      [accountAddress]
-    );
+    const result = await send<{
+      ok?: boolean;
+      account?: SubAccount;
+      activeSeedSourceId?: string | null;
+      error?: string;
+    }>(INTERNAL_METHODS.SWITCH_ACCOUNT, [accountAddress]);
 
     if (result?.ok && result.account) {
       const updatedWallet = {
         ...wallet,
         currentAccount: result.account,
         address: result.account.address,
+        activeSeedSourceId: result.activeSeedSourceId ?? wallet.activeSeedSourceId,
       };
       syncWallet(updatedWallet);
     }
