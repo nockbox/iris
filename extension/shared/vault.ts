@@ -1042,6 +1042,12 @@ export class Vault {
     });
   }
 
+  private capWalletTransactions(accountAddress: string): void {
+    if (this.walletTxStore[accountAddress]?.length > 1000) {
+      this.walletTxStore[accountAddress] = this.walletTxStore[accountAddress].slice(0, 1000);
+    }
+  }
+
   private findWalletTransactionIndex(accountAddress: string, tx: Partial<WalletTransaction>): number {
     const transactions = this.walletTxStore[accountAddress] || [];
     const trackingTxId = tx.trackingTxId || tx.txHash;
@@ -1106,9 +1112,7 @@ export class Vault {
     this.sortWalletTransactions(tx.accountAddress);
 
     // Keep a larger window now that confirmed history is stored here too.
-    if (this.walletTxStore[tx.accountAddress].length > 1000) {
-      this.walletTxStore[tx.accountAddress] = this.walletTxStore[tx.accountAddress].slice(0, 1000);
-    }
+    this.capWalletTransactions(tx.accountAddress);
 
     await this.saveAccountData();
   }
@@ -1139,6 +1143,7 @@ export class Vault {
     }
 
     this.sortWalletTransactions(tx.accountAddress);
+    this.capWalletTransactions(tx.accountAddress);
   }
 
   async upsertWalletTransaction(tx: WalletTransaction): Promise<void> {

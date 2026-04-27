@@ -176,13 +176,15 @@ export function TransactionDetailsScreen() {
         ? truncateAddress(currentAddress)
       : truncateAddress(currentAddress);
 
+  const paysNetworkFee =
+    selectedTransaction.direction === 'outgoing' || selectedTransaction.direction === 'self';
+
   // For incoming transactions, we don't have fee info
   const networkFee =
-    selectedTransaction.direction === 'outgoing'
+    paysNetworkFee
       ? `${feeNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
       : '-';
-  const totalNock =
-    selectedTransaction.direction === 'outgoing' ? amountNock + feeNock : amountNock;
+  const totalNock = paysNetworkFee ? amountNock + feeNock : amountNock;
   const total = `${totalNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`;
 
   const totalUsd =
@@ -405,7 +407,7 @@ export function TransactionDetailsScreen() {
               className="self-stretch py-3 rounded-lg flex flex-col justify-center items-start gap-3"
               style={{ backgroundColor: 'var(--color-surface-900)' }}
             >
-              {selectedTransaction.direction === 'outgoing' && (
+              {paysNetworkFee && (
                 <>
                   <div className="self-stretch px-3 flex justify-between items-center">
                     <div
