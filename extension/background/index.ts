@@ -1127,7 +1127,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               throw new Error(v2Result.error);
             }
 
-            approveTxPending.sendResponse(v2Result.txId);
+            approveTxPending.sendResponse({
+              txid: v2Result.txId,
+              amount: txRequest.amount,
+              fee: txRequest.fee,
+            });
             cancelPendingRequest(approveTxId);
             processNextRequest();
             sendResponse({ success: true });
