@@ -288,6 +288,11 @@ export const useStore = create<AppStore>((set, get) => ({
       const mergedAccountBalances = fetchedBalances
         ? { ...get().wallet.accountBalances, ...fetchedBalances }
         : get().wallet.accountBalances;
+      const currentAddress = accountsResult.currentAccount?.address;
+      const currentBalance = currentAddress ? (mergedAccountBalances[currentAddress] ?? 0) : 0;
+      const currentSpendable = currentAddress
+        ? (get().wallet.accountSpendableBalances[currentAddress] ?? currentBalance)
+        : 0;
 
       set({
         wallet: {
@@ -297,6 +302,9 @@ export const useStore = create<AppStore>((set, get) => ({
           currentAccount: accountsResult.currentAccount || null,
           address: accountsResult.currentAccount?.address || null,
           activeSeedSourceId: accountsResult.activeSeedSourceId || null,
+          balance: currentBalance,
+          availableBalance: currentBalance,
+          spendableBalance: currentSpendable,
           accountBalances: mergedAccountBalances,
         },
       });
