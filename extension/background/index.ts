@@ -1146,9 +1146,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           payload.params?.[1]
         );
         sendResponse(createChildResult);
-        if (!('error' in createChildResult)) {
-          await emitWalletEvent('accountsChanged', [createChildResult.account.address]);
-        }
         return;
 
       case INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE:
