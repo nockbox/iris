@@ -73,12 +73,12 @@ export function AccountSelector() {
   }
 
   function handleImportWallet() {
-    // Show warning - importing will replace current wallet
+    // Add a new seed source to the existing vault.
     const confirmed = confirm(
-      'WARNING: Importing a wallet will replace your current wallet. Make sure you have backed up your current secret phrase. Continue?'
+      'Import another wallet into your current vault? This will add a new seed phrase without replacing your existing wallets.'
     );
     if (confirmed) {
-      navigate('onboarding-import');
+      navigate('wallet-add-import');
     }
     setIsOpen(false);
   }
