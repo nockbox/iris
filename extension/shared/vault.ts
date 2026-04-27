@@ -1964,7 +1964,15 @@ export class Vault {
       return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
-    this.state.accounts[index].name = name;
+    const account = this.state.accounts[index];
+    account.name = name;
+
+    if (account.index === 0) {
+      const seedAccount = this.getSeedAccountForWallet(account);
+      if (seedAccount) {
+        seedAccount.name = name;
+      }
+    }
 
     // Save accounts to encrypted vault
     await this.saveAccountsToVault();
