@@ -2303,6 +2303,7 @@ export class Vault {
     if (!seedAccount || seedAccount.type !== 'mnemonic' || !seedAccount.mnemonic) {
       return { ok: true, added: 0 };
     }
+    const mnemonic = seedAccount.mnemonic;
 
     const masterForSeed = seedAccount.accounts.find(a => a.index === 0);
     if (!masterForSeed || masterForSeed.hidden) {
@@ -2314,23 +2315,31 @@ export class Vault {
     const rpcClient = createBrowserClient(endpoint);
 
     const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
-    let lastWithBalance = 0;
     // Keep balances found during the scan so we can seed cachedBalances for
     // freshly-added sub-wallets.
     const discoveredAddressByIndex = new Map<number, string>();
     const discoveredBalanceByIndex = new Map<number, number>();
 
-    for (let i = 1; i <= MAX_SUBWALLET_DISCOVERY_SCAN; i++) {
-      try {
-        const addr = await deriveAddress(seedAccount.mnemonic, i);
-        discoveredAddressByIndex.set(i, addr);
-        const balanceResult = await queryV1Balance(addr, rpcClient);
-        if (balanceResult.totalNock > 0) {
-          lastWithBalance = i;
-          discoveredBalanceByIndex.set(i, balanceResult.totalNock);
-        }
-      } catch {
-        // Skip this index on RPC failure
+    const discoveryResults = await Promise.allSettled(
+      Array.from({ length: MAX_SUBWALLET_DISCOVERY_SCAN }, async (_, offset) => {
+        const index = offset + 1;
+        const address = await deriveAddress(mnemonic, index);
+        const balanceResult = await queryV1Balance(address, rpcClient);
+        return { index, address, balance: balanceResult.totalNock };
+      })
+    );
+
+    let lastWithBalance = 0;
+    for (const result of discoveryResults) {
+      if (result.status !== 'fulfilled') {
+        continue;
+      }
+
+      const { index, address, balance } = result.value;
+      discoveredAddressByIndex.set(index, address);
+      if (balance > 0) {
+        lastWithBalance = Math.max(lastWithBalance, index);
+        discoveredBalanceByIndex.set(index, balance);
       }
     }
 
