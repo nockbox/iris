@@ -615,6 +615,7 @@ export const useStore = create<AppStore>((set, get) => ({
             : {}),
           accountBalances,
           accountSpendableBalances,
+          accountBalanceDetails,
         },
         isBalanceFetching: false,
       });
