@@ -18,8 +18,6 @@ import {
   mapRpcResponse,
   RPC_API_VERSION,
   isEvmAddress,
-  DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS,
-  DEFAULT_COINBASE_TIMELOCK_BLOCKS,
 } from '@nockbox/iris-sdk';
 import type { RpcRequest, RpcResponse, ConnectResponse, SignMessageResponse } from '@nockbox/iris-sdk';
 import wasm from '../shared/sdk-wasm.js';
@@ -39,7 +37,8 @@ import {
   APPROVAL_CONSTANTS,
   CHAIN_ID,
 } from '../shared/constants';
-import { getEffectiveRpcEndpoint } from '../shared/rpc-config';
+import { getEffectiveRpcConfig } from '../shared/rpc-config';
+import type { RpcConfig } from '../shared/rpc-config';
 import type {
   TransactionRequest,
   SignRequest,
@@ -387,18 +386,18 @@ function toInvalidParamsError(err: unknown): { error: { code: number; message: s
   };
 }
 
-function buildConnectResponse(address: string, rpcUrl: string): ConnectResponse {
+function buildConnectResponse(address: string, rpcConfig: RpcConfig): ConnectResponse {
   return {
     account: {
       type: 'v1',
       address: address as Digest,
     },
     rpcConfig: {
-      rpcUrl,
-      networkName: 'mainnet',
-      blockExplorerUrl: '',
-      txEngineActivationHeights: DEFAULT_TX_ENGINE_ACTIVATION_HEIGHTS,
-      coinbaseTimelockBlocks: DEFAULT_COINBASE_TIMELOCK_BLOCKS,
+      rpcUrl: rpcConfig.rpcUrl,
+      networkName: rpcConfig.networkName,
+      blockExplorerUrl: rpcConfig.blockExplorerUrl,
+      txEngineActivationHeights: rpcConfig.txEngineActivationHeights!,
+      coinbaseTimelockBlocks: rpcConfig.coinbaseTimelockBlocks!,
     },
   };
 }
@@ -811,8 +810,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         // Origin approved - return address
-        const connectEndpoint = await getEffectiveRpcEndpoint();
-        await sendBridgedResponse(buildConnectResponse(vault.getAddress(), connectEndpoint));
+        const connectRpcConfig = await getEffectiveRpcConfig();
+        await sendBridgedResponse(buildConnectResponse(vault.getAddress(), connectRpcConfig));
 
         // Emit connect event when dApp connects successfully
         await emitWalletEvent('connect', { chainId: CHAIN_ID });
@@ -982,11 +981,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        const stateEndpoint = await getEffectiveRpcEndpoint();
-        await sendBridgedResponse({
-          pkh: vault.getAddress(),
-          grpcEndpoint: stateEndpoint,
-        });
+        const walletInfoRpcConfig = await getEffectiveRpcConfig();
+        await sendBridgedResponse(buildConnectResponse(vault.getAddress(), walletInfoRpcConfig));
         return;
 
       // Internal methods (called from popup)
@@ -1608,8 +1604,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           await approveOrigin(connectRequest.origin);
 
           // Return wallet info
-          const approveEndpoint = await getEffectiveRpcEndpoint();
-          approveConnectPending.sendResponse(buildConnectResponse(vault.getAddress(), approveEndpoint));
+          const approveRpcConfig = await getEffectiveRpcConfig();
+          approveConnectPending.sendResponse(buildConnectResponse(vault.getAddress(), approveRpcConfig));
           cancelPendingRequest(approveConnectId);
           processNextRequest();
           sendResponse({ success: true });
