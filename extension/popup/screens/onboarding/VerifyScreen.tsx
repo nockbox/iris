@@ -96,6 +96,7 @@ export function VerifyScreen() {
           return;
         }
         navigate('home');
+        setOnboardingPassword(null);
         setOnboardingMnemonic(null);
         await fetchBalance();
         return;
