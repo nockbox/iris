@@ -7,6 +7,7 @@ import { INTERNAL_METHODS, APPROVAL_CONSTANTS, NOCK_TO_NICKS } from '../shared/c
 import { clearOnboardingState, hasIncompleteOnboarding } from '../shared/onboarding';
 import {
   SubAccount,
+  SeedAccount,
   AccountBalance,
   TransactionDetails,
   SignRequest,
@@ -74,13 +75,8 @@ interface WalletState {
   locked: boolean;
   address: string | null;
   accounts: SubAccount[];
-  seedSources: Array<{
-    id: string;
-    name: string;
-    type: 'mnemonic' | 'external';
-    createdAt: number;
-    accounts: SubAccount[];
-  }>;
+  /** Mnemonic-stripped seed sources from background; matches vault.getSeedSources(). */
+  seedSources: Array<Omit<SeedAccount, 'mnemonic'>>;
   currentAccount: SubAccount | null;
   activeSeedSourceId: string | null;
   balance: number;
