@@ -24,7 +24,7 @@ export function V0MigrationReviewScreen() {
   const [sendError, setSendError] = useState('');
   const [isSending, setIsSending] = useState(false);
   const destinationWallet =
-    wallet.accounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) || null;
+    wallet.accounts.find(account => account.address === v0MigrationDraft.destinationAddress) || null;
   const amount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock ?? 0;
   const usdAmount = amount * priceUsd;
 

@@ -32,7 +32,8 @@ export interface V0MigrationDraftState {
   v0Notes?: NoteV0[];
   v0BalanceNock?: number;
   migratedAmountNock?: number | null;
-  destinationWalletIndex?: number | null;
+  /** Receiving v1 wallet; address is used (not derivation index) so multi-seed vaults resolve uniquely. */
+  destinationAddress?: string | null;
   feeNock?: number | null;
   keyfileName?: string;
   v0MigrationTxSignPayload?: V0MigrationTxSignPayload | null;
@@ -267,7 +268,7 @@ export const useStore = create<AppStore>((set, get) => ({
   selectedTransaction: null,
   pendingBridgeSwap: null,
   swapSubmittedToastVisible: false,
-  v0MigrationDraft: { destinationWalletIndex: null },
+  v0MigrationDraft: { destinationAddress: null },
   settingsAccountAddress: null,
   isBalanceFetching: false,
   isInitialized: false,
@@ -444,7 +445,7 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   resetV0MigrationDraft: () => {
-    set({ v0MigrationDraft: { destinationWalletIndex: null } });
+    set({ v0MigrationDraft: { destinationAddress: null } });
   },
 
   setSettingsAccountAddress: (address: string | null) => {

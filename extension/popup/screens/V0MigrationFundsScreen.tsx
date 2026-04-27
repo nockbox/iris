@@ -37,10 +37,10 @@ export function V0MigrationFundsScreen() {
   const [balanceFontSize, setBalanceFontSize] = useState(56);
 
   useEffect(() => {
-    if (v0MigrationDraft.destinationWalletIndex === null && visibleAccounts.length > 0) {
-      setV0MigrationDraft({ destinationWalletIndex: visibleAccounts[0].index });
+    if (v0MigrationDraft.destinationAddress == null && visibleAccounts.length > 0) {
+      setV0MigrationDraft({ destinationAddress: visibleAccounts[0].address });
     }
-  }, [v0MigrationDraft.destinationWalletIndex, visibleAccounts, setV0MigrationDraft]);
+  }, [v0MigrationDraft.destinationAddress, visibleAccounts, setV0MigrationDraft]);
 
   const v0BalanceDisplay = formatNockAmount(v0MigrationDraft.v0BalanceNock ?? 0);
 
@@ -75,7 +75,7 @@ export function V0MigrationFundsScreen() {
   }, [v0BalanceDisplay]);
 
   const destinationWallet =
-    visibleAccounts.find(account => account.index === v0MigrationDraft.destinationWalletIndex) ||
+    visibleAccounts.find(account => account.address === v0MigrationDraft.destinationAddress) ||
     visibleAccounts[0] ||
     null;
 
@@ -276,15 +276,15 @@ export function V0MigrationFundsScreen() {
             </div>
 
             {visibleAccounts.map((account, index) => {
-              const isSelected = account.index === v0MigrationDraft.destinationWalletIndex;
+              const isSelected = account.address === v0MigrationDraft.destinationAddress;
               const balance = wallet.accountBalances[account.address] ?? 0;
               return (
                 <button
-                  key={account.index} 
+                  key={account.address}
                   type="button"
                   onClick={() => {
                     setV0MigrationDraft({
-                      destinationWalletIndex: account.index,
+                      destinationAddress: account.address,
                       v0MigrationTxSignPayload: undefined,
                       txId: undefined,
                       migratedAmountNock: undefined,
