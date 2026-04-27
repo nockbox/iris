@@ -5,9 +5,6 @@ import { AccountIcon } from '../components/AccountIcon';
 import WalletIconYellow from '../assets/wallet-icon-yellow.svg';
 import ArrowDownIcon from '../assets/arrow-down-icon.svg';
 import ChevronDownIconAsset from '../assets/wallet-dropdown-arrow.svg';
-import InfoIconAsset from '../assets/info-icon.svg';
-import PencilEditIcon from '../assets/pencil-edit-icon.svg';
-import CheckmarkIcon from '../assets/checkmark-pencil-icon.svg';
 import { truncateAddress } from '../utils/format';
 import { PlusIcon } from '../components/icons/PlusIcon';
 import { pkhAddressToDigest } from '../../shared/address-encoding';
@@ -20,24 +17,18 @@ function formatNockAmount(value: number): string {
   });
 }
 
+function yieldToPaint(): Promise<void> {
+  return new Promise(resolve => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  });
+}
+
 export function V0MigrationFundsScreen() {
   const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft } = useStore();
   const visibleAccounts = wallet.accounts.filter(account => !account.hidden);
-  const debugSpendAmount = v0MigrationDraft.migratedAmountNock;
-  const isDebugSingleNoteSpend =
-    debugSpendAmount != null && debugSpendAmount !== v0MigrationDraft.v0BalanceNock;
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [buildError, setBuildError] = useState('');
-  const [errorType, setErrorType] = useState<'fee_too_low' | 'general' | null>(null);
   const [isBuilding, setIsBuilding] = useState(false);
-  const [isEstimatingFee, setIsEstimatingFee] = useState(false);
-  const [fee, setFee] = useState('');
-  const [isEditingFee, setIsEditingFee] = useState(false);
-  const [editedFee, setEditedFee] = useState('');
-  const [showFeeTooltip, setShowFeeTooltip] = useState(false);
-  const [isFeeManuallyEdited, setIsFeeManuallyEdited] = useState(false);
-  const [minimumFee, setMinimumFee] = useState<number | null>(null);
-  const estimateAbortRef = useRef<AbortController | null>(null);
 
   // Shrink the big v0 balance number to fit its card when the value is wide
   // (e.g. 236,807.58). Starts at 56px, floors at 28px.
@@ -88,105 +79,6 @@ export function V0MigrationFundsScreen() {
     visibleAccounts[0] ||
     null;
 
-  // Dynamic fee estimation - debounced (same pattern as SendScreen)
-  // Uses selected destination wallet address (one of our own), not a dummy
-  useEffect(() => {
-    if (!v0MigrationDraft.v0Mnemonic || !destinationWallet?.address) return;
-    if (isFeeManuallyEdited) return;
-
-    setBuildError('');
-    setErrorType(null);
-    setIsEstimatingFee(true);
-
-    const ac = new AbortController();
-    estimateAbortRef.current = ac;
-
-    const timeoutId = setTimeout(async () => {
-      try {
-        const result = await buildV0MigrationTx(
-          v0MigrationDraft.v0Mnemonic!,
-          pkhAddressToDigest(destinationWallet!.address),
-          { debug: true }
-        );
-        if (ac.signal.aborted) return;
-        const feeNock = result.feeNock;
-        setV0MigrationDraft({ feeNock, migratedAmountNock: result.migratedNock });
-        if (feeNock != null) {
-          setFee(feeNock.toString());
-          setEditedFee(feeNock.toString());
-          setMinimumFee(feeNock);
-        } else {
-          setFee('');
-          setEditedFee('');
-          setMinimumFee(null);
-        }
-        setBuildError('');
-      } catch (err) {
-        if (ac.signal.aborted) return;
-        setBuildError(err instanceof Error ? err.message : 'Failed to estimate fee');
-        setErrorType('general');
-        setV0MigrationDraft({ feeNock: undefined, migratedAmountNock: undefined });
-        setFee('');
-        setEditedFee('');
-        setMinimumFee(null);
-      } finally {
-        if (!ac.signal.aborted) setIsEstimatingFee(false);
-        estimateAbortRef.current = null;
-      }
-    }, 500);
-
-    return () => {
-      clearTimeout(timeoutId);
-      ac.abort();
-      setIsEstimatingFee(false);
-    };
-  }, [v0MigrationDraft.v0Mnemonic, destinationWallet?.address, destinationWallet?.index, v0MigrationDraft.destinationWalletIndex, isFeeManuallyEdited, setV0MigrationDraft]);
-
-  const v0BalanceNock = v0MigrationDraft.v0BalanceNock ?? 0;
-  const hasInsufficientFunds =
-    v0MigrationDraft.feeNock != null && v0BalanceNock <= v0MigrationDraft.feeNock;
-
-  function handleEditFee() {
-    setIsEditingFee(true);
-    setEditedFee(fee);
-  }
-
-  function handleSaveFee() {
-    const feeNum = parseFloat(editedFee);
-    if (!isNaN(feeNum) && feeNum >= 0) {
-      if (minimumFee !== null && feeNum < minimumFee) {
-        setBuildError('Fee too low.');
-        setErrorType('fee_too_low');
-      } else {
-        setBuildError('');
-        setErrorType(null);
-      }
-      setFee(editedFee);
-      setV0MigrationDraft({ feeNock: feeNum });
-      setIsFeeManuallyEdited(true);
-    }
-    setIsEditingFee(false);
-  }
-
-  function handleFeeInputChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const value = e.target.value;
-    if (value === '' || /^\d*\.?\d*$/.test(value)) {
-      setEditedFee(value);
-    }
-  }
-
-  function handleFeeInputKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key === 'Enter') handleSaveFee();
-    if (e.key === 'Escape') {
-      setIsEditingFee(false);
-      setEditedFee(fee);
-    }
-  }
-
-  function handleFeeInputBlur() {
-    handleSaveFee();
-  }
-
   async function handleContinue() {
     if (!destinationWallet || isBuilding) return;
 
@@ -198,6 +90,7 @@ export function V0MigrationFundsScreen() {
     setBuildError('');
     setIsBuilding(true);
     try {
+      await yieldToPaint();
       const result = await buildV0MigrationTx(
         v0MigrationDraft.v0Mnemonic,
         pkhAddressToDigest(destinationWallet.address),
@@ -283,18 +176,6 @@ export function V0MigrationFundsScreen() {
           </div>
         </div>
 
-        {isDebugSingleNoteSpend && (
-          <div
-            className="rounded-[14px] p-3 flex items-center justify-between"
-            style={{ backgroundColor: 'var(--color-surface-900)' }}
-          >
-            <span className="text-[14px] font-medium">Debug note spend</span>
-            <span className="text-[14px] font-medium">
-              {formatNockAmount(debugSpendAmount)} NOCK
-            </span>
-          </div>
-        )}
-
         <div className="flex justify-center py-0.5">
           <div
             className="w-10 h-10 rounded-full grid place-items-center shrink-0"
@@ -337,151 +218,14 @@ export function V0MigrationFundsScreen() {
           </button>
         </div>
 
-        {hasInsufficientFunds && (
+        {buildError && (
           <div
             className="rounded-lg px-3 py-2 font-sans font-medium text-[14px]"
             style={{ backgroundColor: 'var(--color-red-light)', color: 'var(--color-red)' }}
           >
-            Insufficient funds to cover transaction fee.
+            {buildError}
           </div>
         )}
-
-        {/* Fee */}
-        <div className="flex flex-col gap-1.5 mb-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5 text-[14px] leading-[18px] font-medium">
-              Fee
-              <div
-                className="relative inline-block"
-                onMouseEnter={() => setShowFeeTooltip(true)}
-                onMouseLeave={() => setShowFeeTooltip(false)}
-              >
-                <img src={InfoIconAsset} alt="Fee information" className="w-4 h-4 cursor-help" />
-                {showFeeTooltip && (
-                  <div className="absolute left-0 bottom-full mb-2 w-64 z-50">
-                    <div
-                      className="rounded-lg px-3 py-2.5 text-[12px] leading-4 font-medium tracking-[0.02em] shadow-lg"
-                      style={{
-                        backgroundColor: 'var(--color-surface-800)',
-                        color: 'var(--color-text-muted)',
-                        border: '1px solid var(--color-surface-700)',
-                      }}
-                    >
-                      Network transaction fee. Adjustable if needed.
-                      <div
-                        className="absolute left-4 top-full w-0 h-0"
-                        style={{
-                          borderLeft: '6px solid transparent',
-                          borderRight: '6px solid transparent',
-                          borderTop: '6px solid var(--color-surface-800)',
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
-            {isEditingFee ? (
-              <div
-                className="rounded-lg pl-1 pr-1 py-1 inline-flex items-center gap-2"
-                style={{ border: '1px solid var(--color-surface-700)' }}
-              >
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={editedFee}
-                  onChange={handleFeeInputChange}
-                  onKeyDown={handleFeeInputKeyDown}
-                  onBlur={handleFeeInputBlur}
-                  autoFocus
-                  className="w-8 h-3 bg-transparent outline-none text-[14px] leading-[18px] font-medium text-right"
-                  style={{ color: 'var(--color-text-primary)' }}
-                  placeholder="1"
-                />
-                <span
-                  className="text-[14px] leading-[18px] font-medium"
-                  style={{ color: 'var(--color-text-muted)' }}
-                >
-                  NOCK
-                </span>
-                <button
-                  type="button"
-                  onClick={handleSaveFee}
-                  className="p-0.5 rounded transition-opacity hover:opacity-80 focus:outline-none"
-                  aria-label="Save fee"
-                >
-                  <img src={CheckmarkIcon} alt="" className="w-5 h-5" />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={handleEditFee}
-                className="rounded-lg pl-2.5 pr-2 py-1.5 flex items-center justify-between transition-colors focus:outline-none"
-                style={{
-                  backgroundColor: 'var(--color-surface-800)',
-                  minWidth: '120px',
-                  minHeight: '34px',
-                }}
-                onMouseEnter={e =>
-                  (e.currentTarget.style.backgroundColor = 'var(--color-surface-700)')
-                }
-                onMouseLeave={e =>
-                  (e.currentTarget.style.backgroundColor = 'var(--color-surface-800)')
-                }
-              >
-                <div
-                  className="text-[14px] leading-[18px] font-medium flex items-center gap-1.5"
-                  style={{ color: 'var(--color-text-muted)' }}
-                >
-                  {isEstimatingFee ? (
-                    <div
-                      className="w-3.5 h-3.5 border-2 rounded-full animate-spin"
-                      style={{
-                        borderColor: 'var(--color-text-muted)',
-                        borderTopColor: 'transparent',
-                      }}
-                    />
-                  ) : fee ? (
-                    `${fee} NOCK`
-                  ) : (
-                    '-'
-                  )}
-                </div>
-                <img src={PencilEditIcon} alt="Edit" className="w-4 h-4 flex-shrink-0" />
-              </button>
-            )}
-          </div>
-          {buildError && (
-            <div
-              className="px-3 py-2 text-[13px] leading-[18px] font-medium rounded-lg flex items-center justify-between mt-2"
-              style={{
-                backgroundColor: 'var(--color-red-light)',
-                color: 'var(--color-red)',
-              }}
-            >
-              <span>{buildError}</span>
-              {errorType === 'fee_too_low' && minimumFee !== null && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    const feeStr = minimumFee.toString();
-                    setFee(feeStr);
-                    setEditedFee(feeStr);
-                    setV0MigrationDraft({ feeNock: minimumFee });
-                    setBuildError('');
-                    setErrorType(null);
-                    setIsFeeManuallyEdited(false);
-                  }}
-                  className="underline hover:opacity-70 transition-opacity"
-                  style={{ color: 'var(--color-red)' }}
-                >
-                  Reset
-                </button>
-              )}
-            </div>
-          )}
-        </div>
       </div>
 
       <div className="border-t border-[var(--color-surface-800)] px-4 py-3">
@@ -500,7 +244,7 @@ export function V0MigrationFundsScreen() {
           </button>
           <button
             type="button"
-            disabled={hasInsufficientFunds || !destinationWallet || isBuilding}
+            disabled={!destinationWallet || isBuilding}
             onClick={handleContinue}
             className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed font-sans font-medium"
             style={{
@@ -509,7 +253,7 @@ export function V0MigrationFundsScreen() {
               letterSpacing: '0.01em',
             }}
           >
-            {isBuilding ? 'Building...' : 'Continue'}
+            Continue
           </button>
         </div>
       </div>
@@ -546,12 +290,7 @@ export function V0MigrationFundsScreen() {
                       migratedAmountNock: undefined,
                       feeNock: undefined,
                     });
-                    setFee('');
-                    setEditedFee('');
-                    setMinimumFee(null);
-                    setIsFeeManuallyEdited(false);
                     setBuildError('');
-                    setErrorType(null);
                     setShowWalletPicker(false);
                   }}
                   className="w-full rounded-[14px] px-3 py-3 mb-2 flex items-center justify-between"
@@ -588,6 +327,34 @@ export function V0MigrationFundsScreen() {
               </div>
               <div className="text-[16px] font-medium">Add sub-wallet</div>
             </button>
+          </div>
+        </div>
+      )}
+
+      {isBuilding && (
+        <div
+          className="absolute inset-0 z-[60] flex items-center justify-center p-5"
+          style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+        >
+          <div
+            className="w-full rounded-[20px] border p-5 flex flex-col items-center gap-3 text-center"
+            style={{
+              backgroundColor: 'var(--color-bg)',
+              borderColor: 'var(--color-surface-700)',
+              color: 'var(--color-text-primary)',
+            }}
+          >
+            <div
+              className="w-8 h-8 border-2 rounded-full animate-spin"
+              style={{
+                borderColor: 'var(--color-text-muted)',
+                borderTopColor: 'var(--color-primary)',
+              }}
+            />
+            <div className="text-[16px] font-medium">Building migration transaction</div>
+            <div className="text-[13px] leading-[18px]" style={{ color: 'var(--color-text-muted)' }}>
+              Calculating the network fee and preparing your v0 notes. This might take a second.
+            </div>
           </div>
         </div>
       )}
