@@ -387,6 +387,11 @@ function toInvalidParamsError(err: unknown): { error: { code: number; message: s
 }
 
 function buildConnectResponse(address: string, rpcConfig: RpcConfig): ConnectResponse {
+  const { txEngineActivationHeights, coinbaseTimelockBlocks } = rpcConfig;
+  if (!txEngineActivationHeights || coinbaseTimelockBlocks == null) {
+    throw new Error('RPC config is missing tx engine or coinbase timelock settings');
+  }
+
   return {
     account: {
       type: 'v1',
@@ -396,8 +401,8 @@ function buildConnectResponse(address: string, rpcConfig: RpcConfig): ConnectRes
       rpcUrl: rpcConfig.rpcUrl,
       networkName: rpcConfig.networkName,
       blockExplorerUrl: rpcConfig.blockExplorerUrl,
-      txEngineActivationHeights: rpcConfig.txEngineActivationHeights!,
-      coinbaseTimelockBlocks: rpcConfig.coinbaseTimelockBlocks!,
+      txEngineActivationHeights,
+      coinbaseTimelockBlocks,
     },
   };
 }

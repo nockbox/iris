@@ -27,7 +27,7 @@ import {
 import wasm from './sdk-wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
-import { getEffectiveRpcEndpoint } from './rpc-config';
+import { getEffectiveRpcConfig, getEffectiveRpcEndpoint } from './rpc-config';
 import type {
   Note as BalanceNote,
   UTXOStore,
@@ -73,6 +73,21 @@ import { BRIDGE_CONFIG } from './bridge-config';
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
   return await getTxEngineSettingsForHeight(blockHeight);
+}
+
+async function latestConfiguredTxEngineHeight(): Promise<number> {
+  const config = await getEffectiveRpcConfig();
+  const heights = config.txEngineActivationHeights || {};
+  const latestHeight = Object.keys(heights)
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a)[0];
+
+  if (latestHeight === undefined) {
+    throw new Error('No tx engine settings configured');
+  }
+
+  return latestHeight;
 }
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
@@ -1196,6 +1211,15 @@ export class Vault {
    */
   getAccountBlockHeight(accountAddress: string): number {
     return this.utxoStore[accountAddress]?.blockHeight || 0;
+  }
+
+  private getCachedAccountBlockHeight(accountAddress: string): number {
+    const syncState = this.accountSyncState[accountAddress];
+    return Math.max(
+      this.getAccountBlockHeight(accountAddress),
+      syncState?.lastSyncedHeight ?? 0,
+      syncState?.lastHistorySyncedTip ?? 0
+    );
   }
 
   /**
@@ -3846,9 +3870,11 @@ export class Vault {
 
     try {
       assertNativeRawTx(rawTx);
-      const endpoint = await getEffectiveRpcEndpoint();
-      const rpcClient = createBrowserClient(endpoint);
-      const blockHeight = await rpcClient.getCurrentBlockHeight();
+      const currentAccount = this.getCurrentAccount();
+      const cachedBlockHeight = currentAccount
+        ? this.getCachedAccountBlockHeight(currentAccount.address)
+        : 0;
+      const blockHeight = cachedBlockHeight || (await latestConfiguredTxEngineHeight());
       const settings = await txEngineSettings(blockHeight);
       const outputs = wasm.rawTxOutputs(rawTx, blockHeight, settings);
       return outputs.map(output => wasm.noteToProtobuf(output));
