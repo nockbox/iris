@@ -1436,18 +1436,6 @@ export class Vault {
     return this.walletTxStore[accountAddress] || [];
   }
 
-  private hasIncompleteHistoryMetadata(accountAddress: string): boolean {
-    const transactions = this.getWalletTransactions(accountAddress);
-    return transactions.some(
-      tx =>
-        tx.origin === 'history_sync' &&
-        // Incoming sender is best-effort chain metadata. If it cannot be derived from the
-        // indexed tx once, another full backfill may not make it derivable.
-        tx.direction === 'outgoing' &&
-        !tx.recipient
-    );
-  }
-
   private sortWalletTransactions(accountAddress: string): void {
     if (!this.walletTxStore[accountAddress]) return;
 
@@ -1922,7 +1910,6 @@ export class Vault {
 
     const client = createNockblocksClient()
     const syncState = this.getAccountSyncState(accountAddress)
-    const needsHistoryRepair = this.hasIncompleteHistoryMetadata(accountAddress)
     const ownFirstNames = await this.getOwnFirstNameSet(accountAddress)
     const tip = await client.getTip()
     const historySyncWindow = 100
@@ -1933,7 +1920,6 @@ export class Vault {
 
     if (
       !syncState.historyInitialized ||
-      needsHistoryRepair ||
       historyTipGap > maxIncrementalHistoryBlocks
     ) {
       const limit = 1000
