@@ -6,7 +6,7 @@
 import { base58 } from '@scure/base';
 import wasm from './sdk-wasm.js';
 
-function parseDigestString(value: string): wasm.Digest {
+export function parseDigestString(value: string): wasm.Digest {
   const bytes = base58.decode(value);
   if (bytes.length !== 40) {
     throw new Error(`Invalid digest length: ${bytes.length}, expected 40 bytes`);
