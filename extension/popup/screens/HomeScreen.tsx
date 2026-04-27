@@ -237,10 +237,12 @@ export function HomeScreen() {
 
   // Account switching handler
   async function handleSwitchAccount(accountAddress: string) {
-    const result = await send<{ ok?: boolean; account?: SubAccount; error?: string }>(
-      INTERNAL_METHODS.SWITCH_ACCOUNT,
-      [accountAddress]
-    );
+    const result = await send<{
+      ok?: boolean;
+      account?: SubAccount;
+      activeSeedSourceId?: string | null;
+      error?: string;
+    }>(INTERNAL_METHODS.SWITCH_ACCOUNT, [accountAddress]);
 
     if (result?.ok && result.account) {
       // Get cached balance for the new account (or 0 if not cached)
@@ -250,6 +252,7 @@ export function HomeScreen() {
         ...wallet,
         currentAccount: result.account,
         address: result.account.address,
+        activeSeedSourceId: result.activeSeedSourceId ?? wallet.activeSeedSourceId,
         balance: cachedBalance,
         availableBalance: cachedBalance,
       };
