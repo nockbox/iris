@@ -1482,10 +1482,7 @@ export class Vault {
     );
   }
 
-  async updateAccountSyncState(
-    accountAddress: string,
-    updates: Partial<AccountSyncState>
-  ): Promise<void> {
+  private setAccountSyncState(accountAddress: string, updates: Partial<AccountSyncState>): void {
     const current = this.getAccountSyncState(accountAddress);
     this.accountSyncState[accountAddress] = {
       ...current,
@@ -1493,6 +1490,13 @@ export class Vault {
       accountAddress,
       lastSyncedAt: updates.lastSyncedAt ?? Date.now(),
     };
+  }
+
+  async updateAccountSyncState(
+    accountAddress: string,
+    updates: Partial<AccountSyncState>
+  ): Promise<void> {
+    this.setAccountSyncState(accountAddress, updates);
     await this.saveAccountData();
   }
 
@@ -1523,7 +1527,7 @@ export class Vault {
     await this.saveAccountData();
   }
 
-  async upsertWalletTransaction(tx: WalletTransaction): Promise<void> {
+  private upsertWalletTransactionInMemory(tx: WalletTransaction): void {
     if (!this.walletTxStore[tx.accountAddress]) {
       this.walletTxStore[tx.accountAddress] = [];
     }
@@ -1551,6 +1555,10 @@ export class Vault {
     }
 
     this.sortWalletTransactions(tx.accountAddress);
+  }
+
+  async upsertWalletTransaction(tx: WalletTransaction): Promise<void> {
+    this.upsertWalletTransactionInMemory(tx);
     await this.saveAccountData();
   }
 
@@ -1934,7 +1942,7 @@ export class Vault {
             ownFirstNames
           )
           if (!walletTx) continue
-          await this.upsertWalletTransaction(walletTx)
+          this.upsertWalletTransactionInMemory(walletTx)
           syncedCount++
         }
 
@@ -1945,12 +1953,13 @@ export class Vault {
         offset += transactions.length
       }
 
-      await this.updateAccountSyncState(accountAddress, {
+      this.setAccountSyncState(accountAddress, {
         historyInitialized: true,
         lastHistoryBackfillAt: Date.now(),
         lastHistorySyncedTip: tip.height,
         lastSyncedHeight: Math.max(syncState.lastSyncedHeight, tip.height),
       })
+      await this.saveAccountData()
 
       return syncedCount
     }
@@ -1980,17 +1989,18 @@ export class Vault {
           )
 
           if (!walletTx) continue
-          await this.upsertWalletTransaction(walletTx)
+          this.upsertWalletTransactionInMemory(walletTx)
           syncedCount++
         }
       }
     }
 
-    await this.updateAccountSyncState(accountAddress, {
+    this.setAccountSyncState(accountAddress, {
       historyInitialized: true,
       lastHistorySyncedTip: tip.height,
       lastSyncedHeight: Math.max(syncState.lastSyncedHeight, tip.height),
     })
+    await this.saveAccountData()
 
     return syncedCount
   }
