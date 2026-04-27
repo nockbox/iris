@@ -1037,8 +1037,10 @@ export class Vault {
     return transactions.some(
       tx =>
         tx.origin === 'history_sync' &&
-        ((tx.direction === 'incoming' && !tx.sender) ||
-          (tx.direction === 'outgoing' && !tx.recipient))
+        // Incoming sender is best-effort chain metadata. If it cannot be derived from the
+        // indexed tx once, another full backfill may not make it derivable.
+        tx.direction === 'outgoing' &&
+        !tx.recipient
     );
   }
 
