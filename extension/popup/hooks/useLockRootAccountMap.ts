@@ -31,7 +31,7 @@ export function useLockRootAccountMap(accounts: Account[] | undefined): Map<stri
     return () => {
       cancelled = true;
     };
-  }, [accounts, accountsKey]);
+  }, [accountsKey]);
 
   return map;
 }
