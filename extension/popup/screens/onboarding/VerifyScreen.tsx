@@ -80,17 +80,7 @@ export function VerifyScreen() {
     setIsSubmitting(true);
     try {
       if (isAddWalletFlow) {
-        // Import path is wallet-add-import → backup → verify; generate is wallet-add-create → backup → verify.
-        const h = useStore.getState().history;
-        const importedExistingPhrase =
-          h.length >= 2 &&
-          h[h.length - 1] === 'wallet-add-backup' &&
-          h[h.length - 2] === 'wallet-add-import';
-        const result = await createMnemonicSeedSource(
-          onboardingMnemonic ?? undefined,
-          undefined,
-          importedExistingPhrase
-        );
+        const result = await createMnemonicSeedSource(onboardingMnemonic ?? undefined);
         if (result && typeof result === 'object' && 'error' in result) {
           setError(`Error: ${result.error}`);
           return;
