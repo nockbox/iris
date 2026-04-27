@@ -18,11 +18,11 @@ import { EditIcon } from './icons/EditIcon';
 export function AccountSelector() {
   const { wallet, syncWallet, navigate, refreshWalletAccounts } = useStore();
   const [isOpen, setIsOpen] = useState(false);
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingAddress, setEditingAddress] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
   const editInputRef = useAutoFocus<HTMLInputElement>({
-    when: editingIndex !== null,
+    when: editingAddress !== null,
     select: true,
   });
 
@@ -31,7 +31,7 @@ export function AccountSelector() {
     dropdownRef,
     () => {
       setIsOpen(false);
-      setEditingIndex(null);
+      setEditingAddress(null);
     },
     isOpen
   );
@@ -85,22 +85,22 @@ export function AccountSelector() {
 
   function startEditing(account: SubAccount, event: React.MouseEvent) {
     event.stopPropagation(); // Prevent switching accounts
-    setEditingIndex(wallet.accounts.findIndex(acc => acc.address === account.address));
+    setEditingAddress(account.address);
     setEditingName(account.name);
   }
 
   function cancelEditing() {
-    setEditingIndex(null);
+    setEditingAddress(null);
     setEditingName('');
   }
 
   async function saveRename() {
-    if (editingIndex === null || !editingName.trim()) {
+    if (editingAddress === null || !editingName.trim()) {
       cancelEditing();
       return;
     }
 
-    const account = wallet.accounts[editingIndex];
+    const account = wallet.accounts.find(acc => acc.address === editingAddress);
     if (!account) {
       cancelEditing();
       return;
@@ -116,13 +116,10 @@ export function AccountSelector() {
 
       // Update wallet state with new name
       const updatedAccounts = wallet.accounts.map(acc =>
-        wallet.accounts.findIndex(a => a.address === acc.address) === editingIndex
-          ? renamedAccount
-          : acc
+        acc.address === editingAddress ? renamedAccount : acc
       );
       const updatedCurrentAccount =
-        wallet.accounts.findIndex(acc => acc.address === wallet.currentAccount?.address) ===
-        editingIndex
+        wallet.currentAccount?.address === editingAddress
           ? wallet.currentAccount
             ? { ...wallet.currentAccount, name: editingName.trim() }
             : null
@@ -197,23 +194,19 @@ export function AccountSelector() {
                 <div
                   key={account.address}
                   className={`w-full flex items-center gap-2 p-3 ${
-                    editingIndex !==
-                    wallet.accounts.findIndex(acc => acc.address === account.address)
+                    editingAddress !== account.address
                       ? 'hover:bg-gray-700 cursor-pointer'
                       : ''
                   } transition-colors ${
                     currentAccount?.address === account.address ? 'bg-gray-700' : ''
                   }`}
                   onClick={() =>
-                    editingIndex !==
-                      wallet.accounts.findIndex(acc => acc.address === account.address) &&
-                    handleSwitchAccount(account.address)
+                    editingAddress !== account.address && handleSwitchAccount(account.address)
                   }
                 >
                   <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex-shrink-0" />
                   <div className="text-left flex-1 min-w-0">
-                    {editingIndex ===
-                    wallet.accounts.findIndex(acc => acc.address === account.address) ? (
+                    {editingAddress === account.address ? (
                       <input
                         ref={editInputRef}
                         type="text"
@@ -242,8 +235,7 @@ export function AccountSelector() {
                     )}
                   </div>
                   {currentAccount?.address === account.address &&
-                    editingIndex !==
-                      wallet.accounts.findIndex(acc => acc.address === account.address) && (
+                    editingAddress !== account.address && (
                       <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0" />
                     )}
                 </div>
