@@ -1912,7 +1912,6 @@ export class Vault {
     const syncState = this.getAccountSyncState(accountAddress)
     const ownFirstNames = await this.getOwnFirstNameSet(accountAddress)
     const tip = await client.getTip()
-    const historySyncWindow = 100
     const maxIncrementalHistoryBlocks = 500
     const lastHistorySyncedTip = syncState.lastHistorySyncedTip || tip.height
     const historyTipGap = Math.max(tip.height - lastHistorySyncedTip, 0)
@@ -1960,10 +1959,7 @@ export class Vault {
       return syncedCount
     }
 
-    const startBlock = Math.max(
-      Math.max(tip.height - historySyncWindow, 0),
-      Math.min(lastHistorySyncedTip, tip.height)
-    )
+    const startBlock = Math.min(lastHistorySyncedTip, tip.height)
     const heights: number[] = []
     for (let height = startBlock; height <= tip.height; height++) {
       heights.push(height)
