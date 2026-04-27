@@ -1505,12 +1505,12 @@ export class Vault {
       let offset = 0
 
       while (true) {
-        const transactions = await client.getTransactionsByAddress(accountAddress, { limit, offset })
-        if (transactions.length === 0) {
+        const historyTransactions = await client.getTransactionsByAddress(accountAddress, { limit, offset })
+        if (historyTransactions.length === 0) {
           break
         }
 
-        for (const transaction of transactions) {
+        for (const transaction of historyTransactions) {
           const walletTx = this.buildWalletTransactionFromChainTransaction(
             accountAddress,
             transaction,
@@ -1521,11 +1521,11 @@ export class Vault {
           syncedCount++
         }
 
-        if (transactions.length < limit) {
+        if (historyTransactions.length < limit) {
           break
         }
 
-        offset += transactions.length
+        offset += historyTransactions.length
       }
 
       this.setAccountSyncState(accountAddress, {
@@ -1577,6 +1577,21 @@ export class Vault {
     return syncedCount
   }
 
+  private refreshNockblocksHistoryInBackground(accountAddress: string): void {
+    if (!isNockblocksConfigured()) {
+      return
+    }
+
+    void (async () => {
+      try {
+        await this.refreshPendingTransactionStatuses(accountAddress)
+        await this.syncConfirmedHistory(accountAddress)
+      } catch (error) {
+        console.warn('[Vault] Nockblocks history refresh failed:', error)
+      }
+    })()
+  }
+
   /**
    * Sync UTXOs for a single account with chain state
    * This uses the encrypted in-memory UTXO store
@@ -1598,10 +1613,8 @@ export class Vault {
     const endpoint = await getEffectiveRpcEndpoint();
     const rpcClient = createBrowserClient(endpoint);
 
-    return withAccountLock(accountAddress, async () => {
-      const confirmedFromApi = await this.refreshPendingTransactionStatuses(accountAddress)
-      await this.syncConfirmedHistory(accountAddress)
-
+    const syncResult = await withAccountLock(accountAddress, async () => {
+      const confirmedFromApi = 0
       // 1. Fetch current UTXOs from chain
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
       const blockHeight = balanceResult.blockHeight;
@@ -1733,6 +1746,9 @@ export class Vault {
         expired: expiredTxs.length,
       };
     });
+
+    this.refreshNockblocksHistoryInBackground(accountAddress)
+    return syncResult
   }
 
   /**
