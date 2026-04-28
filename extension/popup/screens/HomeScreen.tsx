@@ -3,12 +3,7 @@ import { useStore } from '../store';
 import { useTheme } from '../contexts/ThemeContext';
 import { truncateAddress } from '../utils/format';
 import { send } from '../utils/messaging';
-import {
-  ERROR_CODES,
-  INTERNAL_METHODS,
-  NOCK_TO_NICKS,
-  STORAGE_KEYS,
-} from '../../shared/constants';
+import { ERROR_CODES, INTERNAL_METHODS, NOCK_TO_NICKS, STORAGE_KEYS } from '../../shared/constants';
 import type { SubAccount } from '../../shared/types';
 import { AccountIcon } from '../components/AccountIcon';
 import { EyeIcon } from '../components/icons/EyeIcon';
@@ -276,9 +271,7 @@ export function HomeScreen() {
     const result = await createChildAccount(seedAccountId || undefined);
     if (result?.error) {
       if (result.error === ERROR_CODES.MASTER_WALLET_HIDDEN) {
-        alert(
-          "You can't add a sub-wallet while this phrase's primary wallet is hidden."
-        );
+        alert("You can't add a sub-wallet while this phrase's primary wallet is hidden.");
       } else {
         alert(`Failed to create sub-wallet: ${result.error}`);
       }
@@ -627,38 +620,38 @@ export function HomeScreen() {
                       {group.seed.type === 'mnemonic' &&
                         group.accounts.length > 0 &&
                         group.accounts.some(a => a.index === 0) && (
-                        <button
-                          className="w-full flex items-center gap-2 rounded-tile transition"
-                          style={{
-                            color: 'var(--color-text-primary)',
-                            padding: 8,
-                            paddingLeft: 24,
-                            backgroundColor: 'transparent',
-                          }}
-                          onClick={() => handleAddSubWallet(group.seed.id)}
-                          onMouseEnter={e => {
-                            e.currentTarget.style.backgroundColor = 'var(--color-surface-800)';
-                          }}
-                          onMouseLeave={e => {
-                            e.currentTarget.style.backgroundColor = 'transparent';
-                          }}
-                        >
-                          <div
-                            className="w-8 h-8 shrink-0 rounded-[32px] inline-flex justify-center items-center"
-                            style={{ backgroundColor: 'var(--color-surface-900)' }}
+                          <button
+                            className="w-full flex items-center gap-2 rounded-tile transition"
+                            style={{
+                              color: 'var(--color-text-primary)',
+                              padding: 8,
+                              paddingLeft: 24,
+                              backgroundColor: 'transparent',
+                            }}
+                            onClick={() => handleAddSubWallet(group.seed.id)}
+                            onMouseEnter={e => {
+                              e.currentTarget.style.backgroundColor = 'var(--color-surface-800)';
+                            }}
+                            onMouseLeave={e => {
+                              e.currentTarget.style.backgroundColor = 'transparent';
+                            }}
                           >
-                            <span
-                              className="text-base font-medium leading-none"
-                              style={{ color: 'var(--color-text-primary)' }}
+                            <div
+                              className="w-8 h-8 shrink-0 rounded-[32px] inline-flex justify-center items-center"
+                              style={{ backgroundColor: 'var(--color-surface-900)' }}
                             >
-                              +
+                              <span
+                                className="text-base font-medium leading-none"
+                                style={{ color: 'var(--color-text-primary)' }}
+                              >
+                                +
+                              </span>
+                            </div>
+                            <span className="text-[14px] font-medium tracking-[0.14px]">
+                              Add sub-wallet
                             </span>
-                          </div>
-                          <span className="text-[14px] font-medium tracking-[0.14px]">
-                            Add sub-wallet
-                          </span>
-                        </button>
-                      )}
+                          </button>
+                        )}
                     </div>
                   </div>
                 ))}

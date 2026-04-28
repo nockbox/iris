@@ -993,7 +993,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse(createSeedResult);
         if (!('error' in createSeedResult)) {
           const cur = vault.getCurrentAccount();
-          await emitWalletEvent('accountsChanged', [cur?.address ?? createSeedResult.account.address]);
+          await emitWalletEvent('accountsChanged', [
+            cur?.address ?? createSeedResult.account.address,
+          ]);
           if (payload.params?.[2] === true) {
             scheduleSubwalletDiscovery(createSeedResult.seedSource.id);
           }

@@ -18,12 +18,7 @@ export function CreateScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
-  const {
-    navigate,
-    setOnboardingMnemonic,
-    setOnboardingPassword,
-    currentScreen,
-  } = useStore();
+  const { navigate, setOnboardingMnemonic, setOnboardingPassword, currentScreen } = useStore();
   const isAddSeedFlow = currentScreen === 'wallet-add-create';
 
   async function handleCreate() {

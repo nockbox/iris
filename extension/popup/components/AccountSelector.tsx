@@ -131,7 +131,8 @@ export function AccountSelector() {
 
         return {
           ...seed,
-          ...(account.index === 0 && seed.accounts.some(seedAccount => seedAccount.address === account.address)
+          ...(account.index === 0 &&
+          seed.accounts.some(seedAccount => seedAccount.address === account.address)
             ? { name: editingName.trim() }
             : {}),
           accounts: updatedSeedAccounts,
@@ -194,9 +195,7 @@ export function AccountSelector() {
                 <div
                   key={account.address}
                   className={`w-full flex items-center gap-2 p-3 ${
-                    editingAddress !== account.address
-                      ? 'hover:bg-gray-700 cursor-pointer'
-                      : ''
+                    editingAddress !== account.address ? 'hover:bg-gray-700 cursor-pointer' : ''
                   } transition-colors ${
                     currentAccount?.address === account.address ? 'bg-gray-700' : ''
                   }`}
