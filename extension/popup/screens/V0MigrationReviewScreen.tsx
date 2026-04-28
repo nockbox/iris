@@ -76,17 +76,14 @@ export function V0MigrationReviewScreen() {
     setSendError('');
     setIsSending(true);
     try {
-      const { txId, confirmed, skipped } = await signAndBroadcastV0Migration(
+      const { txId, confirmed } = await signAndBroadcastV0Migration(
         v0MigrationDraft.v0Mnemonic,
-        v0MigrationDraft.v0MigrationTxSignPayload,
-        // TEMP: sign + log only, no broadcast — remove before shipping
-        { debug: true }
+        v0MigrationDraft.v0MigrationTxSignPayload
       );
       setV0MigrationDraft({
         v0Mnemonic: undefined,
         txId,
-        v0TxConfirmed: skipped ? false : confirmed,
-        v0TxSkipped: skipped,
+        v0TxConfirmed: confirmed,
       });
       navigate('v0-migration-submitted');
     } catch (err) {
@@ -100,7 +97,6 @@ export function V0MigrationReviewScreen() {
               : err != null
                 ? String(err)
                 : 'Failed to sign and broadcast';
-      console.error('[V0 Migration] Sign/broadcast error:', err);
       setSendError(msg);
     } finally {
       setIsSending(false);

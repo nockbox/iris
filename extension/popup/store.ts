@@ -121,7 +121,6 @@ interface AppStore {
     v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
     txId?: string;
     v0TxConfirmed?: boolean;
-    v0TxSkipped?: boolean;
   };
   setV0MigrationDraft: (
     value: Partial<{
@@ -136,7 +135,6 @@ interface AppStore {
       v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
       txId?: string;
       v0TxConfirmed?: boolean;
-      v0TxSkipped?: boolean;
     }>
   ) => void;
   resetV0MigrationDraft: () => void;
@@ -224,14 +222,12 @@ export const useStore = create<AppStore>((set, get) => ({
     destinationWalletIndex: null,
     keyfileName: undefined,
     sourceAddress: undefined,
-    sourcePkh: undefined,
     v0Notes: undefined,
-        v0MigrationTxSignPayload: undefined,
-        txId: undefined,
-        v0TxConfirmed: undefined,
-        v0TxSkipped: undefined,
+    v0MigrationTxSignPayload: undefined,
+    txId: undefined,
+    v0TxConfirmed: undefined,
   },
-    pendingConnectRequest: null,
+  pendingConnectRequest: null,
   pendingSignRequest: null,
   pendingSignRawTxRequest: null,
   pendingTransactionRequest: null,
@@ -315,8 +311,7 @@ export const useStore = create<AppStore>((set, get) => ({
         v0MigrationTxSignPayload: undefined,
         txId: undefined,
         v0TxConfirmed: undefined,
-        v0TxSkipped: undefined,
-  },
+      },
     });
   },
 

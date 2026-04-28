@@ -19,17 +19,6 @@ import { createBrowserClient } from './rpc-client-browser';
 
 export type { V0BalanceResult };
 
-/** Shared optional flags for v0 migration build and sign/broadcast. */
-export type V0MigrationOptions = {
-  /**
-   * Build: extra console logging around the migration build (same tx shape as
-   * production: all legacy notes). Sign/broadcast: when true, log signed tx +
-   * protobuf after signing. Unsigned raw tx is logged on the review screen
-   * (before Send) via {@link logV0MigrationUnsignedTxPayload}.
-   */
-  debug?: boolean;
-};
-
 const CONFIRM_POLL_INTERVAL_MS = 3000;
 const CONFIRM_TIMEOUT_MS = 90_000;
 
@@ -44,7 +33,7 @@ export function logV0MigrationUnsignedTxPayload(
   payload: V0MigrationTxSignPayload,
   message = '[V0 Migration] Unsigned transaction (review — before Send):'
 ): void {
-  const { rawTx, notes, spendConditions } = payload;
+  const { rawTx, notes, spendConditions, refundLock } = payload;
   const dbgTx = rawTx as { id?: string; version?: number; spends?: unknown[] };
   const id = dbgTx.id;
   if (typeof id === 'string' && lastLoggedV0MigrationUnsignedTxId === id) {
@@ -54,8 +43,20 @@ export function logV0MigrationUnsignedTxPayload(
     lastLoggedV0MigrationUnsignedTxId = id;
   }
 
+  const rawTxV1 = rawTx as wasm.RawTxV1;
+  const protobufTx = wasm.rawTxToProtobuf(rawTxV1);
+  const seedLockRoots = [
+    ...new Set(
+      rawTxV1.spends.flatMap(([, spend]) => spend.seeds.map(seed => seed.lock_root))
+    ),
+  ];
+
   console.log(message, {
     rawTx: { id: dbgTx.id, version: dbgTx.version, spendsCount: dbgTx.spends?.length ?? 0 },
+    protobufTx,
+    targetLockRoot: refundLock,
+    seedLockRoots,
+    allSeedsUseTargetLockRoot: seedLockRoots.length === 1 && seedLockRoots[0] === refundLock,
     notesCount: notes.length,
     spendConditionsCount: spendConditions?.length ?? 0,
     inputNotesSummary: notes.map((n, i) => ({
@@ -64,26 +65,6 @@ export function logV0MigrationUnsignedTxPayload(
     })),
     fullRawTx: rawTx,
   });
-}
-
-function summarizeSmallestV0Note(
-  notes: Array<{ assets: string }>
-): { index: number; assetsNicks: string; assetsNock: number } | null {
-  if (!notes.length) return null;
-  let smallestIndex = 0;
-  let smallestAssets = BigInt(notes[0].assets);
-  for (let i = 1; i < notes.length; i++) {
-    const assets = BigInt(notes[i].assets);
-    if (assets < smallestAssets) {
-      smallestAssets = assets;
-      smallestIndex = i;
-    }
-  }
-  return {
-    index: smallestIndex,
-    assetsNicks: smallestAssets.toString(),
-    assetsNock: Number(smallestAssets) / NOCK_TO_NICKS,
-  };
 }
 
 async function migrationTxEngineSettings(grpcEndpoint: string): Promise<wasm.TxEngineSettings> {
@@ -143,21 +124,16 @@ export async function queryV0Balance(mnemonic: string): Promise<V0BalanceResult>
 
 /**
  * Build v0 migration transaction (queries balance internally, then builds to `targetV1Pkh`).
- *
  * @param targetV1Pkh - Destination v1 PKH (`Digest` from iris-wasm). Use `pkhAddressToDigest` for base58 wallet addresses.
- * @param options.debug - When true, emits extra build logs (see {@link V0MigrationOptions}).
  */
 export async function buildV0MigrationTx(
   mnemonic: string,
-  targetV1Pkh: Digest,
-  options?: V0MigrationOptions
+  targetV1Pkh: Digest
 ): Promise<BuildV0MigrationTxResult> {
   await ensureWasmInitialized();
   const grpcEndpoint = await getEffectiveRpcEndpoint();
   const txEngineSettings = await migrationTxEngineSettings(grpcEndpoint);
   const sourcePublicKey = v0SourcePublicKeyFromMnemonic(mnemonic);
-
-  const debug = options?.debug === true;
 
   let result = await sdkBuildV0MigrationTx(sourcePublicKey, grpcEndpoint, targetV1Pkh, {
     txEngineSettings,
@@ -179,16 +155,6 @@ export async function buildV0MigrationTx(
         try {
           feeNicks = await feeNicksAfterSign(builder, privateKey);
         } catch (e) {
-          if (debug) {
-            console.error('[V0 Migration] Fee estimation failed during sign/validate:', {
-              error: e instanceof Error ? e.message : String(e),
-              txId: result.txId,
-              notesUsed: result.v0MigrationTxSignPayload.notes.length,
-              smallestDiscoveredNote: summarizeSmallestV0Note(
-                result.v0Notes as Array<{ assets: string }>
-              ),
-            });
-          }
           throw e;
         }
         result = {
@@ -204,45 +170,17 @@ export async function buildV0MigrationTx(
     }
   }
 
-  if (debug) {
-    const smallestNote = summarizeSmallestV0Note(result.v0Notes as Array<{ assets: string }>);
-    console.log('[V0 Migration] Result:', {
-      sourceAddress: result.sourceAddress,
-      rawNotesFromRpc: result.rawNotesFromRpc,
-      legacyV0Notes: result.v0Notes.length,
-      totalNicks: result.totalNicks,
-      smallestNoteNock: result.smallestNoteNock,
-      smallestDiscoveredNote: smallestNote,
-      txId: result.txId,
-      feeNock: result.feeNock,
-      notesInBuiltTx: result.v0MigrationTxSignPayload?.notes.length,
-    });
-    if (!result.v0MigrationTxSignPayload) {
-      console.warn(
-        '[V0 Migration] Build returned discovery-only result (no sign payload). This usually means the selected notes could not produce a valid migration tx with current fees/settings.',
-        {
-          endpoint: grpcEndpoint,
-          txEngineSettings,
-          smallestDiscoveredNote: smallestNote,
-        }
-      );
-    }
-  }
-
   return result;
 }
 
 /**
  * Sign a v0 migration raw transaction with the given mnemonic (master key) and broadcast.
  * Polls until the transaction is confirmed on-chain or timeout.
- *
- * @param options - See {@link V0MigrationOptions} for `debug`.
  */
 export async function signAndBroadcastV0Migration(
   mnemonic: string,
-  payload: V0MigrationTxSignPayload,
-  options?: V0MigrationOptions
-): Promise<{ txId: string; confirmed: boolean; skipped?: boolean }> {
+  payload: V0MigrationTxSignPayload
+): Promise<{ txId: string; confirmed: boolean }> {
   await ensureWasmInitialized();
   const grpcEndpoint = await getEffectiveRpcEndpoint();
   const txEngineSettings = await migrationTxEngineSettings(grpcEndpoint);
@@ -252,8 +190,6 @@ export async function signAndBroadcastV0Migration(
     masterKey.free();
     throw new Error('Cannot derive signing key from mnemonic');
   }
-
-  const debug = options?.debug === true;
 
   try {
     const { rawTx, notes, spendConditions, refundLock } = payload;
@@ -265,16 +201,13 @@ export async function signAndBroadcastV0Migration(
         txEngineSettings
       );
     } catch (e) {
-      console.error('[V0 Migration] Failed to reconstruct signer builder from notes:', e);
       throw e;
     }
 
     const privateKey = wasm.PrivateKey.fromBytes(masterKey.privateKey);
-    let convergedFeeNicks = '0';
     try {
-      convergedFeeNicks = await feeNicksAfterSign(builder, privateKey);
+      await feeNicksAfterSign(builder, privateKey);
     } catch (e) {
-      console.error('[V0 Migration] builder.sign/validate failed:', e);
       throw e;
     } finally {
       privateKey.free();
@@ -283,49 +216,6 @@ export async function signAndBroadcastV0Migration(
     const signedTx = builder.build();
     const signedRawTx = wasm.nockchainTxToRawTx(signedTx) as wasm.RawTxV1;
     const protobuf = wasm.rawTxToProtobuf(signedRawTx);
-
-    if (debug) {
-      let derivedOutputs: unknown[] = [];
-      try {
-        const rpcClient = createBrowserClient(grpcEndpoint);
-        const blockHeight = await rpcClient.getCurrentBlockHeight();
-        const outputs = wasm.rawTxOutputs(signedRawTx, blockHeight, txEngineSettings);
-        derivedOutputs = outputs.map(output => {
-          const protobufNote = wasm.noteToProtobuf(output);
-          const note = protobufNote as Record<string, unknown>;
-          const name = note.name as Record<string, unknown> | undefined;
-          const noteVersion = note.note_version as Record<string, unknown> | undefined;
-          const v1 = noteVersion?.V1 as Record<string, unknown> | undefined;
-          const v1Name = v1?.name as Record<string, unknown> | undefined;
-          return {
-            firstName:
-              typeof name?.first === 'string'
-                ? name.first
-                : typeof v1Name?.first === 'string'
-                  ? v1Name.first
-                  : null,
-            assetsNicks: note.assets,
-            fullOutputNote: protobufNote,
-          };
-        });
-      } catch (e) {
-        console.warn(
-          '[V0 Migration] Failed to derive output notes from signed tx for debug logging:',
-          e
-        );
-      }
-
-      console.log('[V0 Migration] Signed transaction (before broadcast):', {
-        txId: signedTx.id,
-        spendsCount: signedRawTx?.spends?.length ?? 0,
-        feeNicks: convergedFeeNicks,
-        feeNock: Number(BigInt(convergedFeeNicks)) / NOCK_TO_NICKS,
-        derivedOutputs,
-        fullSignedRawTx: signedRawTx,
-        protobufPayload: protobuf,
-      });
-      console.log('[V0 Migration] Debug mode enabled; broadcasting after logging');
-    }
 
     const rpcClient = createBrowserClient(grpcEndpoint);
     // Note: the node's WalletSendTransaction ACK is an empty Acknowledged
