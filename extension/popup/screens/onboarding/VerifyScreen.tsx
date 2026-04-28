@@ -34,7 +34,6 @@ export function VerifyScreen() {
     setOnboardingMnemonic,
     setOnboardingPassword,
     currentScreen,
-    fetchBalance,
     createMnemonicSeedSource,
     syncWallet,
     refreshWalletAccounts,
@@ -88,7 +87,6 @@ export function VerifyScreen() {
         navigate('home');
         setOnboardingPassword(null);
         setOnboardingMnemonic(null);
-        await fetchBalance();
         return;
       }
 
