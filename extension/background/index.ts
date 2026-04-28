@@ -370,6 +370,15 @@ function toInvalidParamsError(err: unknown): { error: { code: number; message: s
   };
 }
 
+function toInternalProviderError(err: unknown): { error: { code: number; message: string } } {
+  return {
+    error: {
+      code: -32603,
+      message: err instanceof Error ? err.message : 'Internal wallet error',
+    },
+  };
+}
+
 function buildConnectResponse(address: string, rpcConfig: RpcConfig): ConnectResponse {
   const { txEngineActivationHeights, coinbaseTimelockBlocks } = rpcConfig;
   if (!txEngineActivationHeights || coinbaseTimelockBlocks == null) {
@@ -680,7 +689,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       return;
     }
     const sendBridgedResponse = async (response: unknown): Promise<void> => {
-      sendResponse(await bridgeOutgoingProviderResponse(sourcePayload, response));
+      try {
+        sendResponse(await bridgeOutgoingProviderResponse(sourcePayload, response));
+      } catch (err) {
+        console.error('[Background] Failed to bridge provider response:', err);
+        sendResponse(toInternalProviderError(err));
+      }
     };
     await touchActivity(payload?.method);
 
@@ -728,9 +742,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        // Origin approved - return address
-        const connectRpcConfig = await getEffectiveRpcConfig();
-        await sendBridgedResponse(buildConnectResponse(vault.getAddress(), connectRpcConfig));
+        try {
+          const connectRpcConfig = await getEffectiveRpcConfig();
+          await sendBridgedResponse(buildConnectResponse(vault.getAddress(), connectRpcConfig));
+        } catch (err) {
+          console.error('[Background] Failed to build connect response:', err);
+          await sendBridgedResponse(toInternalProviderError(err));
+          return;
+        }
 
         // Emit connect event when dApp connects successfully
         await emitWalletEvent('connect', { chainId: CHAIN_ID });
@@ -900,8 +919,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        const walletInfoRpcConfig = await getEffectiveRpcConfig();
-        await sendBridgedResponse(buildConnectResponse(vault.getAddress(), walletInfoRpcConfig));
+        try {
+          const walletInfoRpcConfig = await getEffectiveRpcConfig();
+          await sendBridgedResponse(buildConnectResponse(vault.getAddress(), walletInfoRpcConfig));
+        } catch (err) {
+          console.error('[Background] Failed to build wallet info response:', err);
+          await sendBridgedResponse(toInternalProviderError(err));
+        }
         return;
 
       // Internal methods (called from popup)
@@ -1419,18 +1443,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             return;
           }
 
-          // Add origin to approved list
-          await approveOrigin(connectRequest.origin);
+          try {
+            const approveRpcConfig = await getEffectiveRpcConfig();
+            const connectResponse = buildConnectResponse(vault.getAddress(), approveRpcConfig);
 
-          // Return wallet info
-          const approveRpcConfig = await getEffectiveRpcConfig();
-          approveConnectPending.sendResponse(buildConnectResponse(vault.getAddress(), approveRpcConfig));
-          cancelPendingRequest(approveConnectId);
-          processNextRequest();
-          sendResponse({ success: true });
+            // Add origin only after the response can be built.
+            await approveOrigin(connectRequest.origin);
+            approveConnectPending.sendResponse(connectResponse);
+            cancelPendingRequest(approveConnectId);
+            processNextRequest();
+            sendResponse({ success: true });
 
-          // Emit connect event
-          await emitWalletEvent('connect', { chainId: CHAIN_ID });
+            // Emit connect event
+            await emitWalletEvent('connect', { chainId: CHAIN_ID });
+          } catch (err) {
+            console.error('[Background] Failed to approve connection:', err);
+            const errorMessage =
+              err instanceof Error ? err.message : 'Failed to approve connection';
+            cancelPendingRequest(approveConnectId, -32603, errorMessage);
+            processNextRequest();
+            sendResponse({ error: errorMessage });
+          }
         } else {
           sendResponse({ error: ERROR_CODES.NOT_FOUND });
         }
