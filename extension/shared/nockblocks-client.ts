@@ -29,6 +29,7 @@ export interface NockblocksSpend {
 }
 
 export interface NockblocksOutput {
+  // Valid note outputs always include firstName; optional reflects defensive JSON parsing.
   firstName?: string
   lastName?: string
   seeds?: NockblocksSeed[]
