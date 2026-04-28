@@ -4,6 +4,7 @@
  */
 
 import { base58 } from '@scure/base';
+import { guard } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
 
 export function parseDigestString(value: string): wasm.Digest {
@@ -11,7 +12,10 @@ export function parseDigestString(value: string): wasm.Digest {
   if (bytes.length !== 40) {
     throw new Error(`Invalid digest length: ${bytes.length}, expected 40 bytes`);
   }
-  return value as wasm.Digest;
+  if (!guard.isDigest(value)) {
+    throw new Error('Invalid digest encoding');
+  }
+  return value;
 }
 
 function toBlockHeight(value: number): wasm.BlockHeight {

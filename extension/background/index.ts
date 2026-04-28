@@ -10,7 +10,6 @@ import {
   noteToProtobuf,
   assertNativeRawTx,
   assertNativeNote,
-  assertNativeSpendCondition,
 } from '../shared/sign-raw-tx-compat';
 import {
   isSignTxRequest,
@@ -339,10 +338,10 @@ function toRpcResponse(response: unknown): RpcResponse<unknown> {
   return { result: response };
 }
 
-async function bridgeOutgoingProviderResponse(
+function bridgeOutgoingProviderResponse(
   sourceRequest: IncomingRpcRequest,
   response: unknown
-): Promise<unknown> {
+): unknown {
   if (!sourceRequest?.method || !isProviderMethod(sourceRequest.method)) {
     return response;
   }
@@ -1384,8 +1383,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
           try {
             assertNativeRawTx(signRawTxRequest.rawTx);
-            signRawTxRequest.notes.forEach(assertNativeNote);
-            signRawTxRequest.spendConditions.forEach(assertNativeSpendCondition);
             const signedTx = await vault.signRawTx({
               rawTx: signRawTxRequest.rawTx,
             });
