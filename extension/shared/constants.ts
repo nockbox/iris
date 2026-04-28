@@ -238,6 +238,9 @@ export const STORAGE_KEYS = {
   /** Whether balance is hidden (privacy mode) */
   BALANCE_HIDDEN: 'balanceHidden',
 
+  /** UI display order for top-level seed groups */
+  SEED_DISPLAY_ORDER: 'seedDisplayOrder',
+
   /** Onboarding state - tracks whether secret phrase backup is complete */
   ONBOARDING_STATE: 'onboardingState',
 
