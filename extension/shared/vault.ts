@@ -1014,6 +1014,12 @@ export class Vault {
     if (!params.address || typeof params.address !== 'string') {
       return { error: ERROR_CODES.INVALID_PARAMS };
     }
+    const alreadyExists = this.seedAccounts.some(seed =>
+      seed.accounts.some(account => account.address === params.address)
+    );
+    if (alreadyExists) {
+      return { error: ERROR_CODES.DUPLICATE_SEED };
+    }
 
     const seedOrdinal = this.seedAccounts.length + 1;
     const seedId = crypto.randomUUID();
