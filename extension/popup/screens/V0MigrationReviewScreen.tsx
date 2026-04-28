@@ -87,9 +87,7 @@ export function V0MigrationReviewScreen() {
     try {
       const { txId } = await signAndBroadcastV0Migration(
         v0MigrationDraft.v0Mnemonic,
-        v0MigrationDraft.v0MigrationTxSignPayload,
-        // TEMP: sign + log only, no broadcast — remove before shipping
-        { debug: true }
+        v0MigrationDraft.v0MigrationTxSignPayload
       );
       const sentAmount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock ?? 0;
       const feeNock = v0MigrationDraft.feeNock ?? 0;
@@ -115,7 +113,6 @@ export function V0MigrationReviewScreen() {
               : err != null
                 ? String(err)
                 : 'Failed to sign and broadcast';
-      console.error('[V0 Migration] Sign/broadcast error:', err);
       setSendError(msg);
     } finally {
       setIsSending(false);

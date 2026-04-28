@@ -93,8 +93,7 @@ export function V0MigrationFundsScreen() {
       await yieldToPaint();
       const result = await buildV0MigrationTx(
         v0MigrationDraft.v0Mnemonic,
-        pkhAddressToDigest(destinationWallet.address),
-        { debug: true }
+        pkhAddressToDigest(destinationWallet.address)
       );
       if (!result.txId || !result.v0MigrationTxSignPayload) {
         throw new Error('Failed to build migration transaction');
