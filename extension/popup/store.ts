@@ -56,7 +56,6 @@ export type Screen =
   | 'v0-migration-setup'
   | 'v0-migration-funds'
   | 'v0-migration-review'
-  | 'v0-migration-submitted'
   | 'tx-details'
 
   // Approval screens
@@ -113,28 +112,26 @@ interface AppStore {
     v0BalanceNock: number;
     migratedAmountNock?: number;
     feeNock?: number;
-    destinationWalletIndex: number | null;
+    destinationAddress: string | null;
     keyfileName?: string;
     sourceAddress?: string;
     v0Mnemonic?: string; // Kept in memory only until sign+broadcast
     v0Notes?: any[];
     v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
     txId?: string;
-    v0TxConfirmed?: boolean;
   };
   setV0MigrationDraft: (
     value: Partial<{
       v0BalanceNock: number;
       migratedAmountNock?: number;
       feeNock?: number;
-      destinationWalletIndex: number | null;
+      destinationAddress: string | null;
       keyfileName?: string;
       sourceAddress?: string;
       v0Mnemonic?: string;
       v0Notes?: any[];
       v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
       txId?: string;
-      v0TxConfirmed?: boolean;
     }>
   ) => void;
   resetV0MigrationDraft: () => void;
@@ -219,13 +216,12 @@ export const useStore = create<AppStore>((set, get) => ({
     v0BalanceNock: 2500,
     migratedAmountNock: undefined,
     feeNock: undefined,
-    destinationWalletIndex: null,
+    destinationAddress: null,
     keyfileName: undefined,
     sourceAddress: undefined,
     v0Notes: undefined,
     v0MigrationTxSignPayload: undefined,
     txId: undefined,
-    v0TxConfirmed: undefined,
   },
   pendingConnectRequest: null,
   pendingSignRequest: null,
@@ -303,14 +299,13 @@ export const useStore = create<AppStore>((set, get) => ({
         v0BalanceNock: 2500,
         migratedAmountNock: undefined,
         feeNock: undefined,
-        destinationWalletIndex: null,
+        destinationAddress: null,
         keyfileName: undefined,
         sourceAddress: undefined,
         v0Mnemonic: undefined,
         v0Notes: undefined,
         v0MigrationTxSignPayload: undefined,
         txId: undefined,
-        v0TxConfirmed: undefined,
       },
     });
   },

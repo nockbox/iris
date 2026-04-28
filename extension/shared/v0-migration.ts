@@ -16,11 +16,9 @@ import type { Digest } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
 import { NOCK_TO_NICKS } from './constants';
 import { createBrowserClient } from './rpc-client-browser';
+import type { TransactionDetails, WalletTransaction } from './types';
 
 export type { V0BalanceResult };
-
-const CONFIRM_POLL_INTERVAL_MS = 3000;
-const CONFIRM_TIMEOUT_MS = 90_000;
 
 /** Dedupes React Strict Mode double-mount for the same built tx id. */
 let lastLoggedV0MigrationUnsignedTxId: string | undefined;
@@ -46,9 +44,7 @@ export function logV0MigrationUnsignedTxPayload(
   const rawTxV1 = rawTx as wasm.RawTxV1;
   const protobufTx = wasm.rawTxToProtobuf(rawTxV1);
   const seedLockRoots = [
-    ...new Set(
-      rawTxV1.spends.flatMap(([, spend]) => spend.seeds.map(seed => seed.lock_root))
-    ),
+    ...new Set(rawTxV1.spends.flatMap(([, spend]) => spend.seeds.map(seed => seed.lock_root))),
   ];
 
   console.log(message, {
@@ -124,6 +120,7 @@ export async function queryV0Balance(mnemonic: string): Promise<V0BalanceResult>
 
 /**
  * Build v0 migration transaction (queries balance internally, then builds to `targetV1Pkh`).
+ *
  * @param targetV1Pkh - Destination v1 PKH (`Digest` from iris-wasm). Use `pkhAddressToDigest` for base58 wallet addresses.
  */
 export async function buildV0MigrationTx(
@@ -151,12 +148,7 @@ export async function buildV0MigrationTx(
           result.v0MigrationTxSignPayload,
           txEngineSettings
         );
-        let feeNicks: string;
-        try {
-          feeNicks = await feeNicksAfterSign(builder, privateKey);
-        } catch (e) {
-          throw e;
-        }
+        const feeNicks = await feeNicksAfterSign(builder, privateKey);
         result = {
           ...result,
           fee: feeNicks as BuildV0MigrationTxResult['fee'],
@@ -194,21 +186,14 @@ export async function signAndBroadcastV0Migration(
   try {
     const { rawTx, notes, spendConditions, refundLock } = payload;
 
-    let builder: wasm.TxBuilder;
-    try {
-      builder = buildV0MigrationTxBuilderFromPayload(
-        { rawTx, notes, spendConditions, refundLock },
-        txEngineSettings
-      );
-    } catch (e) {
-      throw e;
-    }
+    const builder = buildV0MigrationTxBuilderFromPayload(
+      { rawTx, notes, spendConditions, refundLock },
+      txEngineSettings
+    );
 
     const privateKey = wasm.PrivateKey.fromBytes(masterKey.privateKey);
     try {
       await feeNicksAfterSign(builder, privateKey);
-    } catch (e) {
-      throw e;
     } finally {
       privateKey.free();
     }
@@ -222,17 +207,36 @@ export async function signAndBroadcastV0Migration(
     await rpcClient.sendTransaction(protobuf);
     const txId = signedTx.id;
 
-    const deadline = Date.now() + CONFIRM_TIMEOUT_MS;
-    while (Date.now() < deadline) {
-      const accepted = await rpcClient.isTransactionAccepted(txId);
-      if (accepted) {
-        return { txId, confirmed: true };
-      }
-      await new Promise(resolve => setTimeout(resolve, CONFIRM_POLL_INTERVAL_MS));
-    }
-
+    // Confirmation is driven by the normal wallet history-sync loop (see vault.ts),
+    // which uses the same mempool/peek path as regular sends. Blocking here on
+    // `transactionAccepted` caused stalls because some nodes' peek path returns
+    // "Peek operation failed" for freshly-broadcast v0→v1 migration txs.
     return { txId, confirmed: false };
   } finally {
     masterKey.free();
   }
+}
+
+/**
+ * Whether a wallet history row looks like a v0→v1 migration receipt (long legacy sender, short v1 recipient).
+ */
+export function isMigrationWalletTx(tx: WalletTransaction): boolean {
+  if ((tx as WalletTransaction & { migrationFromV0?: boolean }).migrationFromV0) return true;
+  const from = (tx.sender ?? '').trim();
+  const to = (tx.recipient ?? '').trim();
+  if (tx.direction !== 'incoming' || !from || !to) return false;
+  return from.length >= 60 && to.length < 60;
+}
+
+/**
+ * Whether {@link TransactionDetails} on the post-send screen came from the
+ * v0 migration flow (legacy pubkey as `from`, shorter v1 account as `to`).
+ * Regular send uses the current v1 account as `from`, which is shorter.
+ */
+export function isV0MigrationSubmittedTx(
+  tx: Pick<TransactionDetails, 'from' | 'to'> | null | undefined
+): boolean {
+  const from = (tx?.from ?? '').trim();
+  const to = (tx?.to ?? '').trim();
+  return from.length >= 100 && to.length > 0 && to.length < from.length;
 }
