@@ -1013,9 +1013,7 @@ export class Vault {
     const words = mnemonic ? mnemonic.trim() : generateMnemonic();
 
     // Detect duplicate: same mnemonic already exists in the vault
-    const existing = this.seedAccounts.find(
-      s => s.type === 'mnemonic' && s.mnemonic === words
-    );
+    const existing = this.seedAccounts.find(s => s.type === 'mnemonic' && s.mnemonic === words);
     if (existing) {
       // If the master account is hidden, restore it (and all its sub-accounts)
       const masterHidden = existing.accounts.some(a => a.index === 0 && a.hidden);

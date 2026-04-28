@@ -355,7 +355,11 @@ export const useStore = create<AppStore>((set, get) => ({
     }
   },
 
-  createMnemonicSeedSource: async (mnemonic?: string, name?: string, importedExistingPhrase?: boolean) => {
+  createMnemonicSeedSource: async (
+    mnemonic?: string,
+    name?: string,
+    importedExistingPhrase?: boolean
+  ) => {
     const result = await send<any>(INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE, [
       mnemonic,
       name,
