@@ -79,7 +79,11 @@ export function VerifyScreen() {
     setIsSubmitting(true);
     try {
       if (isAddWalletFlow) {
-        const result = await createMnemonicSeedSource(onboardingMnemonic ?? undefined);
+        if (!onboardingMnemonic) {
+          setError('No recovery phrase found. Please restart the wallet backup flow.');
+          return;
+        }
+        const result = await createMnemonicSeedSource(onboardingMnemonic);
         if (result && typeof result === 'object' && 'error' in result) {
           setError(`Error: ${result.error}`);
           return;

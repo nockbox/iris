@@ -197,29 +197,19 @@ export function HomeScreen() {
 
     chrome.storage.local.get([STORAGE_KEYS.SEED_DISPLAY_ORDER]).then(result => {
       const storedOrder = result[STORAGE_KEYS.SEED_DISPLAY_ORDER];
-      if (!Array.isArray(storedOrder)) return;
+      const persistedOrder = Array.isArray(storedOrder)
+        ? storedOrder.filter((id): id is string => typeof id === 'string')
+        : [];
 
-      const order = storedOrder.filter(
-        (id): id is string => typeof id === 'string' && ids.includes(id)
-      );
-      ids.forEach(id => {
-        if (!order.includes(id)) order.push(id);
+      setSeedDisplayOrder(prev => {
+        const order = (persistedOrder.length > 0 ? persistedOrder : prev).filter(id =>
+          ids.includes(id)
+        );
+        ids.forEach(id => {
+          if (!order.includes(id)) order.push(id);
+        });
+        return order.length > 0 ? order : ids;
       });
-      setSeedDisplayOrder(order);
-    });
-  }, [seedGroupIdsKey]);
-
-  // Sync UI display order from vault seed order; append new seeds when added
-  useEffect(() => {
-    const ids = seedGroups.map(g => g.seed.id);
-    if (ids.length === 0) return;
-    setSeedDisplayOrder(prev => {
-      if (prev.length === 0) return ids;
-      const next = prev.filter(id => ids.includes(id));
-      ids.forEach(id => {
-        if (!next.includes(id)) next.push(id);
-      });
-      return next;
     });
   }, [seedGroupIdsKey]);
 

@@ -2449,7 +2449,7 @@ export class Vault {
 
       const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
       const address =
-        discoveredAddressByIndex.get(j) ?? (await deriveAddress(seedAccount.mnemonic, j));
+        discoveredAddressByIndex.get(j) ?? (await deriveAddress(mnemonic, j));
       const newAccount: SubAccount = {
         name: this.getDefaultChildWalletName(seedOrdinal, j),
         address,
