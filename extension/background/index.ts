@@ -19,9 +19,9 @@ import {
   RPC_API_VERSION,
   isEvmAddress,
 } from '@nockbox/iris-sdk';
-import type { RpcRequest, RpcResponse, ConnectResponse, SignMessageResponse } from '@nockbox/iris-sdk';
+import type { RpcRequest, RpcResponse, ConnectResponse } from '@nockbox/iris-sdk';
 import wasm from '../shared/sdk-wasm.js';
-import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
+import type { Note } from '@nockbox/iris-sdk/wasm';
 import type { Nicks } from '@nockbox/iris-sdk/wasm';
 import type { Digest } from '@nockbox/iris-sdk/wasm';
 import {
@@ -404,33 +404,6 @@ function buildConnectResponse(address: string, rpcConfig: RpcConfig): ConnectRes
       txEngineActivationHeights,
       coinbaseTimelockBlocks,
     },
-  };
-}
-
-function buildSignMessageResponse(
-  legacySignatureJson: string,
-  publicKeyHex: string
-): SignMessageResponse {
-  const legacySignature = JSON.parse(legacySignatureJson) as { c: number[]; s: number[] };
-
-  const fromLegacyHex = (bytes: number[]): string => {
-    return bytes
-      .reverse()
-      .map(b => b.toString(16).padStart(2, '0'))
-      .join('');
-  };
-
-  const publicKey = wasm.publicKeyFromHex(publicKeyHex);
-  if (!publicKey) {
-    throw new Error('Invalid public key');
-  }
-
-  return {
-    signature: {
-      c: fromLegacyHex(legacySignature.c),
-      s: fromLegacyHex(legacySignature.s),
-    },
-    publicKey,
   };
 }
 
@@ -1508,8 +1481,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
 
           try {
-            const { signature, publicKeyHex } = await vault.signMessage([signRequest.message]);
-            approveSignPending.sendResponse(buildSignMessageResponse(signature, publicKeyHex));
+            const signMessageResponse = await vault.signMessage([signRequest.message]);
+            approveSignPending.sendResponse(signMessageResponse);
             cancelPendingRequest(approveSignId);
             processNextRequest();
             sendResponse({ success: true });
@@ -1556,8 +1529,6 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             signRawTxRequest.spendConditions.forEach(assertNativeSpendCondition);
             const signedTx = await vault.signRawTx({
               rawTx: signRawTxRequest.rawTx,
-              notes: signRawTxRequest.notes as Note[],
-              spendConditions: signRawTxRequest.spendConditions as SpendCondition[],
             });
             approveSignRawTxPending.sendResponse({ tx: signedTx });
             cancelPendingRequest(approveSignRawTxId);
