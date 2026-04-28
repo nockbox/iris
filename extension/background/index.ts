@@ -933,9 +933,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           amountNicks = parseNicksParam(amount, 'amount');
           feeNicks = parseNicksParam(fee, 'fee', { allowZero: true });
         } catch (err) {
-          await sendBridgedResponse({
-            error: err instanceof Error ? err.message : 'Invalid params',
-          });
+          await sendBridgedResponse(toInvalidParamsError(err));
           return;
         }
 
