@@ -213,7 +213,7 @@ export const useStore = create<AppStore>((set, get) => ({
   onboardingMnemonic: null,
   lastTransaction: null,
   v0MigrationDraft: {
-    v0BalanceNock: 2500,
+    v0BalanceNock: 0,
     migratedAmountNock: undefined,
     feeNock: undefined,
     destinationAddress: null,
@@ -296,7 +296,7 @@ export const useStore = create<AppStore>((set, get) => ({
   resetV0MigrationDraft: () => {
     set({
       v0MigrationDraft: {
-        v0BalanceNock: 2500,
+        v0BalanceNock: 0,
         migratedAmountNock: undefined,
         feeNock: undefined,
         destinationAddress: null,
