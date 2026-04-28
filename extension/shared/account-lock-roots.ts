@@ -1,9 +1,6 @@
 import type { Account } from './types.js';
 import { getEffectiveRpcConfig } from './rpc-config.js';
-import {
-  coinbasePkhLockRootBase58,
-  simplePkhLockRootBase58,
-} from './spend-conditions.js';
+import { coinbasePkhLockRootBase58, simplePkhLockRootBase58 } from './spend-conditions.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
 
 /** Build lock-root to account mappings for locally known accounts. */

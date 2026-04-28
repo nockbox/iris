@@ -244,6 +244,9 @@ export class Vault {
   /** Per-account sync metadata for history and polling */
   private accountSyncState: SyncStateStore = {};
 
+  /** Serialize Nockblocks history refreshes per account (avoid overlapping background syncs). */
+  private nockblocksHistoryRefreshChains = new Map<string, Promise<void>>();
+
   /** Cached balances per account (only stored in memory while unlocked) */
   private cachedBalances: Record<string, number> = {};
 
@@ -678,6 +681,7 @@ export class Vault {
     this.walletTxStore = {};
     this.accountSyncState = {};
     this.cachedBalances = {};
+    this.nockblocksHistoryRefreshChains.clear();
     return { ok: true };
   }
 
@@ -701,6 +705,7 @@ export class Vault {
     this.walletTxStore = {};
     this.accountSyncState = {};
     this.cachedBalances = {};
+    this.nockblocksHistoryRefreshChains.clear();
 
     return { ok: true };
   }
@@ -882,7 +887,10 @@ export class Vault {
     this.accountSyncState[accountAddress] = {
       ...this.getAccountSyncState(accountAddress),
       accountAddress,
-      lastSyncedHeight: Math.max(this.getAccountSyncState(accountAddress).lastSyncedHeight, blockHeight),
+      lastSyncedHeight: Math.max(
+        this.getAccountSyncState(accountAddress).lastSyncedHeight,
+        blockHeight
+      ),
       lastSyncedAt: Date.now(),
     };
 
@@ -1048,13 +1056,19 @@ export class Vault {
     }
   }
 
-  private findWalletTransactionIndex(accountAddress: string, tx: Partial<WalletTransaction>): number {
+  private findWalletTransactionIndex(
+    accountAddress: string,
+    tx: Partial<WalletTransaction>
+  ): number {
     const transactions = this.walletTxStore[accountAddress] || [];
     const trackingTxId = tx.trackingTxId || tx.txHash;
 
     return transactions.findIndex(existing => {
       if (tx.id && existing.id === tx.id) return true;
-      if (trackingTxId && (existing.trackingTxId === trackingTxId || existing.txHash === trackingTxId)) {
+      if (
+        trackingTxId &&
+        (existing.trackingTxId === trackingTxId || existing.txHash === trackingTxId)
+      ) {
         return true;
       }
       return false;
@@ -1117,7 +1131,10 @@ export class Vault {
     await this.saveAccountData();
   }
 
-  private upsertWalletTransactionInMemory(tx: WalletTransaction): void {
+  private upsertWalletTransactionInMemory(
+    tx: WalletTransaction,
+    opts?: { skipSort?: boolean }
+  ): void {
     if (!this.walletTxStore[tx.accountAddress]) {
       this.walletTxStore[tx.accountAddress] = [];
     }
@@ -1142,8 +1159,10 @@ export class Vault {
       };
     }
 
-    this.sortWalletTransactions(tx.accountAddress);
-    this.capWalletTransactions(tx.accountAddress);
+    if (!opts?.skipSort) {
+      this.sortWalletTransactions(tx.accountAddress);
+      this.capWalletTransactions(tx.accountAddress);
+    }
   }
 
   async upsertWalletTransaction(tx: WalletTransaction): Promise<void> {
@@ -1258,55 +1277,55 @@ export class Vault {
   }
 
   private sumSeedValue(seeds?: Array<{ gift?: number }>): number {
-    return (seeds || []).reduce((sum, seed) => sum + (seed.gift || 0), 0)
+    return (seeds || []).reduce((sum, seed) => sum + (seed.gift || 0), 0);
   }
 
   private getUniqueLockRootFromOutputs(outputs: NockblocksOutput[]): string | undefined {
-    const lockRoots = new Set<string>()
+    const lockRoots = new Set<string>();
     for (const output of outputs) {
       for (const seed of output.seeds || []) {
         if (seed.lockRoot) {
-          lockRoots.add(seed.lockRoot)
+          lockRoots.add(seed.lockRoot);
         }
       }
     }
-    return lockRoots.size === 1 ? [...lockRoots][0] : undefined
+    return lockRoots.size === 1 ? [...lockRoots][0] : undefined;
   }
 
   private getUniqueLockRootFromSpends(spends: NockblocksSpend[]): string | undefined {
-    const spendLockRoots = new Set<string>()
+    const spendLockRoots = new Set<string>();
     for (const spend of spends) {
       if (spend.lockRoot) {
-        spendLockRoots.add(spend.lockRoot)
+        spendLockRoots.add(spend.lockRoot);
       }
     }
 
     if (spendLockRoots.size === 1) {
-      return [...spendLockRoots][0]
+      return [...spendLockRoots][0];
     }
 
     if (spendLockRoots.size > 1) {
-      return undefined
+      return undefined;
     }
 
-    const seedLockRoots = new Set<string>()
+    const seedLockRoots = new Set<string>();
     for (const spend of spends) {
       for (const seed of spend.seeds || []) {
         if (seed.lockRoot) {
-          seedLockRoots.add(seed.lockRoot)
+          seedLockRoots.add(seed.lockRoot);
         }
       }
     }
-    return seedLockRoots.size === 1 ? [...seedLockRoots][0] : undefined
+    return seedLockRoots.size === 1 ? [...seedLockRoots][0] : undefined;
   }
 
   private getTransactionTrackingId(tx: WalletTransaction): string | undefined {
-    return tx.trackingTxId || tx.txHash
+    return tx.trackingTxId || tx.txHash;
   }
 
   private async getOwnFirstNameSet(accountAddress: string): Promise<Set<string>> {
-    const { simple, coinbase } = await getBothFirstNames(accountAddress)
-    return new Set([simple, coinbase])
+    const { simple, coinbase } = await getBothFirstNames(accountAddress);
+    return new Set([simple, coinbase]);
   }
 
   private buildWalletTransactionFromChainTransaction(
@@ -1314,68 +1333,63 @@ export class Vault {
     tx: NockblocksTransaction,
     ownFirstNames: Set<string>
   ): WalletTransaction | null {
-    const txId = tx.txId || tx.id
+    const txId = tx.txId || tx.id;
     if (!txId) {
-      return null
+      return null;
     }
 
-    const outputs = tx.outputs || tx.transaction?.outputs || []
-    const spends = tx.spends || tx.transaction?.spends || []
-    const ownOutputs = outputs.filter(
-      (output: NockblocksOutput) => Boolean(output.firstName && ownFirstNames.has(output.firstName))
-    )
+    const outputs = tx.outputs || tx.transaction?.outputs || [];
+    const spends = tx.spends || tx.transaction?.spends || [];
+    const ownOutputs = outputs.filter((output: NockblocksOutput) =>
+      Boolean(output.firstName && ownFirstNames.has(output.firstName))
+    );
     const externalOutputs = outputs.filter(
       (output: NockblocksOutput) => !output.firstName || !ownFirstNames.has(output.firstName)
-    )
-    const ownSpends = spends.filter(
-      (spend: NockblocksSpend) => Boolean(spend.firstName && ownFirstNames.has(spend.firstName))
-    )
+    );
+    const ownSpends = spends.filter((spend: NockblocksSpend) =>
+      Boolean(spend.firstName && ownFirstNames.has(spend.firstName))
+    );
     const externalSpends = spends.filter(
       (spend: NockblocksSpend) => !spend.firstName || !ownFirstNames.has(spend.firstName)
-    )
+    );
 
     if (ownOutputs.length === 0 && ownSpends.length === 0) {
-      return null
+      return null;
     }
 
     const ownOutputAmount = ownOutputs.reduce(
       (sum: number, output: NockblocksOutput) => sum + this.sumSeedValue(output.seeds),
       0
-    )
+    );
     const externalOutputAmount = externalOutputs.reduce(
       (sum: number, output: NockblocksOutput) => sum + this.sumSeedValue(output.seeds),
       0
-    )
-    const fee = spends.reduce(
-      (sum: number, spend: NockblocksSpend) => sum + (spend.fee || 0),
-      0
-    )
+    );
+    const fee = spends.reduce((sum: number, spend: NockblocksSpend) => sum + (spend.fee || 0), 0);
 
-    let direction: WalletTransaction['direction'] = 'incoming'
+    let direction: WalletTransaction['direction'] = 'incoming';
     if (ownSpends.length > 0 && externalOutputs.length === 0) {
-      direction = 'self'
+      direction = 'self';
     } else if (ownSpends.length > 0) {
-      direction = 'outgoing'
+      direction = 'outgoing';
     }
 
-    const createdAt = (tx.timestamp || tx.heardAtTimestamp || Math.floor(Date.now() / 1000)) * 1000
+    const createdAt = (tx.timestamp || tx.heardAtTimestamp || Math.floor(Date.now() / 1000)) * 1000;
     const amount =
       direction === 'incoming'
         ? ownOutputAmount
         : direction === 'self'
           ? ownOutputAmount
-          : externalOutputAmount
+          : externalOutputAmount;
 
     const recipient =
       direction === 'incoming'
         ? accountAddress
         : direction === 'self'
           ? accountAddress
-          : this.getUniqueLockRootFromOutputs(externalOutputs)
+          : this.getUniqueLockRootFromOutputs(externalOutputs);
     const sender =
-      direction === 'incoming'
-        ? this.getUniqueLockRootFromSpends(externalSpends)
-        : accountAddress
+      direction === 'incoming' ? this.getUniqueLockRootFromSpends(externalSpends) : accountAddress;
 
     return {
       id: txId,
@@ -1396,71 +1410,71 @@ export class Vault {
       confirmedAtTimestamp: tx.timestamp,
       confirmationSource: 'history_sync',
       confirmations: tx.blockHeight ? 1 : undefined,
-    }
+    };
   }
 
   private async refreshPendingTransactionStatuses(accountAddress: string): Promise<number> {
     if (!isNockblocksConfigured()) {
-      return 0
+      return 0;
     }
 
-    const pendingTxs = this.getPendingOutgoingTransactions(accountAddress)
+    const pendingTxs = this.getPendingOutgoingTransactions(accountAddress);
     if (pendingTxs.length === 0) {
-      return 0
+      return 0;
     }
 
-    const client = createNockblocksClient()
-    const ownFirstNames = await this.getOwnFirstNameSet(accountAddress)
-    let confirmedCount = 0
+    const client = createNockblocksClient();
+    const ownFirstNames = await this.getOwnFirstNameSet(accountAddress);
+    let confirmedCount = 0;
 
     for (const tx of pendingTxs) {
-      const trackingId = this.getTransactionTrackingId(tx)
-      if (!trackingId) continue
+      const trackingId = this.getTransactionTrackingId(tx);
+      if (!trackingId) continue;
 
-      const now = Date.now()
-      const ageMs = now - tx.createdAt
+      const now = Date.now();
+      const ageMs = now - tx.createdAt;
       const shouldCheckMempool =
         ageMs <= 5 * 60 * 1000 &&
-        (!tx.lastMempoolCheckAt || now - tx.lastMempoolCheckAt >= 15 * 1000)
+        (!tx.lastMempoolCheckAt || now - tx.lastMempoolCheckAt >= 15 * 1000);
 
       if (shouldCheckMempool) {
         try {
-          const mempoolTx = await client.getMempoolTransactionByTxid(trackingId)
+          const mempoolTx = await client.getMempoolTransactionByTxid(trackingId);
           await this.updateWalletTransaction(accountAddress, tx.id, {
             status: mempoolTx ? 'mempool_seen' : tx.status,
             mempoolSeenAt: mempoolTx
               ? (mempoolTx.heardAtTimestamp || Math.floor(now / 1000)) * 1000
               : tx.mempoolSeenAt,
             lastMempoolCheckAt: now,
-          })
+          });
         } catch (error) {
-          console.warn('[Vault] Mempool check failed:', error)
+          console.warn('[Vault] Mempool check failed:', error);
         }
       }
 
-      const confirmDelayMs = tx.mempoolSeenAt ? 15 * 1000 : 60 * 1000
+      const confirmDelayMs = tx.mempoolSeenAt ? 15 * 1000 : 60 * 1000;
       const shouldCheckConfirmation =
         ageMs >= confirmDelayMs &&
-        (!tx.lastConfirmationCheckAt || now - tx.lastConfirmationCheckAt >= 30 * 1000)
+        (!tx.lastConfirmationCheckAt || now - tx.lastConfirmationCheckAt >= 30 * 1000);
 
       if (!shouldCheckConfirmation) {
-        continue
+        continue;
       }
 
       try {
-        const confirmedTx = await client.getTransactionByTxid(trackingId)
+        const confirmedTx = await client.getTransactionByTxid(trackingId);
         if (!confirmedTx) {
           await this.updateWalletTransaction(accountAddress, tx.id, {
             lastConfirmationCheckAt: now,
-          })
-          continue
+          });
+          continue;
         }
 
         const chainTx = this.buildWalletTransactionFromChainTransaction(
           accountAddress,
           confirmedTx,
           ownFirstNames
-        )
+        );
 
         await this.updateWalletTransaction(accountAddress, tx.id, {
           ...(chainTx || {}),
@@ -1473,41 +1487,56 @@ export class Vault {
           confirmationSource: 'api',
           confirmations: confirmedTx.blockHeight ? 1 : tx.confirmations,
           lastConfirmationCheckAt: now,
-        })
-        confirmedCount++
+        });
+        confirmedCount++;
       } catch (error) {
-        console.warn('[Vault] Confirmation check failed:', error)
+        console.warn('[Vault] Confirmation check failed:', error);
       }
     }
 
-    return confirmedCount
+    return confirmedCount;
+  }
+
+  private finalizeBulkWalletTxIngest(accountAddress: string): void {
+    this.sortWalletTransactions(accountAddress);
+    this.capWalletTransactions(accountAddress);
+  }
+
+  private enqueueNockblocksHistoryRefresh(accountAddress: string, fn: () => Promise<void>): void {
+    const prev = this.nockblocksHistoryRefreshChains.get(accountAddress) ?? Promise.resolve();
+    const next = prev
+      .catch(() => {
+        /* keep chain alive even if prior refresh failed */
+      })
+      .then(fn);
+    this.nockblocksHistoryRefreshChains.set(accountAddress, next);
   }
 
   private async syncConfirmedHistory(accountAddress: string): Promise<number> {
     if (!isNockblocksConfigured()) {
-      return 0
+      return 0;
     }
 
-    const client = createNockblocksClient()
-    const syncState = this.getAccountSyncState(accountAddress)
-    const ownFirstNames = await this.getOwnFirstNameSet(accountAddress)
-    const tip = await client.getTip()
-    const maxIncrementalHistoryBlocks = 500
-    const lastHistorySyncedTip = syncState.lastHistorySyncedTip || tip.height
-    const historyTipGap = Math.max(tip.height - lastHistorySyncedTip, 0)
-    let syncedCount = 0
+    const client = createNockblocksClient();
+    const syncState = this.getAccountSyncState(accountAddress);
+    const ownFirstNames = await this.getOwnFirstNameSet(accountAddress);
+    const tip = await client.getTip();
+    const maxIncrementalHistoryBlocks = 500;
+    const lastHistorySyncedTip = syncState.lastHistorySyncedTip || tip.height;
+    const historyTipGap = Math.max(tip.height - lastHistorySyncedTip, 0);
+    let syncedCount = 0;
 
-    if (
-      !syncState.historyInitialized ||
-      historyTipGap > maxIncrementalHistoryBlocks
-    ) {
-      const limit = 1000
-      let offset = 0
+    if (!syncState.historyInitialized || historyTipGap > maxIncrementalHistoryBlocks) {
+      const limit = 1000;
+      let offset = 0;
 
       while (true) {
-        const historyTransactions = await client.getTransactionsByAddress(accountAddress, { limit, offset })
+        const historyTransactions = await client.getTransactionsByAddress(accountAddress, {
+          limit,
+          offset,
+        });
         if (historyTransactions.length === 0) {
-          break
+          break;
         }
 
         for (const transaction of historyTransactions) {
@@ -1515,17 +1544,18 @@ export class Vault {
             accountAddress,
             transaction,
             ownFirstNames
-          )
-          if (!walletTx) continue
-          this.upsertWalletTransactionInMemory(walletTx)
-          syncedCount++
+          );
+          if (!walletTx) continue;
+          this.upsertWalletTransactionInMemory(walletTx, { skipSort: true });
+          syncedCount++;
         }
+        this.finalizeBulkWalletTxIngest(accountAddress);
 
         if (historyTransactions.length < limit) {
-          break
+          break;
         }
 
-        offset += historyTransactions.length
+        offset += historyTransactions.length;
       }
 
       this.setAccountSyncState(accountAddress, {
@@ -1533,20 +1563,20 @@ export class Vault {
         lastHistoryBackfillAt: Date.now(),
         lastHistorySyncedTip: tip.height,
         lastSyncedHeight: Math.max(syncState.lastSyncedHeight, tip.height),
-      })
-      await this.saveAccountData()
+      });
+      await this.saveAccountData();
 
-      return syncedCount
+      return syncedCount;
     }
 
-    const startBlock = lastHistorySyncedTip + 1
-    const heights: number[] = []
+    const startBlock = lastHistorySyncedTip + 1;
+    const heights: number[] = [];
     for (let height = startBlock; height <= tip.height; height++) {
-      heights.push(height)
+      heights.push(height);
     }
 
     for (let i = 0; i < heights.length; i += 25) {
-      const blocks = await client.getBlocksByHeight(heights.slice(i, i + 25))
+      const blocks = await client.getBlocksByHeight(heights.slice(i, i + 25));
       for (const block of blocks) {
         for (const transaction of block.transactions) {
           const walletTx = this.buildWalletTransactionFromChainTransaction(
@@ -1558,38 +1588,39 @@ export class Vault {
               timestamp: transaction.timestamp || block.timestamp,
             },
             ownFirstNames
-          )
+          );
 
-          if (!walletTx) continue
-          this.upsertWalletTransactionInMemory(walletTx)
-          syncedCount++
+          if (!walletTx) continue;
+          this.upsertWalletTransactionInMemory(walletTx, { skipSort: true });
+          syncedCount++;
         }
       }
+      this.finalizeBulkWalletTxIngest(accountAddress);
     }
 
     this.setAccountSyncState(accountAddress, {
       historyInitialized: true,
       lastHistorySyncedTip: tip.height,
       lastSyncedHeight: Math.max(syncState.lastSyncedHeight, tip.height),
-    })
-    await this.saveAccountData()
+    });
+    await this.saveAccountData();
 
-    return syncedCount
+    return syncedCount;
   }
 
   private refreshNockblocksHistoryInBackground(accountAddress: string): void {
     if (!isNockblocksConfigured()) {
-      return
+      return;
     }
 
-    void (async () => {
+    this.enqueueNockblocksHistoryRefresh(accountAddress, async () => {
       try {
-        await this.refreshPendingTransactionStatuses(accountAddress)
-        await this.syncConfirmedHistory(accountAddress)
+        await this.refreshPendingTransactionStatuses(accountAddress);
+        await this.syncConfirmedHistory(accountAddress);
       } catch (error) {
-        console.warn('[Vault] Nockblocks history refresh failed:', error)
+        console.warn('[Vault] Nockblocks history refresh failed:', error);
       }
-    })()
+    });
   }
 
   /**
@@ -1746,8 +1777,8 @@ export class Vault {
       };
     });
 
-    this.refreshNockblocksHistoryInBackground(accountAddress)
-    return syncResult
+    this.refreshNockblocksHistoryInBackground(accountAddress);
+    return syncResult;
   }
 
   /**

@@ -27,13 +27,8 @@ export function createPkhCoinbaseCondition(
 }
 
 /** Base58 lock-root digest for a PKH + coinbase timelock spend condition. */
-export function coinbasePkhLockRootBase58(
-  pkhBase58: string,
-  timelockBlocks: number
-): string {
-  return wasm.spendConditionHash(
-    createPkhCoinbaseCondition(pkhBase58, timelockBlocks)
-  ) as string;
+export function coinbasePkhLockRootBase58(pkhBase58: string, timelockBlocks: number): string {
+  return wasm.spendConditionHash(createPkhCoinbaseCondition(pkhBase58, timelockBlocks)) as string;
 }
 
 /** PKH + relative timelock (min blocks). */

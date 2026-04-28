@@ -140,22 +140,24 @@ export function TransactionDetailsScreen() {
       ? counterpartyAccount
       : selectedTransaction.direction === 'self'
         ? currentAccount
-      : currentAccount;
+        : currentAccount;
 
   const senderLabel =
     selectedTransaction.direction === 'self'
-      ? currentAccount?.name ?? 'Current wallet'
-      : senderAccount?.name ??
-        (selectedTransaction.origin === 'history_sync' && selectedTransaction.direction === 'incoming'
+      ? (currentAccount?.name ?? 'Current wallet')
+      : (senderAccount?.name ??
+        (selectedTransaction.origin === 'history_sync' &&
+        selectedTransaction.direction === 'incoming'
           ? 'Sending lockroot'
-          : 'Unknown wallet');
+          : 'Unknown wallet'));
   const receiverLabel =
     selectedTransaction.direction === 'self'
-      ? receiverAccount?.name ?? 'Current wallet'
-      : receiverAccount?.name ??
-        (selectedTransaction.origin === 'history_sync' && selectedTransaction.direction === 'outgoing'
+      ? (receiverAccount?.name ?? 'Current wallet')
+      : (receiverAccount?.name ??
+        (selectedTransaction.origin === 'history_sync' &&
+        selectedTransaction.direction === 'outgoing'
           ? 'Receiving lock root'
-          : 'Receiving address');
+          : 'Receiving address'));
 
   const senderAddress =
     selectedTransaction.direction === 'outgoing' || selectedTransaction.direction === 'self'
@@ -174,16 +176,15 @@ export function TransactionDetailsScreen() {
           : 'Unknown'
       : selectedTransaction.direction === 'self'
         ? truncateAddress(currentAddress)
-      : truncateAddress(currentAddress);
+        : truncateAddress(currentAddress);
 
   const paysNetworkFee =
     selectedTransaction.direction === 'outgoing' || selectedTransaction.direction === 'self';
 
   // For incoming transactions, we don't have fee info
-  const networkFee =
-    paysNetworkFee
-      ? `${feeNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
-      : '-';
+  const networkFee = paysNetworkFee
+    ? `${feeNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
+    : '-';
   const totalNock = paysNetworkFee ? amountNock + feeNock : amountNock;
   const total = `${totalNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`;
 

@@ -425,13 +425,14 @@ export const useStore = create<AppStore>((set, get) => ({
           accountBalances[account.address] = get().wallet.accountBalances[account.address] ?? 0;
           accountSpendableBalances[account.address] =
             get().wallet.accountSpendableBalances[account.address] ?? 0;
-          accountBalanceDetails[account.address] =
-            get().wallet.accountBalanceDetails[account.address] ?? {
-              confirmed: accountBalances[account.address],
-              pendingOut: 0,
-              pendingIn: 0,
-              available: accountBalances[account.address],
-            };
+          accountBalanceDetails[account.address] = get().wallet.accountBalanceDetails[
+            account.address
+          ] ?? {
+            confirmed: accountBalances[account.address],
+            pendingOut: 0,
+            pendingIn: 0,
+            available: accountBalances[account.address],
+          };
         }
       }
 

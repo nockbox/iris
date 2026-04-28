@@ -279,7 +279,8 @@ export function HomeScreen() {
   // Group wallet transactions by date
   const transactionsByDate = displayTransactions.reduce(
     (acc, tx) => {
-      const txTimestampMs = (tx.confirmedAtTimestamp || 0) > 0 ? tx.confirmedAtTimestamp! * 1000 : tx.createdAt;
+      const txTimestampMs =
+        (tx.confirmedAtTimestamp || 0) > 0 ? tx.confirmedAtTimestamp! * 1000 : tx.createdAt;
       const date = new Date(txTimestampMs).toLocaleDateString('en-US', {
         day: 'numeric',
         month: 'short',
@@ -327,7 +328,7 @@ export function HomeScreen() {
             ? `-${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
             : type === 'self'
               ? `${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
-            : `${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`,
+              : `${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`,
         usdValue,
         status: getDisplayStatus(tx.status),
         confirmations: tx.confirmations,
