@@ -2365,26 +2365,40 @@ export class Vault {
     const discoveredAddressByIndex = new Map<number, string>();
     const discoveredBalanceByIndex = new Map<number, number>();
 
-    const discoveryResults = await Promise.allSettled(
-      Array.from({ length: MAX_SUBWALLET_DISCOVERY_SCAN }, async (_, offset) => {
-        const index = offset + 1;
-        const address = await deriveAddress(mnemonic, index);
-        const balanceResult = await queryV1Balance(address, rpcClient);
-        return { index, address, balance: balanceResult.totalNock };
-      })
-    );
-
     let lastWithBalance = 0;
-    for (const result of discoveryResults) {
-      if (result.status !== 'fulfilled') {
-        continue;
-      }
+    let nextIndexToScan = 1;
+    let scanThroughIndex = MAX_SUBWALLET_DISCOVERY_SCAN;
+    const maxScanIndex = 35;
 
-      const { index, address, balance } = result.value;
-      discoveredAddressByIndex.set(index, address);
-      if (balance > 0) {
-        lastWithBalance = Math.max(lastWithBalance, index);
-        discoveredBalanceByIndex.set(index, balance);
+    while (nextIndexToScan <= scanThroughIndex && nextIndexToScan <= maxScanIndex) {
+      const startIndex = nextIndexToScan;
+      const endIndex = Math.min(scanThroughIndex, maxScanIndex);
+      nextIndexToScan = endIndex + 1;
+
+      const discoveryResults = await Promise.allSettled(
+        Array.from({ length: endIndex - startIndex + 1 }, async (_, offset) => {
+          const index = startIndex + offset;
+          const address = await deriveAddress(mnemonic, index);
+          const balanceResult = await queryV1Balance(address, rpcClient);
+          return { index, address, balance: balanceResult.totalNock };
+        })
+      );
+
+      for (const result of discoveryResults) {
+        if (result.status !== 'fulfilled') {
+          continue;
+        }
+
+        const { index, address, balance } = result.value;
+        discoveredAddressByIndex.set(index, address);
+        if (balance > 0) {
+          lastWithBalance = Math.max(lastWithBalance, index);
+          scanThroughIndex = Math.max(
+            scanThroughIndex,
+            Math.min(lastWithBalance + MAX_SUBWALLET_DISCOVERY_SCAN, maxScanIndex)
+          );
+          discoveredBalanceByIndex.set(index, balance);
+        }
       }
     }
 
