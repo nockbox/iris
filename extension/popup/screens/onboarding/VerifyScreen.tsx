@@ -118,6 +118,7 @@ export function VerifyScreen() {
             ? 'Invalid secret phrase. Please go back and try again.'
             : `Error: ${result.error}`
         );
+        setOnboardingPassword(null);
         return;
       }
 

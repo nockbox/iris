@@ -178,6 +178,27 @@ export function HomeScreen() {
         ]
       : [];
   }, [accounts, wallet.seedSources, wallet.activeSeedSourceId]);
+  const seedGroupIdsKey = seedGroups.map(g => g.seed.id).join('|');
+
+  // Load persisted seed display order. The vault still owns seed names/order;
+  // this only preserves the user's draggable UI order across popup sessions.
+  useEffect(() => {
+    const ids = seedGroups.map(g => g.seed.id);
+    if (ids.length === 0) return;
+
+    chrome.storage.local.get([STORAGE_KEYS.SEED_DISPLAY_ORDER]).then(result => {
+      const storedOrder = result[STORAGE_KEYS.SEED_DISPLAY_ORDER];
+      if (!Array.isArray(storedOrder)) return;
+
+      const order = storedOrder.filter(
+        (id): id is string => typeof id === 'string' && ids.includes(id)
+      );
+      ids.forEach(id => {
+        if (!order.includes(id)) order.push(id);
+      });
+      setSeedDisplayOrder(order);
+    });
+  }, [seedGroupIdsKey]);
 
   // Sync UI display order from vault seed order; append new seeds when added
   useEffect(() => {
@@ -185,20 +206,24 @@ export function HomeScreen() {
     if (ids.length === 0) return;
     setSeedDisplayOrder(prev => {
       if (prev.length === 0) return ids;
-      const next = [...prev];
+      const next = prev.filter(id => ids.includes(id));
       ids.forEach(id => {
         if (!next.includes(id)) next.push(id);
       });
       return next;
     });
-  }, [seedGroups]);
+  }, [seedGroupIdsKey]);
 
   /** Seed groups in UI display order (draggable order). */
   const sortedSeedGroups = useMemo(() => {
     if (seedDisplayOrder.length === 0) return seedGroups;
+    const orderIndex = (seedId: string) => {
+      const index = seedDisplayOrder.indexOf(seedId);
+      return index === -1 ? Number.MAX_SAFE_INTEGER : index;
+    };
     return [...seedGroups].sort(
       (a, b) =>
-        seedDisplayOrder.indexOf(a.seed.id) - seedDisplayOrder.indexOf(b.seed.id) ||
+        orderIndex(a.seed.id) - orderIndex(b.seed.id) ||
         seedGroups.indexOf(a) - seedGroups.indexOf(b)
     );
   }, [seedGroups, seedDisplayOrder]);
@@ -212,6 +237,7 @@ export function HomeScreen() {
     order.splice(fromIdx, 1);
     order.splice(toIdx, 0, draggedId);
     setSeedDisplayOrder(order);
+    chrome.storage.local.set({ [STORAGE_KEYS.SEED_DISPLAY_ORDER]: order });
   }
 
   const currentAccount =
