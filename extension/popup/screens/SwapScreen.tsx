@@ -7,15 +7,8 @@ import NockTextCircleContainer from '../assets/NockTextCircleContainer.svg';
 import NockText from '../assets/NockText.svg';
 import JustNText from '../assets/JustNText.svg';
 import UpDownVec from '../assets/upDownvec.svg';
-import { MIN_BRIDGE_AMOUNT_NOCK } from '@nockbox/iris-sdk';
+import { MIN_BRIDGE_AMOUNT_NOCK, isEvmAddress } from '@nockbox/iris-sdk';
 import { formatWithCommas, parseAmount } from '../utils/format';
-
-function isEvmAddress(value: string): boolean {
-  const s = value.trim();
-  if (!s) return false;
-  const normalized = s.startsWith('0x') ? s : `0x${s}`;
-  return /^0x[0-9a-fA-F]{40}$/.test(normalized);
-}
 
 export function SwapScreen() {
   const { navigate, wallet, setPendingBridgeSwap, priceUsd, isBalanceFetching } = useStore();
