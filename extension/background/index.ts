@@ -17,7 +17,6 @@ import {
   mapRpcRequest,
   mapRpcResponse,
   RPC_API_VERSION,
-  isEvmAddress,
 } from '@nockbox/iris-sdk';
 import type { RpcRequest, RpcResponse, ConnectResponse } from '@nockbox/iris-sdk';
 import wasm from '../shared/sdk-wasm.js';
