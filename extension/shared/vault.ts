@@ -1987,7 +1987,7 @@ export class Vault {
       return syncedCount
     }
 
-    const startBlock = Math.min(lastHistorySyncedTip, tip.height)
+    const startBlock = lastHistorySyncedTip + 1
     const heights: number[] = []
     for (let height = startBlock; height <= tip.height; height++) {
       heights.push(height)
@@ -2062,7 +2062,6 @@ export class Vault {
     const rpcClient = createBrowserClient(endpoint);
 
     const syncResult = await withAccountLock(accountAddress, async () => {
-      const confirmedFromApi = 0
       // 1. Fetch current UTXOs from chain
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
       const blockHeight = balanceResult.blockHeight;
@@ -2190,7 +2189,7 @@ export class Vault {
         newIncoming,
         newChange,
         spent: diff.nowSpent.length,
-        confirmed: confirmedFromApi + confirmedFromNewSpent + confirmedFromPreviousSpent,
+        confirmed: confirmedFromNewSpent + confirmedFromPreviousSpent,
         expired: expiredTxs.length,
       };
     });
