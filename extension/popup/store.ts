@@ -264,7 +264,7 @@ export const useStore = create<AppStore>((set, get) => ({
   selectedTransaction: null,
   pendingBridgeSwap: null,
   swapSubmittedToastVisible: false,
-  v0MigrationDraft: { destinationAddress: null },
+  v0MigrationDraft: { v0BalanceNock: 0, destinationAddress: null },
   settingsAccountAddress: null,
   isBalanceFetching: false,
   isInitialized: false,
@@ -453,7 +453,7 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   resetV0MigrationDraft: () => {
-    set({ v0MigrationDraft: { destinationAddress: null } });
+    set({ v0MigrationDraft: { v0BalanceNock: 0, destinationAddress: null } });
   },
 
   setSettingsAccountAddress: (address: string | null) => {
