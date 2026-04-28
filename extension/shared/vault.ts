@@ -3569,6 +3569,69 @@ export class Vault {
     };
   }
 
+  private async logBridgeReviewTransactionForInspection(
+    buildCtx: Awaited<ReturnType<Vault['buildBridgeTransactionContext']>>
+  ): Promise<void> {
+    const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
+    const signedTx = await this.signRawTx({
+      rawTx,
+    });
+
+    const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+    const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
+    // Signing changes the tx bytes (witness data), so the id recomputes.
+    const signedTxId = signedRawTx.id;
+
+    const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
+      txEngineSettings: buildCtx.txEngineSettings,
+      debug: true,
+    });
+    if (!validation.valid) {
+      throw new Error(validation.error ?? 'Bridge transaction validation failed');
+    }
+    const expectedDestination = buildCtx.destinationAddress.toLowerCase();
+    const reconstructedDestination = (validation.destinationAddress ?? '').toLowerCase();
+    const destinationRoundtripMatch =
+      expectedDestination === reconstructedDestination ||
+      `0x${expectedDestination.replace(/^0x/, '')}` ===
+        `0x${reconstructedDestination.replace(/^0x/, '')}`;
+    const rpcEndpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(rpcEndpoint);
+    const blockHeight = await rpcClient.getCurrentBlockHeight();
+    const outputs = wasm.rawTxOutputs(signedRawTx, blockHeight, buildCtx.txEngineSettings);
+    const derivedOutputs = outputs.map(output => {
+      const protobufNote = wasm.noteToProtobuf(output);
+      const note = protobufNote as Record<string, unknown>;
+      const noteVersion = note.note_version as Record<string, unknown> | undefined;
+      const v1 = noteVersion?.V1 as Record<string, unknown> | undefined;
+      const v1Name = v1?.name as Record<string, unknown> | undefined;
+      const v1Assets = v1?.assets as Record<string, unknown> | undefined;
+      return {
+        firstName: typeof v1Name?.first === 'string' ? v1Name.first : null,
+        assetsNicks: typeof v1Assets?.value === 'string' ? v1Assets.value : null,
+        fullOutputNote: protobufNote,
+      };
+    });
+
+    console.log('[Bridge Swap] Final signed transaction (before sendTransaction):', {
+      unsignedTxId: buildCtx.bridgeResult.txId,
+      signedTxId,
+      feeNicks: Number(buildCtx.bridgeResult.fee),
+      refundPkh: buildCtx.refundPkh,
+      destinationRoundtrip: {
+        requested: buildCtx.destinationAddress,
+        reconstructed: validation.destinationAddress,
+        belts: validation.belts,
+        match: destinationRoundtripMatch,
+      },
+      derivedOutputs,
+      fullSignedRawTx: signedRawTx,
+      protobufPayload: signedProtobufTx,
+    });
+
+    // TEMP: Remove this helper and its estimateBridgeFee call after bridge tx inspection is done.
+  }
+
   /**
    * Mark notes in-flight, sign tx, validate, broadcast, and release on error.
    */
@@ -3576,26 +3639,19 @@ export class Vault {
     currentAccount: SubAccount,
     walletTxId: string,
     buildCtx: Awaited<ReturnType<Vault['buildBridgeTransactionContext']>>,
-    walletTx: WalletTransaction,
-    debugNoBroadcast = false
+    walletTx: WalletTransaction
   ): Promise<{ txId: string; walletTx: WalletTransaction; broadcasted: boolean }> {
-    const persistState = !debugNoBroadcast;
-    if (persistState) {
-      await this.markNotesInFlight(currentAccount.address, buildCtx.selectedNoteIds, walletTxId);
-      await this.addWalletTransaction(walletTx);
-    }
+    await this.markNotesInFlight(currentAccount.address, buildCtx.selectedNoteIds, walletTxId);
+    await this.addWalletTransaction(walletTx);
 
     try {
       const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
       const signedTx = await this.signRawTx({
         rawTx,
       });
-
       const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
       const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
-      // Signing changes the tx bytes (witness data), so the id recomputes.
       const signedTxId = signedRawTx.id;
-
       const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
         txEngineSettings: buildCtx.txEngineSettings,
         debug: true,
@@ -3603,55 +3659,8 @@ export class Vault {
       if (!validation.valid) {
         throw new Error(validation.error ?? 'Bridge transaction validation failed');
       }
-      const expectedDestination = buildCtx.destinationAddress.toLowerCase();
-      const reconstructedDestination = (validation.destinationAddress ?? '').toLowerCase();
-      const destinationRoundtripMatch =
-        expectedDestination === reconstructedDestination ||
-        `0x${expectedDestination.replace(/^0x/, '')}` ===
-          `0x${reconstructedDestination.replace(/^0x/, '')}`;
       const rpcEndpoint = await getEffectiveRpcEndpoint();
       const rpcClient = createBrowserClient(rpcEndpoint);
-      const blockHeight = await rpcClient.getCurrentBlockHeight();
-      const outputs = wasm.rawTxOutputs(signedRawTx, blockHeight, buildCtx.txEngineSettings);
-      const derivedOutputs = outputs.map(output => {
-        const protobufNote = wasm.noteToProtobuf(output);
-        const note = protobufNote as Record<string, unknown>;
-        const noteVersion = note.note_version as Record<string, unknown> | undefined;
-        const v1 = noteVersion?.V1 as Record<string, unknown> | undefined;
-        const v1Name = v1?.name as Record<string, unknown> | undefined;
-        const v1Assets = v1?.assets as Record<string, unknown> | undefined;
-        return {
-          firstName: typeof v1Name?.first === 'string' ? v1Name.first : null,
-          assetsNicks: typeof v1Assets?.value === 'string' ? v1Assets.value : null,
-          fullOutputNote: protobufNote,
-        };
-      });
-
-      console.log('[Bridge Swap] Signed transaction (before broadcast):', {
-        unsignedTxId: buildCtx.bridgeResult.txId,
-        signedTxId,
-        feeNicks: Number(buildCtx.bridgeResult.fee),
-        refundPkh: buildCtx.refundPkh,
-        destinationRoundtrip: {
-          requested: buildCtx.destinationAddress,
-          reconstructed: validation.destinationAddress,
-          belts: validation.belts,
-          match: destinationRoundtripMatch,
-        },
-        derivedOutputs,
-        fullSignedRawTx: signedRawTx,
-        protobufPayload: signedProtobufTx,
-      });
-
-      if (debugNoBroadcast) {
-        console.log('[Bridge Swap] Debug no-broadcast mode enabled; skipping sendTransaction');
-        return {
-          txId: signedTxId,
-          walletTx,
-          broadcasted: false,
-        };
-      }
-
       await rpcClient.sendTransaction(signedProtobufTx);
 
       walletTx.fee = Number(buildCtx.bridgeResult.fee);
@@ -3669,7 +3678,7 @@ export class Vault {
         broadcasted: true,
       };
     } catch (error) {
-      if (persistState && buildCtx.selectedNoteIds.length > 0) {
+      if (buildCtx.selectedNoteIds.length > 0) {
         try {
           await this.releaseInFlightNotes(currentAccount.address, buildCtx.selectedNoteIds);
           await this.updateWalletTransaction(currentAccount.address, walletTxId, {
@@ -3706,6 +3715,7 @@ export class Vault {
         destinationAddress,
         amountNicks
       );
+      await this.logBridgeReviewTransactionForInspection(buildCtx);
       return { fee: Number(buildCtx.bridgeResult.fee) };
     } catch (error) {
       console.error('[Vault] Bridge fee estimation failed:', error);
@@ -3726,8 +3736,7 @@ export class Vault {
   async sendBridgeTransaction(
     destinationAddress: string,
     amountNicks: Nicks,
-    priceUsdAtTime?: number,
-    options?: { debugNoBroadcast?: boolean }
+    priceUsdAtTime?: number
   ): Promise<
     { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
   > {
@@ -3770,8 +3779,7 @@ export class Vault {
           currentAccount,
           walletTxId,
           buildCtx,
-          walletTx,
-          options?.debugNoBroadcast === true
+          walletTx
         );
       } catch (error) {
         console.error('[Vault] Bridge transaction failed:', error);

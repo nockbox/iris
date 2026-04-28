@@ -11,8 +11,6 @@ import { BRIDGE_PROTOCOL_FEE_RATE } from '@nockbox/iris-sdk';
 import { INTERNAL_METHODS } from '../../shared/constants';
 import { nockToNick, nickToNock } from '../../shared/currency';
 
-const BRIDGE_DEBUG_NO_BROADCAST = false;
-
 function truncate(addr: string): string {
   if (!addr) return '';
   return `${addr.slice(0, 6)}...${addr.slice(-6)}`;
@@ -23,14 +21,11 @@ export function SwapReviewScreen() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [networkFeeNicks, setNetworkFeeNicks] = useState<number | null>(null);
-
-  if (!pendingBridgeSwap) {
-    navigate('swap');
-    return null;
-  }
   const prepared = pendingBridgeSwap;
 
   useEffect(() => {
+    if (!prepared) return;
+
     let cancelled = false;
     (async () => {
       const result = await send<{ fee?: number; error?: string }>(
@@ -44,7 +39,12 @@ export function SwapReviewScreen() {
     return () => {
       cancelled = true;
     };
-  }, [prepared.destinationAddress, prepared.amountNock]);
+  }, [prepared?.destinationAddress, prepared?.amountNock]);
+
+  if (!prepared) {
+    navigate('swap');
+    return null;
+  }
 
   const formatNock = (value: number, digits = 2) =>
     value.toLocaleString('en-US', {
@@ -77,6 +77,11 @@ export function SwapReviewScreen() {
   const bridgeProtocolFeePercentLabel = `${(BRIDGE_PROTOCOL_FEE_RATE * 100).toFixed(1)}%`;
 
   async function handleSwap() {
+    if (!prepared) {
+      navigate('swap');
+      return;
+    }
+
     setSubmitting(true);
     setError('');
 
@@ -91,7 +96,6 @@ export function SwapReviewScreen() {
         prepared.destinationAddress,
         amountNicks,
         priceUsd > 0 ? priceUsd : undefined,
-        BRIDGE_DEBUG_NO_BROADCAST,
       ]);
 
       if (result?.error) {

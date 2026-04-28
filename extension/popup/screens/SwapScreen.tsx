@@ -47,22 +47,24 @@ export function SwapScreen() {
 
   async function handleReview() {
     setError('');
-    // TODO: TEMP - bypass guards for styling review screen; remove before release
-    // if (!isEvmAddress(destinationAddress)) {
-    //   setError('Enter a valid Base (EVM) address');
-    //   return;
-    // }
-    // if (consolidatedAmountError) {
-    //   setError(consolidatedAmountError);
-    //   return;
-    // }
-    // if (amountNum > spendableNock) return;
+    if (!isEvmAddress(destinationAddress)) {
+      setError('Enter a valid Base (EVM) address');
+      return;
+    }
+    if (!amount.trim() || Number.isNaN(amountNum) || amountNum <= 0) {
+      setError('Enter a valid amount');
+      return;
+    }
+    if (consolidatedAmountError) {
+      setError(consolidatedAmountError);
+      return;
+    }
 
     setIsPreparing(true);
     try {
       setPendingBridgeSwap({
-        amountNock: amountNum || 100000,
-        destinationAddress: destinationAddress || '0x0000000000000000000000000000000000000001',
+        amountNock: amountNum,
+        destinationAddress,
       });
       navigate('swap-review');
     } catch (e) {
