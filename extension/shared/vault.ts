@@ -43,9 +43,7 @@ import {
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
 import type { SignMessageResponse } from '@nockbox/iris-sdk';
 import type { Nicks } from '@nockbox/iris-sdk/wasm';
-import {
-  assertNativeRawTx,
-} from './sign-raw-tx-compat';
+import { assertNativeRawTx } from './sign-raw-tx-compat';
 import { guard } from '@nockbox/iris-sdk/wasm';
 import { getTxEngineSettingsForHeight } from './rpc-config';
 
@@ -2298,9 +2296,7 @@ export class Vault {
    * @param params - Transaction parameters with raw tx
    * @returns Signed transaction in canonical NockchainTx form
    */
-  async signRawTx(params: {
-    rawTx: wasm.RawTx;
-  }): Promise<wasm.NockchainTx> {
+  async signRawTx(params: { rawTx: wasm.RawTx }): Promise<wasm.NockchainTx> {
     if (this.state.locked || !this.mnemonic) {
       throw new Error('Wallet is locked');
     }

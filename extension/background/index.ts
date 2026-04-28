@@ -6,17 +6,8 @@
 
 import { Vault } from '../shared/vault';
 import { isNockAddress } from '../shared/validators';
-import {
-  noteToProtobuf,
-  assertNativeRawTx,
-  assertNativeNote,
-} from '../shared/sign-raw-tx-compat';
-import {
-  isSignTxRequest,
-  mapRpcRequest,
-  mapRpcResponse,
-  RPC_API_VERSION,
-} from '@nockbox/iris-sdk';
+import { noteToProtobuf, assertNativeRawTx, assertNativeNote } from '../shared/sign-raw-tx-compat';
+import { isSignTxRequest, mapRpcRequest, mapRpcResponse, RPC_API_VERSION } from '@nockbox/iris-sdk';
 import type { RpcRequest, RpcResponse, ConnectResponse } from '@nockbox/iris-sdk';
 import wasm from '../shared/sdk-wasm.js';
 import type { Note } from '@nockbox/iris-sdk/wasm';
