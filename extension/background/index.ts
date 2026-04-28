@@ -12,7 +12,7 @@ import {
   assertNativeNote,
   assertNativeSpendCondition,
 } from '../shared/sign-raw-tx-compat';
-import { isSignTxRequest, isLegacySignRawTxRequest, isEvmAddress } from '@nockbox/iris-sdk';
+import { isSignTxRequest, isEvmAddress } from '@nockbox/iris-sdk';
 import wasm from '../shared/sdk-wasm.js';
 import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
 import type { Nicks } from '@nockbox/iris-wasm';
@@ -1535,15 +1535,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION:
-        // params: [destinationAddress, amountNicks, priceUsdAtTime?, debugNoBroadcast?]
+        // params: [destinationAddress, amountNicks, priceUsdAtTime?]
         // EVM address (Base), amount in nicks
         if (vault.isLocked()) {
           sendResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
-        const [bridgeDest, bridgeAmountNicks, bridgePriceUsd, bridgeDebugNoBroadcast] =
-          payload.params || [];
+        const [bridgeDest, bridgeAmountNicks, bridgePriceUsd] = payload.params || [];
         if (!bridgeDest || !isEvmAddress(bridgeDest)) {
           sendResponse({ error: 'Invalid destination address. Expected EVM address (0x...).' });
           return;
@@ -1560,8 +1559,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           const bridgeResult = await vault.sendBridgeTransaction(
             bridgeDest,
             bridgeAmountNicksParsed,
-            typeof bridgePriceUsd === 'number' ? bridgePriceUsd : undefined,
-            { debugNoBroadcast: bridgeDebugNoBroadcast === true }
+            typeof bridgePriceUsd === 'number' ? bridgePriceUsd : undefined
           );
 
           if ('error' in bridgeResult) {
