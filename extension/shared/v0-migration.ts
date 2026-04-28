@@ -87,7 +87,10 @@ function v0SourcePublicKeyFromMnemonic(mnemonic: string): wasm.PublicKey {
  * signing changes witness size, which can increase required fee.
  * Re-sign + recalc a few rounds until fee stabilizes, then validate.
  */
-async function feeNicksAfterSign(builder: wasm.TxBuilder, privateKey: wasm.PrivateKey): Promise<string> {
+async function feeNicksAfterSign(
+  builder: wasm.TxBuilder,
+  privateKey: wasm.PrivateKey
+): Promise<string> {
   let previousFee = '';
   const MAX_FEE_CONVERGENCE_ROUNDS = 4;
 

@@ -24,7 +24,8 @@ export function V0MigrationReviewScreen() {
   const [sendError, setSendError] = useState('');
   const [isSending, setIsSending] = useState(false);
   const destinationWallet =
-    wallet.accounts.find(account => account.address === v0MigrationDraft.destinationAddress) || null;
+    wallet.accounts.find(account => account.address === v0MigrationDraft.destinationAddress) ||
+    null;
   const amount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock ?? 0;
   const usdAmount = amount * priceUsd;
 
@@ -80,7 +81,8 @@ export function V0MigrationReviewScreen() {
     !isSending;
 
   async function handleSend() {
-    if (!canSend || !v0MigrationDraft.v0Mnemonic || !v0MigrationDraft.v0MigrationTxSignPayload) return;
+    if (!canSend || !v0MigrationDraft.v0Mnemonic || !v0MigrationDraft.v0MigrationTxSignPayload)
+      return;
 
     setSendError('');
     setIsSending(true);
@@ -153,27 +155,49 @@ export function V0MigrationReviewScreen() {
             </span>
           </div>
           <div className="text-[16px] font-medium">
-            ${usdAmount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            $
+            {usdAmount.toLocaleString('en-US', {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
           </div>
         </div>
 
         <div className="rounded-[14px] p-3" style={{ backgroundColor: 'var(--color-surface-900)' }}>
           <div className="flex items-center justify-between gap-3">
-            <div className="flex-1 rounded-[14px] p-3" style={{ backgroundColor: 'var(--color-surface-900)' }}>
-              <div className="w-10 h-10 rounded-full grid place-items-center mb-2 text-[16px] font-medium" style={{ backgroundColor: 'var(--color-surface-900)' }}>
+            <div
+              className="flex-1 rounded-[14px] p-3"
+              style={{ backgroundColor: 'var(--color-surface-900)' }}
+            >
+              <div
+                className="w-10 h-10 rounded-full grid place-items-center mb-2 text-[16px] font-medium"
+                style={{ backgroundColor: 'var(--color-surface-900)' }}
+              >
                 vØ
               </div>
               <div className="text-[16px] font-medium">v0 Wallet</div>
-              <div className="text-[12px] truncate" style={{ color: 'var(--color-text-muted)' }} title={v0MigrationDraft.sourceAddress}>
-                {v0MigrationDraft.sourceAddress ? truncateAddress(v0MigrationDraft.sourceAddress) : 'Imported seed'}
+              <div
+                className="text-[12px] truncate"
+                style={{ color: 'var(--color-text-muted)' }}
+                title={v0MigrationDraft.sourceAddress}
+              >
+                {v0MigrationDraft.sourceAddress
+                  ? truncateAddress(v0MigrationDraft.sourceAddress)
+                  : 'Imported seed'}
               </div>
             </div>
 
-            <div className="w-10 h-10 rounded-full grid place-items-center text-[22px]" style={{ backgroundColor: 'var(--color-surface-900)' }}>
+            <div
+              className="w-10 h-10 rounded-full grid place-items-center text-[22px]"
+              style={{ backgroundColor: 'var(--color-surface-900)' }}
+            >
               ›
             </div>
 
-            <div className="flex-1 rounded-[14px] p-3 text-right" style={{ backgroundColor: 'var(--color-surface-900)' }}>
+            <div
+              className="flex-1 rounded-[14px] p-3 text-right"
+              style={{ backgroundColor: 'var(--color-surface-900)' }}
+            >
               <div className="flex justify-end mb-2">
                 <AccountIcon
                   styleId={destinationWallet?.iconStyleId}
@@ -189,9 +213,14 @@ export function V0MigrationReviewScreen() {
           </div>
         </div>
 
-        <div className="rounded-[14px] p-3 flex items-center justify-between" style={{ backgroundColor: 'var(--color-surface-900)' }}>
+        <div
+          className="rounded-[14px] p-3 flex items-center justify-between"
+          style={{ backgroundColor: 'var(--color-surface-900)' }}
+        >
           <span className="text-[14px] font-medium">Network fee</span>
-          <span className="text-[14px] font-medium">{v0MigrationDraft.feeNock != null ? `${v0MigrationDraft.feeNock} NOCK` : ''}</span>
+          <span className="text-[14px] font-medium">
+            {v0MigrationDraft.feeNock != null ? `${v0MigrationDraft.feeNock} NOCK` : ''}
+          </span>
         </div>
 
         {sendError && <Alert type="error">{sendError}</Alert>}
@@ -222,4 +251,3 @@ export function V0MigrationReviewScreen() {
     </div>
   );
 }
-

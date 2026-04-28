@@ -88,18 +88,23 @@ export function V0MigrationIntroScreen() {
               <span className="font-bold">October 25, 2025</span>
               <span>
                 {' '}
-                (block 39,000), your funds need to be migrated to remain accessible on the current network.
+                (block 39,000), your funds need to be migrated to remain accessible on the current
+                network.
               </span>
             </p>
             <p className="mt-2">
-              This process transfers your full balance from your v0 wallet to v1. It only takes a moment.
+              This process transfers your full balance from your v0 wallet to v1. It only takes a
+              moment.
             </p>
           </div>
         </div>
       </div>
 
       {/* Footer CTA - matches other migration screens */}
-      <div className="shrink-0 px-4 py-3" style={{ borderTop: '1px solid var(--color-surface-800)' }}>
+      <div
+        className="shrink-0 px-4 py-3"
+        style={{ borderTop: '1px solid var(--color-surface-800)' }}
+      >
         <button
           type="button"
           onClick={handleStart}

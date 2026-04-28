@@ -185,7 +185,10 @@ export function V0MigrationFundsScreen() {
         </div>
 
         <div>
-          <div className="font-sans font-medium mb-2 text-[var(--color-text-primary)]" style={{ fontSize: 'var(--font-size-base)' }}>
+          <div
+            className="font-sans font-medium mb-2 text-[var(--color-text-primary)]"
+            style={{ fontSize: 'var(--font-size-base)' }}
+          >
             Receiving wallet
           </div>
           <button
@@ -202,10 +205,16 @@ export function V0MigrationFundsScreen() {
                   className="w-9 h-9"
                 />
               ) : (
-                <div className="w-9 h-9 rounded-full" style={{ backgroundColor: 'var(--color-surface-900)' }} />
+                <div
+                  className="w-9 h-9 rounded-full"
+                  style={{ backgroundColor: 'var(--color-surface-900)' }}
+                />
               )}
               <div className="text-left min-w-0">
-                <div className="font-sans font-medium truncate text-[var(--color-text-primary)]" style={{ fontSize: 'var(--font-size-base)' }}>
+                <div
+                  className="font-sans font-medium truncate text-[var(--color-text-primary)]"
+                  style={{ fontSize: 'var(--font-size-base)' }}
+                >
                   {destinationWallet?.name || 'Select wallet'}
                 </div>
                 <div className="text-[12px] truncate" style={{ color: 'var(--color-text-muted)' }}>
@@ -295,14 +304,23 @@ export function V0MigrationFundsScreen() {
                   className="w-full rounded-[14px] px-3 py-3 mb-2 flex items-center justify-between"
                   style={{
                     backgroundColor: 'var(--color-surface-900)',
-                    border: isSelected ? '1px solid var(--color-text-primary)' : '1px solid transparent',
+                    border: isSelected
+                      ? '1px solid var(--color-text-primary)'
+                      : '1px solid transparent',
                   }}
                 >
                   <div className="flex items-center gap-2.5 min-w-0">
-                    <AccountIcon styleId={account.iconStyleId} color={account.iconColor} className="w-10 h-10" />
+                    <AccountIcon
+                      styleId={account.iconStyleId}
+                      color={account.iconColor}
+                      className="w-10 h-10"
+                    />
                     <div className="text-left min-w-0">
                       <div className="text-[16px] font-medium">{account.name}</div>
-                      <div className="text-[12px] truncate" style={{ color: 'var(--color-text-muted)' }}>
+                      <div
+                        className="text-[12px] truncate"
+                        style={{ color: 'var(--color-text-muted)' }}
+                      >
                         {truncateAddress(account.address)}
                       </div>
                     </div>
@@ -351,7 +369,10 @@ export function V0MigrationFundsScreen() {
               }}
             />
             <div className="text-[16px] font-medium">Building migration transaction</div>
-            <div className="text-[13px] leading-[18px]" style={{ color: 'var(--color-text-muted)' }}>
+            <div
+              className="text-[13px] leading-[18px]"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
               Calculating the network fee and preparing your v0 notes. This might take a second.
             </div>
           </div>
