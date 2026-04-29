@@ -360,6 +360,12 @@ export interface WalletTransaction {
   /** Sender address (if known) */
   sender?: string;
 
+  /** v0→v1 migration (set when sync detects long legacy sender + short v1 recipient) */
+  migrationFromV0?: boolean;
+
+  /** Nockchain → Base (EVM) bridge; set in sendBridgeTransaction */
+  kind?: 'bridge';
+
   // Confirmation tracking
   /** When the tx was first observed in mempool (ms since epoch) */
   mempoolSeenAt?: number;

@@ -19,6 +19,10 @@ export interface NockblocksSeed {
   parentHash?: string;
 }
 
+export interface NockblocksV0Signature {
+  pubkey?: string;
+}
+
 export interface NockblocksSpend {
   firstName?: string;
   lastName?: string;
@@ -26,6 +30,7 @@ export interface NockblocksSpend {
   lockRoot?: string;
   seeds?: NockblocksSeed[];
   fee?: number;
+  signaturesV0?: NockblocksV0Signature[];
 }
 
 export interface NockblocksOutput {

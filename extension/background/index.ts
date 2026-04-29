@@ -6,12 +6,7 @@
 
 import { Vault } from '../shared/vault';
 import { isNockAddress } from '../shared/validators';
-import {
-  noteToProtobuf,
-  assertNativeRawTx,
-  assertNativeNote,
-  assertNativeSpendCondition,
-} from '../shared/sign-raw-tx-compat';
+import { noteToProtobuf, assertNativeRawTx, assertNativeNote } from '../shared/sign-raw-tx-compat';
 import {
   isSignTxRequest,
   isEvmAddress,

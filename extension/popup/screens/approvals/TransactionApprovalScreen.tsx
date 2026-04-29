@@ -4,11 +4,7 @@ import { AccountIcon } from '../../components/AccountIcon';
 import { SiteIcon } from '../../components/SiteIcon';
 import { truncateAddress } from '../../utils/format';
 import { send } from '../../utils/messaging';
-import {
-  INTERNAL_METHODS,
-  NOCK_TO_NICKS,
-  DEFAULT_TRANSACTION_FEE,
-} from '../../../shared/constants';
+import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../../shared/constants';
 import { formatNock, formatNick } from '../../../shared/currency';
 import { useAutoRejectOnClose } from '../../hooks/useAutoRejectOnClose';
 
@@ -21,7 +17,7 @@ export function TransactionApprovalScreen() {
   }
 
   const { id, origin, to, amount } = pendingTransactionRequest;
-  const fee = DEFAULT_TRANSACTION_FEE;
+  const fee = pendingTransactionRequest.fee;
   const amountNum = Number(amount);
   const feeNum = Number(fee);
   const totalNum = amountNum + feeNum;

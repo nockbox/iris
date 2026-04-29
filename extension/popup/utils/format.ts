@@ -11,7 +11,7 @@ export function parseAmount(value: string): number {
 }
 
 /**
- * Format a number string with thousand separators 
+ * Format a number string with thousand separators
  */
 export function formatWithCommas(value: string): string {
   const cleaned = value.replace(/[^0-9.]/g, '');

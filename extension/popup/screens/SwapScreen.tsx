@@ -77,7 +77,10 @@ export function SwapScreen() {
 
   const usdValue =
     amountNum > 0 && priceUsd > 0
-      ? (amountNum * priceUsd).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      ? (amountNum * priceUsd).toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
       : null;
 
   const amountLineHeightPx = amountFontSizePx + 4;
@@ -339,7 +342,11 @@ export function SwapScreen() {
                   className="h-5 w-5 rounded-full flex items-center justify-center shrink-0 border-2 border-[#F2F2F0]"
                   style={{ backgroundColor: 'white' }}
                 >
-                  <img src={BaseIconAsset} alt="" className="min-w-0 min-h-0 h-[9px] w-[8px] object-contain" />
+                  <img
+                    src={BaseIconAsset}
+                    alt=""
+                    className="min-w-0 min-h-0 h-[9px] w-[8px] object-contain"
+                  />
                 </div>
               </div>
             </div>

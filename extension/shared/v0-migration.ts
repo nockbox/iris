@@ -224,7 +224,7 @@ export async function signAndBroadcastV0Migration(
  * Whether a wallet history row looks like a v0→v1 migration receipt (long legacy sender, short v1 recipient).
  */
 export function isMigrationWalletTx(tx: WalletTransaction): boolean {
-  if ((tx as WalletTransaction & { migrationFromV0?: boolean }).migrationFromV0) return true;
+  if (tx.migrationFromV0) return true;
   const from = (tx.sender ?? '').trim();
   const to = (tx.recipient ?? '').trim();
   if (tx.direction !== 'incoming' || !from || !to) return false;

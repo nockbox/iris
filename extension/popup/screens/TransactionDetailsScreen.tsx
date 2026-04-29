@@ -9,7 +9,11 @@ import IrisLogoBlue from '../assets/iris-logo-blue.svg';
 import { truncateAddress } from '../utils/format';
 import { NOCK_TO_NICKS } from '../../shared/constants';
 import { resolveCounterpartyAccount } from '../../shared/account-lock-roots';
+import { isMigrationWalletTx } from '../../shared/v0-migration';
+import { isBridgeWalletTx } from '../../shared/bridge-config';
 import { useLockRootAccountMap } from '../hooks/useLockRootAccountMap';
+import TransferV0Icon from '../assets/transferv0_icon.svg';
+import BaseIconAsset from '../assets/base_icon.svg';
 
 export function TransactionDetailsScreen() {
   const {
@@ -65,6 +69,8 @@ export function TransactionDetailsScreen() {
   }
 
   // Extract data from selected transaction
+  const isMigration = isMigrationWalletTx(selectedTransaction);
+  const isBridge = isBridgeWalletTx(selectedTransaction);
   const transactionType =
     selectedTransaction.direction === 'outgoing'
       ? 'sent'
@@ -145,19 +151,25 @@ export function TransactionDetailsScreen() {
   const senderLabel =
     selectedTransaction.direction === 'self'
       ? (currentAccount?.name ?? 'Current wallet')
-      : (senderAccount?.name ??
-        (selectedTransaction.origin === 'history_sync' &&
-        selectedTransaction.direction === 'incoming'
-          ? 'Sending lockroot'
-          : 'Unknown wallet'));
+      : isMigration && selectedTransaction.direction === 'incoming'
+        ? 'Legacy (v0)'
+        : (senderAccount?.name ??
+          (selectedTransaction.origin === 'history_sync' &&
+          selectedTransaction.direction === 'incoming'
+            ? 'Sending lockroot'
+            : 'Unknown wallet'));
   const receiverLabel =
     selectedTransaction.direction === 'self'
       ? (receiverAccount?.name ?? 'Current wallet')
-      : (receiverAccount?.name ??
-        (selectedTransaction.origin === 'history_sync' &&
-        selectedTransaction.direction === 'outgoing'
-          ? 'Receiving lock root'
-          : 'Receiving address'));
+      : isMigration && selectedTransaction.direction === 'incoming'
+        ? (currentAccount?.name ?? 'This wallet')
+        : isBridge && selectedTransaction.direction === 'outgoing'
+          ? 'Base'
+          : (receiverAccount?.name ??
+            (selectedTransaction.origin === 'history_sync' &&
+            selectedTransaction.direction === 'outgoing'
+              ? 'Receiving lock root'
+              : 'Receiving address'));
 
   const senderAddress =
     selectedTransaction.direction === 'outgoing' || selectedTransaction.direction === 'self'
@@ -236,11 +248,15 @@ export function TransactionDetailsScreen() {
           <ChevronLeftIcon className="w-5 h-5" />
         </button>
         <h1 className="m-0 text-base font-medium leading-[22px] tracking-[0.16px]">
-          {transactionType === 'sent'
-            ? 'Sent'
-            : transactionType === 'internal'
-              ? 'Internal'
-              : 'Received'}
+          {isBridge
+            ? 'Bridge'
+            : isMigration
+              ? 'Migration'
+              : transactionType === 'sent'
+                ? 'Sent'
+                : transactionType === 'internal'
+                  ? 'Internal'
+                  : 'Received'}
         </h1>
         <div className="w-8 h-8" />
       </header>
@@ -253,7 +269,13 @@ export function TransactionDetailsScreen() {
         <div className="flex flex-col gap-8 px-4 py-2">
           {/* Amount Section */}
           <div className="flex flex-col items-center gap-3">
-            <img src={IrisLogo40} alt="Iris" className="w-10 h-10" />
+            {isBridge ? (
+              <img src={BaseIconAsset} alt="" className="w-10 h-10" />
+            ) : isMigration ? (
+              <img src={TransferV0Icon} alt="" className="w-10 h-10" />
+            ) : (
+              <img src={IrisLogo40} alt="Iris" className="w-10 h-10" />
+            )}
             <div className="flex flex-col items-center gap-0.5 text-center">
               <h2
                 className="m-0 font-display text-[36px] font-semibold leading-10 tracking-[-0.72px]"
@@ -334,6 +356,8 @@ export function TransactionDetailsScreen() {
                         color={senderAccount.iconColor}
                         className="w-6 h-6"
                       />
+                    ) : isMigration ? (
+                      <img src={TransferV0Icon} alt="" className="w-6 h-6" />
                     ) : (
                       <img src={IrisLogoBlue} alt="" className="w-6 h-6" />
                     )}
@@ -381,6 +405,8 @@ export function TransactionDetailsScreen() {
                         color={receiverAccount.iconColor}
                         className="w-6 h-6"
                       />
+                    ) : isBridge && selectedTransaction.direction === 'outgoing' ? (
+                      <img src={BaseIconAsset} alt="" className="w-6 h-6" />
                     ) : (
                       <img src={IrisLogoBlue} alt="" className="w-6 h-6" />
                     )}

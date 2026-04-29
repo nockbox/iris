@@ -453,7 +453,7 @@ export const useStore = create<AppStore>((set, get) => ({
       },
     });
   },
-  
+
   setPendingBridgeSwap: value => {
     set({ pendingBridgeSwap: value });
   },

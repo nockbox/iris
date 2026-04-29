@@ -52,11 +52,7 @@ import {
   matchChangeOutputs,
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
-import {
-  assertNativeRawTx,
-  assertNativeNote,
-  assertNativeSpendCondition,
-} from './sign-raw-tx-compat';
+import { assertNativeRawTx } from './sign-raw-tx-compat';
 import type { SignMessageResponse } from '@nockbox/iris-sdk';
 import type { Nicks } from '@nockbox/iris-sdk/wasm';
 import { guard } from '@nockbox/iris-sdk/wasm';
@@ -745,6 +741,9 @@ export class Vault {
       STORAGE_KEYS.ENCRYPTED_VAULT,
       STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA,
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
+      STORAGE_KEYS.UTXO_STORE,
+      STORAGE_KEYS.WALLET_TX_STORE,
+      STORAGE_KEYS.CACHED_BALANCES,
     ]);
     const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
     const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as
@@ -771,11 +770,11 @@ export class Vault {
     this.seedAccounts = decoded.seedAccounts;
     this.rebuildFlatAccounts();
 
-    // Load account data (same as password unlock) so transaction history displays
     let utxoStore: UTXOStore = {};
     let walletTxStore: WalletTxStore = {};
     let cachedBalances: Record<string, number> = {};
     let accountSyncState: SyncStateStore = {};
+    let loadedFromEncrypted = false;
 
     if (encAccountData) {
       const accountDataPt = await decryptGCM(
@@ -786,10 +785,29 @@ export class Vault {
       if (accountDataPt) {
         const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
         utxoStore = accountData.utxoStore || {};
+        for (const utxoKey in utxoStore) {
+          if (utxoStore[utxoKey].blockHeight == null) {
+            console.log('[Vault] Clearing old UTXO store with no blockHeight');
+            delete utxoStore[utxoKey];
+          }
+        }
         walletTxStore = accountData.walletTxStore || {};
         accountSyncState = accountData.accountSyncState || {};
         cachedBalances = accountData.cachedBalances || {};
+        loadedFromEncrypted = true;
       }
+    }
+
+    if (!loadedFromEncrypted) {
+      const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
+      const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as WalletTxStore | undefined;
+      const legacyCachedBalances = stored[STORAGE_KEYS.CACHED_BALANCES] as
+        | Record<string, number>
+        | undefined;
+
+      utxoStore = legacyUtxoStore || {};
+      walletTxStore = legacyWalletTxStore || {};
+      cachedBalances = legacyCachedBalances || {};
     }
 
     this.encryptionKey = key;
@@ -814,6 +832,21 @@ export class Vault {
     const currentAccount = this.state.accounts[resolvedIndex] || this.state.accounts[0];
     if (decoded.migrated) {
       await this.saveAccountsToVault();
+    }
+    if (!loadedFromEncrypted) {
+      const hasData =
+        Object.keys(this.utxoStore).length > 0 ||
+        Object.keys(this.walletTxStore).length > 0 ||
+        Object.keys(this.cachedBalances).length > 0 ||
+        Object.keys(this.accountSyncState).length > 0;
+      if (hasData) {
+        await this.saveAccountData();
+        await chrome.storage.local.remove([
+          STORAGE_KEYS.UTXO_STORE,
+          STORAGE_KEYS.WALLET_TX_STORE,
+          STORAGE_KEYS.CACHED_BALANCES,
+        ]);
+      }
     }
     return {
       ok: true,
@@ -1183,6 +1216,15 @@ export class Vault {
     return this.utxoStore[accountAddress]?.blockHeight || 0;
   }
 
+  private getCachedAccountBlockHeight(accountAddress: string): number {
+    const syncState = this.accountSyncState[accountAddress];
+    return Math.max(
+      this.getAccountBlockHeight(accountAddress),
+      syncState?.lastSyncedHeight ?? 0,
+      syncState?.lastHistorySyncedTip ?? 0
+    );
+  }
+
   /**
    * Get only available (spendable) notes for an account
    */
@@ -1539,6 +1581,8 @@ export class Vault {
         recipient: existing.recipient || tx.recipient,
         sender: existing.sender || tx.sender,
         priceUsdAtTime: existing.priceUsdAtTime ?? tx.priceUsdAtTime,
+        migrationFromV0: existing.migrationFromV0 || tx.migrationFromV0,
+        kind: existing.kind || tx.kind,
         updatedAt: Date.now(),
       };
     }
@@ -1585,6 +1629,8 @@ export class Vault {
       recipient: existing.recipient || updates.recipient,
       sender: existing.sender || updates.sender,
       priceUsdAtTime: existing.priceUsdAtTime ?? updates.priceUsdAtTime,
+      migrationFromV0: existing.migrationFromV0 || updates.migrationFromV0,
+      kind: existing.kind || updates.kind,
       updatedAt: Date.now(),
     };
 
@@ -1772,8 +1818,28 @@ export class Vault {
         : direction === 'self'
           ? accountAddress
           : this.getUniqueLockRootFromOutputs(externalOutputs);
+
+    // v0→v1 migration spends carry `version: "v0_to_v1"` and a `signaturesV0[]`
+    const migrationSpend = externalSpends.find(
+      (spend: NockblocksSpend) => spend.version === 'v0_to_v1'
+    );
+    const migrationV0Pubkey = migrationSpend?.signaturesV0?.find(
+      sig => typeof sig?.pubkey === 'string' && sig.pubkey.length > 0
+    )?.pubkey;
+
     const sender =
-      direction === 'incoming' ? this.getUniqueLockRootFromSpends(externalSpends) : accountAddress;
+      direction === 'incoming'
+        ? (migrationV0Pubkey ?? this.getUniqueLockRootFromSpends(externalSpends))
+        : accountAddress;
+
+    const migrationFromV0 =
+      direction === 'incoming' &&
+      (Boolean(migrationSpend) ||
+        (typeof sender === 'string' &&
+          sender.length >= 60 &&
+          typeof recipient === 'string' &&
+          recipient.length > 0 &&
+          recipient.length < 60));
 
     return {
       id: txId,
@@ -1789,6 +1855,7 @@ export class Vault {
       fee: direction === 'incoming' ? undefined : fee,
       recipient,
       sender,
+      ...(migrationFromV0 ? { migrationFromV0: true as const } : {}),
       blockId: tx.blockId,
       confirmedAtBlock: tx.blockHeight,
       confirmedAtTimestamp: tx.timestamp,
@@ -3493,7 +3560,8 @@ export class Vault {
         expectedNameFirst: sortedStoredNotes[idx]?.nameFirst ?? null,
         derivedNameFirst,
         match:
-          derivedNameFirst !== null && derivedNameFirst === (sortedStoredNotes[idx]?.nameFirst ?? null),
+          derivedNameFirst !== null &&
+          derivedNameFirst === (sortedStoredNotes[idx]?.nameFirst ?? null),
       };
     });
 
@@ -3626,11 +3694,7 @@ export class Vault {
 
     try {
       const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
-      const signedTx = await this.signRawTx({
-        rawTx,
-        notes: buildCtx.wasmNotes,
-        spendConditions: buildCtx.spendConditions,
-      });
+      const signedTx = await this.signRawTx({ rawTx });
       const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
       const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
       const signedTxId = signedRawTx.id;
@@ -3745,6 +3809,7 @@ export class Vault {
           id: walletTxId,
           accountAddress: currentAccount.address,
           direction: 'outgoing',
+          kind: 'bridge',
           createdAt: Date.now(),
           updatedAt: Date.now(),
           priceUsdAtTime,
@@ -3753,7 +3818,8 @@ export class Vault {
           recipient: destinationAddress,
           amount: Number(amountNicks),
           fee: buildCtx.estimatedFeeNum,
-          expectedChange: buildCtx.expectedChangeNicks > 0n ? Number(buildCtx.expectedChangeNicks) : 0,
+          expectedChange:
+            buildCtx.expectedChangeNicks > 0n ? Number(buildCtx.expectedChangeNicks) : 0,
         };
 
         return await this.sendBuiltBridgeTransaction(
@@ -3777,11 +3843,7 @@ export class Vault {
    * @param params - Transaction parameters with raw tx
    * @returns Signed transaction in canonical NockchainTx form
    */
-  async signRawTx(params: {
-    rawTx: wasm.RawTx;
-    notes?: wasm.Note[];
-    spendConditions?: wasm.SpendCondition[];
-  }): Promise<wasm.NockchainTx> {
+  async signRawTx(params: { rawTx: wasm.RawTx }): Promise<wasm.NockchainTx> {
     if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
@@ -3791,8 +3853,6 @@ export class Vault {
 
     const { rawTx } = params;
     assertNativeRawTx(rawTx);
-    params.notes?.forEach(assertNativeNote);
-    params.spendConditions?.forEach(assertNativeSpendCondition);
 
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
@@ -3862,7 +3922,7 @@ export class Vault {
       assertNativeRawTx(rawTx);
       const currentAccount = this.getCurrentAccount();
       const cachedBlockHeight = currentAccount
-        ? this.getAccountBlockHeight(currentAccount.address)
+        ? this.getCachedAccountBlockHeight(currentAccount.address)
         : 0;
       const blockHeight = cachedBlockHeight || (await latestConfiguredTxEngineHeight());
       const settings = await txEngineSettings(blockHeight);

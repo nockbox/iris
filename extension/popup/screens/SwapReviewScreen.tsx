@@ -17,7 +17,13 @@ function truncate(addr: string): string {
 }
 
 export function SwapReviewScreen() {
-  const { navigate, pendingBridgeSwap, setPendingBridgeSwap, setSwapSubmittedToastVisible, priceUsd } = useStore();
+  const {
+    navigate,
+    pendingBridgeSwap,
+    setPendingBridgeSwap,
+    setSwapSubmittedToastVisible,
+    priceUsd,
+  } = useStore();
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [networkFeeNicks, setNetworkFeeNicks] = useState<number | null>(null);
@@ -160,7 +166,11 @@ export function SwapReviewScreen() {
             </div>
             <div
               className="text-[12px] font-medium"
-              style={{ color: 'var(--color-text-muted)', letterSpacing: '0.24px', lineHeight: '16px' }}
+              style={{
+                color: 'var(--color-text-muted)',
+                letterSpacing: '0.24px',
+                lineHeight: '16px',
+              }}
             >
               {sendUsdValue !== null ? `≈${sendUsdValue} USD` : '—'}
             </div>
@@ -176,7 +186,11 @@ export function SwapReviewScreen() {
               className="absolute -right-0.5 -bottom-0.5 h-4.5 w-4.5 rounded-full flex items-center justify-center shrink-0 border-2 border-[#F2F2F0]"
               style={{ backgroundColor: 'black' }}
             >
-              <img src={JustNText} alt="" className="min-w-0 min-h-0 h-[7px] w-[6px] object-contain" />
+              <img
+                src={JustNText}
+                alt=""
+                className="min-w-0 min-h-0 h-[7px] w-[6px] object-contain"
+              />
             </div>
           </div>
         </div>
@@ -200,7 +214,11 @@ export function SwapReviewScreen() {
             </div>
             <div
               className="text-[12px] font-medium"
-              style={{ color: 'var(--color-text-muted)', letterSpacing: '0.24px', lineHeight: '16px' }}
+              style={{
+                color: 'var(--color-text-muted)',
+                letterSpacing: '0.24px',
+                lineHeight: '16px',
+              }}
             >
               {receiveUsdValue !== null ? `≈${receiveUsdValue} USD` : '—'}
             </div>
@@ -216,7 +234,11 @@ export function SwapReviewScreen() {
               className="absolute -right-0.5 -bottom-0.5 h-4.5 w-4.5 rounded-full flex items-center justify-center shrink-0 border-2 border-[#F2F2F0]"
               style={{ backgroundColor: 'white' }}
             >
-              <img src={BaseIconAsset} alt="Base" className="min-w-0 min-h-0 h-[9px] w-[8px] object-contain" />
+              <img
+                src={BaseIconAsset}
+                alt="Base"
+                className="min-w-0 min-h-0 h-[9px] w-[8px] object-contain"
+              />
             </div>
           </div>
         </div>
@@ -253,7 +275,10 @@ export function SwapReviewScreen() {
           <div className="h-px" style={{ backgroundColor: 'var(--color-divider)' }} />
           <div className="flex items-center justify-between text-[14px] font-medium">
             <span style={{ letterSpacing: '0.14px', lineHeight: '18px' }}>Network fee</span>
-            <span className="text-right" style={{ color: 'var(--color-text-muted)', letterSpacing: '0.14px' }}>
+            <span
+              className="text-right"
+              style={{ color: 'var(--color-text-muted)', letterSpacing: '0.14px' }}
+            >
               {networkFeeDisplay} NOCK
             </span>
           </div>
@@ -261,7 +286,10 @@ export function SwapReviewScreen() {
             <span style={{ letterSpacing: '0.14px', lineHeight: '18px' }}>
               Bridge fee {bridgeProtocolFeePercentLabel}
             </span>
-            <span className="text-right" style={{ color: 'var(--color-text-muted)', letterSpacing: '0.14px' }}>
+            <span
+              className="text-right"
+              style={{ color: 'var(--color-text-muted)', letterSpacing: '0.14px' }}
+            >
               {bridgeProtocolFeeAmountDisplay} NOCK
             </span>
           </div>
@@ -277,7 +305,10 @@ export function SwapReviewScreen() {
         )}
       </div>
 
-      <div className="flex gap-3 p-3 shrink-0" style={{ borderTop: '1px solid var(--color-divider)' }}>
+      <div
+        className="flex gap-3 p-3 shrink-0"
+        style={{ borderTop: '1px solid var(--color-divider)' }}
+      >
         <button
           className="flex-1 rounded-lg px-5 py-3.5 text-[14px] leading-[18px] font-medium transition-opacity hover:opacity-90"
           style={{
@@ -295,7 +326,11 @@ export function SwapReviewScreen() {
         </button>
         <button
           className="flex-1 rounded-lg px-5 py-3.5 text-[14px] leading-[18px] font-medium transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-          style={{ backgroundColor: 'var(--color-primary)', color: '#000', letterSpacing: '0.14px' }}
+          style={{
+            backgroundColor: 'var(--color-primary)',
+            color: '#000',
+            letterSpacing: '0.14px',
+          }}
           onClick={handleSwap}
           disabled={submitting}
         >

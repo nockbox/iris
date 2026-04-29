@@ -2,9 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import type { SubAccount } from '../../shared/types';
 import { buildLockRootToAccountMap } from '../../shared/account-lock-roots';
 
-export function useLockRootAccountMap(
-  accounts: SubAccount[] | undefined
-): Map<string, SubAccount> {
+export function useLockRootAccountMap(accounts: SubAccount[] | undefined): Map<string, SubAccount> {
   const [map, setMap] = useState<Map<string, SubAccount>>(() => new Map());
 
   const accountsKey = useMemo(
