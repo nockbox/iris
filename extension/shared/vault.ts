@@ -1433,6 +1433,7 @@ export class Vault {
 
       const now = Date.now();
       const ageMs = now - tx.createdAt;
+      let mempoolSeenAt = tx.mempoolSeenAt;
       const shouldCheckMempool =
         ageMs <= 5 * 60 * 1000 &&
         (!tx.lastMempoolCheckAt || now - tx.lastMempoolCheckAt >= 15 * 1000);
@@ -1440,11 +1441,12 @@ export class Vault {
       if (shouldCheckMempool) {
         try {
           const mempoolTx = await client.getMempoolTransactionByTxid(trackingId);
+          mempoolSeenAt = mempoolTx
+            ? (mempoolTx.heardAtTimestamp || Math.floor(now / 1000)) * 1000
+            : tx.mempoolSeenAt;
           await this.updateWalletTransaction(accountAddress, tx.id, {
             status: mempoolTx ? 'mempool_seen' : tx.status,
-            mempoolSeenAt: mempoolTx
-              ? (mempoolTx.heardAtTimestamp || Math.floor(now / 1000)) * 1000
-              : tx.mempoolSeenAt,
+            mempoolSeenAt,
             lastMempoolCheckAt: now,
           });
         } catch (error) {
@@ -1452,7 +1454,7 @@ export class Vault {
         }
       }
 
-      const confirmDelayMs = tx.mempoolSeenAt ? 15 * 1000 : 60 * 1000;
+      const confirmDelayMs = mempoolSeenAt ? 15 * 1000 : 60 * 1000;
       const shouldCheckConfirmation =
         ageMs >= confirmDelayMs &&
         (!tx.lastConfirmationCheckAt || now - tx.lastConfirmationCheckAt >= 30 * 1000);
@@ -1522,7 +1524,7 @@ export class Vault {
     const ownFirstNames = await this.getOwnFirstNameSet(accountAddress);
     const tip = await client.getTip();
     const maxIncrementalHistoryBlocks = 500;
-    const lastHistorySyncedTip = syncState.lastHistorySyncedTip || tip.height;
+    const lastHistorySyncedTip = syncState.lastHistorySyncedTip ?? 0;
     const historyTipGap = Math.max(tip.height - lastHistorySyncedTip, 0);
     let syncedCount = 0;
 
