@@ -115,6 +115,12 @@ export const INTERNAL_METHODS = {
   /** Send transaction using UTXO store (build, lock, broadcast atomically) */
   SEND_TRANSACTION_V2: 'wallet:sendTransactionV2',
 
+  /** Estimate bridge transaction fee for a given destination and amount */
+  ESTIMATE_BRIDGE_FEE: 'wallet:estimateBridgeFee',
+
+  /** Build, sign, and broadcast a bridge transaction (Nockchain → Base) */
+  SEND_BRIDGE_TRANSACTION: 'wallet:sendBridgeTransaction',
+
   /** Approve pending sign raw transaction request */
   APPROVE_SIGN_RAW_TX: 'wallet:approveSignRawTx',
 
@@ -325,6 +331,7 @@ export const USER_ACTIVITY_METHODS = new Set([
   INTERNAL_METHODS.SET_AUTO_LOCK,
   INTERNAL_METHODS.GET_MNEMONIC, // Viewing secret phrase is user activity
   INTERNAL_METHODS.SEND_TRANSACTION_V2,
+  INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION,
   INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE,
   INTERNAL_METHODS.ESTIMATE_MAX_SEND,
   INTERNAL_METHODS.REPORT_ACTIVITY,
