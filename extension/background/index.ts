@@ -6,8 +6,19 @@
 
 import { Vault } from '../shared/vault';
 import { isNockAddress } from '../shared/validators';
-import { noteToProtobuf, assertNativeRawTx, assertNativeNote } from '../shared/sign-raw-tx-compat';
-import { isSignTxRequest, mapRpcRequest, mapRpcResponse, RPC_API_VERSION } from '@nockbox/iris-sdk';
+import {
+  noteToProtobuf,
+  assertNativeRawTx,
+  assertNativeNote,
+  assertNativeSpendCondition,
+} from '../shared/sign-raw-tx-compat';
+import {
+  isSignTxRequest,
+  isEvmAddress,
+  mapRpcRequest,
+  mapRpcResponse,
+  RPC_API_VERSION,
+} from '@nockbox/iris-sdk';
 import type { RpcRequest, RpcResponse, ConnectResponse } from '@nockbox/iris-sdk';
 import wasm from '../shared/sdk-wasm.js';
 import type { Note } from '@nockbox/iris-sdk/wasm';
@@ -1651,6 +1662,92 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           console.error('[Background] SendTransactionV2 failed:', error);
           sendResponse({
             error: error instanceof Error ? error.message : 'Transaction failed',
+          });
+        }
+        return;
+
+      case INTERNAL_METHODS.ESTIMATE_BRIDGE_FEE:
+        // params: [destinationAddress, amountNicks]
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
+        const [estimateBridgeDest, estimateBridgeAmountNicks] = payload.params || [];
+        if (!estimateBridgeDest || !isEvmAddress(estimateBridgeDest)) {
+          sendResponse({ error: 'Invalid destination address. Expected EVM address (0x...).' });
+          return;
+        }
+        let estimateBridgeAmountParsed: Nicks;
+        try {
+          estimateBridgeAmountParsed = parseNicksParam(estimateBridgeAmountNicks, 'amount');
+        } catch (err) {
+          sendResponse({ error: err instanceof Error ? err.message : 'Invalid amount' });
+          return;
+        }
+
+        try {
+          const estimateResult = await vault.estimateBridgeFee(
+            estimateBridgeDest,
+            estimateBridgeAmountParsed
+          );
+
+          if ('error' in estimateResult) {
+            sendResponse({ error: estimateResult.error });
+            return;
+          }
+
+          sendResponse({ fee: estimateResult.fee });
+        } catch (error) {
+          console.error('[Background] Bridge fee estimation failed:', error);
+          sendResponse({
+            error: error instanceof Error ? error.message : 'Bridge fee estimation failed',
+          });
+        }
+        return;
+
+      case INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION:
+        // params: [destinationAddress, amountNicks, priceUsdAtTime?]
+        // EVM address (Base), amount in nicks
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
+        const [bridgeDest, bridgeAmountNicks, bridgePriceUsd] = payload.params || [];
+        if (!bridgeDest || !isEvmAddress(bridgeDest)) {
+          sendResponse({ error: 'Invalid destination address. Expected EVM address (0x...).' });
+          return;
+        }
+        let bridgeAmountNicksParsed: Nicks;
+        try {
+          bridgeAmountNicksParsed = parseNicksParam(bridgeAmountNicks, 'amount');
+        } catch (err) {
+          sendResponse({ error: err instanceof Error ? err.message : 'Invalid amount' });
+          return;
+        }
+
+        try {
+          const bridgeResult = await vault.sendBridgeTransaction(
+            bridgeDest,
+            bridgeAmountNicksParsed,
+            typeof bridgePriceUsd === 'number' ? bridgePriceUsd : undefined
+          );
+
+          if ('error' in bridgeResult) {
+            sendResponse({ error: bridgeResult.error });
+            return;
+          }
+
+          sendResponse({
+            txid: bridgeResult.txId,
+            broadcasted: bridgeResult.broadcasted,
+            walletTx: bridgeResult.walletTx,
+          });
+        } catch (error) {
+          console.error('[Background] Bridge transaction failed:', error);
+          sendResponse({
+            error: error instanceof Error ? error.message : 'Bridge transaction failed',
           });
         }
         return;

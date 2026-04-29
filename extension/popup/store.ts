@@ -56,6 +56,8 @@ export type Screen =
   | 'v0-migration-setup'
   | 'v0-migration-funds'
   | 'v0-migration-review'
+  | 'swap'
+  | 'swap-review'
   | 'tx-details'
 
   // Approval screens
@@ -135,6 +137,17 @@ interface AppStore {
     }>
   ) => void;
   resetV0MigrationDraft: () => void;
+  // Prepared bridge swap transaction between swap and review screens
+  pendingBridgeSwap: {
+    amountNock: number;
+    destinationAddress: string;
+  } | null;
+  setPendingBridgeSwap: (
+    value: {
+      amountNock: number;
+      destinationAddress: string;
+    } | null
+  ) => void;
 
   // Pending connect request (for showing approval screen)
   pendingConnectRequest: ConnectRequest | null;
@@ -159,6 +172,10 @@ interface AppStore {
   // Selected transaction for viewing details
   selectedTransaction: WalletTransaction | null;
   setSelectedTransaction: (transaction: WalletTransaction | null) => void;
+
+  // Swap submitted toast (drops down briefly, then disappears)
+  swapSubmittedToastVisible: boolean;
+  setSwapSubmittedToastVisible: (visible: boolean) => void;
 
   // Balance fetching state
   isBalanceFetching: boolean;
@@ -223,12 +240,14 @@ export const useStore = create<AppStore>((set, get) => ({
     v0MigrationTxSignPayload: undefined,
     txId: undefined,
   },
+  pendingBridgeSwap: null,
   pendingConnectRequest: null,
   pendingSignRequest: null,
   pendingSignRawTxRequest: null,
   pendingTransactionRequest: null,
   walletTransactions: [],
   selectedTransaction: null,
+  swapSubmittedToastVisible: false,
   isBalanceFetching: false,
   isInitialized: false,
   priceUsd: 0,
@@ -309,6 +328,10 @@ export const useStore = create<AppStore>((set, get) => ({
       },
     });
   },
+  
+  setPendingBridgeSwap: value => {
+    set({ pendingBridgeSwap: value });
+  },
 
   // Set pending connect request
   setPendingConnectRequest: (request: ConnectRequest | null) => {
@@ -338,6 +361,10 @@ export const useStore = create<AppStore>((set, get) => ({
   // Set selected transaction for viewing details
   setSelectedTransaction: (transaction: WalletTransaction | null) => {
     set({ selectedTransaction: transaction });
+  },
+
+  setSwapSubmittedToastVisible: (visible: boolean) => {
+    set({ swapSubmittedToastVisible: visible });
   },
 
   // Initialize app on load
@@ -413,16 +440,20 @@ export const useStore = create<AppStore>((set, get) => ({
         }
       }
 
+      // When we will fetch balance, set loading so UI never shows 0 without a loading state
+      const willFetchBalance = !walletState.locked && !!walletState.address;
+
       set({
         wallet: walletState,
         currentScreen: initialScreen,
         isInitialized: true,
+        isBalanceFetching: willFetchBalance,
       });
 
       await get().refreshRpcDisplayConfig();
 
-      // Fetch balance if wallet is unlocked
-      if (!walletState.locked && walletState.address) {
+      // Fetch balance if wallet is unlocked (don't await - let it update when ready)
+      if (willFetchBalance) {
         get().fetchBalance();
         get().fetchWalletTransactions();
       }

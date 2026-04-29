@@ -18,7 +18,11 @@ import {
   NOCK_TO_NICKS,
 } from './constants';
 import { Account } from './types';
-import { buildMultiNotePayment, type Note } from './transaction-builder';
+import {
+  buildMultiNotePayment,
+  discoverSpendConditionForNote,
+  type Note,
+} from './transaction-builder';
 import wasm from './sdk-wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
@@ -41,11 +45,17 @@ import {
   matchChangeOutputs,
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
+import {
+  assertNativeRawTx,
+  assertNativeNote,
+  assertNativeSpendCondition,
+} from './sign-raw-tx-compat';
 import type { SignMessageResponse } from '@nockbox/iris-sdk';
 import type { Nicks } from '@nockbox/iris-sdk/wasm';
-import { assertNativeRawTx } from './sign-raw-tx-compat';
 import { guard } from '@nockbox/iris-sdk/wasm';
 import { getTxEngineSettingsForHeight } from './rpc-config';
+import { buildBridgeTransaction, validateBridgeTransaction } from '@nockbox/iris-sdk';
+import { BRIDGE_CONFIG } from './bridge-config';
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
   return await getTxEngineSettingsForHeight(blockHeight);
@@ -2291,6 +2301,391 @@ export class Vault {
   }
 
   /**
+   * Build bridge transaction context shared by estimate and send flows.
+   */
+  private async buildBridgeTransactionContext(
+    currentAccount: Account,
+    destinationAddress: string,
+    amountNicks: Nicks
+  ): Promise<{
+    bridgeResult: Awaited<ReturnType<typeof buildBridgeTransaction>>;
+    destinationAddress: string;
+    refundPkh: string;
+    wasmNotes: wasm.Note[];
+    spendConditions: wasm.SpendCondition[];
+    selectedNoteIds: string[];
+    estimatedFeeNum: number;
+    expectedChangeNicks: bigint;
+    txEngineSettings: Awaited<ReturnType<typeof getTxEngineSettingsForHeight>>;
+  }> {
+    await initWasmModules();
+
+    const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
+    if (availableStoredNotes.length === 0) {
+      throw new Error('No available UTXOs.');
+    }
+
+    const estimatedFeeNum = 2 * NOCK_TO_NICKS;
+    const targetAmount = Number(amountNicks) + estimatedFeeNum;
+    const selectedStoredNotes = selectNotesForAmount(availableStoredNotes, targetAmount);
+    if (!selectedStoredNotes) {
+      throw new Error('Insufficient available funds');
+    }
+
+    const selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
+    const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
+    const expectedChangeNicks =
+      BigInt(selectedTotal) - BigInt(amountNicks) - BigInt(estimatedFeeNum);
+
+    const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
+    const senderPKH = currentAccount.address;
+
+    // Log selected inputs before spend-condition discovery so failures still have context.
+    console.log('[Bridge Swap] Selected input notes (pre-discovery):', {
+      senderPKH,
+      destinationAddress,
+      amountNicks,
+      selectedNoteIds,
+      selectedInputCount: sortedStoredNotes.length,
+      selectedNotes: sortedStoredNotes.map(n => ({
+        noteId: n.noteId,
+        assets: n.assets,
+        nameFirst: n.nameFirst,
+        protoNameFirst:
+          (n.protoNote as { note_version?: { V1?: { name?: { first?: string } } } } | undefined)
+            ?.note_version?.V1?.name?.first ?? null,
+        originPage: n.originPage,
+        hasProtoNote: Boolean(n.protoNote),
+      })),
+    });
+
+    const wasmNotes = sortedStoredNotes.map(n => {
+      if (!n.protoNote) {
+        throw new Error('Note missing protoNote - cannot build bridge transaction');
+      }
+      return wasm.noteFromProtobuf(n.protoNote);
+    });
+
+    const spendConditions = await Promise.all(
+      sortedStoredNotes.map(async n => {
+        try {
+          return await discoverSpendConditionForNote(senderPKH, {
+            nameFirst: n.nameFirst,
+            originPage: n.originPage,
+          });
+        } catch (error) {
+          console.error('[Bridge Swap] Spend-condition discovery failed for input note:', {
+            noteId: n.noteId,
+            nameFirst: n.nameFirst,
+            originPage: n.originPage,
+            assets: n.assets,
+            error: error instanceof Error ? error.message : String(error),
+          });
+          throw new Error(
+            `Spend condition discovery failed for note ${n.noteId} (${n.nameFirst.slice(0, 16)}...)`
+          );
+        }
+      })
+    );
+
+    const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+    const txEngineSettings = await getTxEngineSettingsForHeight(blockHeight);
+
+    const spendConditionSummaries = spendConditions.map((condition, idx) => {
+      let derivedNameFirst: string | null = null;
+      try {
+        derivedNameFirst = wasm.spendConditionFirstName(condition);
+      } catch {
+        // Keep null; we'll surface mismatch in debug object.
+      }
+      return {
+        noteId: sortedStoredNotes[idx]?.noteId,
+        expectedNameFirst: sortedStoredNotes[idx]?.nameFirst ?? null,
+        derivedNameFirst,
+        match:
+          derivedNameFirst !== null && derivedNameFirst === (sortedStoredNotes[idx]?.nameFirst ?? null),
+      };
+    });
+
+    console.log('[Bridge Swap] Resolved spend conditions:', {
+      senderPKH,
+      spendConditionSummaries,
+    });
+
+    let bridgeResult: Awaited<ReturnType<typeof buildBridgeTransaction>>;
+    try {
+      bridgeResult = await buildBridgeTransaction(
+        {
+          inputNotes: wasmNotes,
+          spendConditions,
+          amountInNicks: amountNicks as WasmNicks,
+          destinationAddress,
+          refundPkh: senderPKH,
+        },
+        BRIDGE_CONFIG,
+        { txEngineSettings, debug: true }
+      );
+    } catch (error) {
+      console.error('[Bridge Swap] buildBridgeTransaction failed:', {
+        senderPKH,
+        destinationAddress,
+        amountNicks,
+        selectedNoteIds,
+        spendConditionSummaries,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
+
+    console.log('[Bridge Swap] Build context:', {
+      destinationAddress,
+      amountNicks,
+      selectedNoteIds,
+      selectedInputCount: wasmNotes.length,
+      estimatedFeeNicks: estimatedFeeNum,
+      builtFeeNicks: Number(bridgeResult.fee),
+      expectedChangeNicks: expectedChangeNicks.toString(),
+      txId: bridgeResult.txId,
+    });
+
+    return {
+      bridgeResult,
+      destinationAddress,
+      refundPkh: senderPKH,
+      wasmNotes,
+      spendConditions,
+      selectedNoteIds,
+      estimatedFeeNum,
+      expectedChangeNicks,
+      txEngineSettings,
+    };
+  }
+
+  private async logBridgeReviewTransactionForInspection(
+    buildCtx: Awaited<ReturnType<Vault['buildBridgeTransactionContext']>>
+  ): Promise<void> {
+    const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
+    const signedTx = await this.signRawTx({
+      rawTx,
+      notes: buildCtx.wasmNotes,
+      spendConditions: buildCtx.spendConditions,
+    });
+
+    const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+    const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
+    // Signing changes the tx bytes (witness data), so the id recomputes.
+    const signedTxId = signedRawTx.id;
+
+    const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
+      txEngineSettings: buildCtx.txEngineSettings,
+      debug: true,
+    });
+    if (!validation.valid) {
+      throw new Error(validation.error ?? 'Bridge transaction validation failed');
+    }
+    const expectedDestination = buildCtx.destinationAddress.toLowerCase();
+    const reconstructedDestination = (validation.destinationAddress ?? '').toLowerCase();
+    const destinationRoundtripMatch =
+      expectedDestination === reconstructedDestination ||
+      `0x${expectedDestination.replace(/^0x/, '')}` ===
+        `0x${reconstructedDestination.replace(/^0x/, '')}`;
+    const rpcEndpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(rpcEndpoint);
+    const blockHeight = await rpcClient.getCurrentBlockHeight();
+    const outputs = wasm.rawTxOutputs(signedRawTx, blockHeight, buildCtx.txEngineSettings);
+    const derivedOutputs = outputs.map(output => {
+      const protobufNote = wasm.noteToProtobuf(output);
+      const note = protobufNote as Record<string, unknown>;
+      const noteVersion = note.note_version as Record<string, unknown> | undefined;
+      const v1 = noteVersion?.V1 as Record<string, unknown> | undefined;
+      const v1Name = v1?.name as Record<string, unknown> | undefined;
+      const v1Assets = v1?.assets as Record<string, unknown> | undefined;
+      return {
+        firstName: typeof v1Name?.first === 'string' ? v1Name.first : null,
+        assetsNicks: typeof v1Assets?.value === 'string' ? v1Assets.value : null,
+        fullOutputNote: protobufNote,
+      };
+    });
+
+    console.log('[Bridge Swap] Final signed transaction (before sendTransaction):', {
+      unsignedTxId: buildCtx.bridgeResult.txId,
+      signedTxId,
+      feeNicks: Number(buildCtx.bridgeResult.fee),
+      refundPkh: buildCtx.refundPkh,
+      destinationRoundtrip: {
+        requested: buildCtx.destinationAddress,
+        reconstructed: validation.destinationAddress,
+        belts: validation.belts,
+        match: destinationRoundtripMatch,
+      },
+      derivedOutputs,
+      fullSignedRawTx: signedRawTx,
+      protobufPayload: signedProtobufTx,
+    });
+
+    // TEMP: Remove this helper and its estimateBridgeFee call after bridge tx inspection is done.
+  }
+
+  /**
+   * Mark notes in-flight, sign tx, validate, broadcast, and release on error.
+   */
+  private async sendBuiltBridgeTransaction(
+    currentAccount: Account,
+    walletTxId: string,
+    buildCtx: Awaited<ReturnType<Vault['buildBridgeTransactionContext']>>,
+    walletTx: WalletTransaction
+  ): Promise<{ txId: string; walletTx: WalletTransaction; broadcasted: boolean }> {
+    await this.markNotesInFlight(currentAccount.address, buildCtx.selectedNoteIds, walletTxId);
+    await this.addWalletTransaction(walletTx);
+
+    try {
+      const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
+      const signedTx = await this.signRawTx({
+        rawTx,
+        notes: buildCtx.wasmNotes,
+        spendConditions: buildCtx.spendConditions,
+      });
+      const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+      const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
+      const signedTxId = signedRawTx.id;
+      const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
+        txEngineSettings: buildCtx.txEngineSettings,
+        debug: true,
+      });
+      if (!validation.valid) {
+        throw new Error(validation.error ?? 'Bridge transaction validation failed');
+      }
+      const rpcEndpoint = await getEffectiveRpcEndpoint();
+      const rpcClient = createBrowserClient(rpcEndpoint);
+      await rpcClient.sendTransaction(signedProtobufTx);
+
+      walletTx.fee = Number(buildCtx.bridgeResult.fee);
+      walletTx.txHash = signedTxId;
+      walletTx.status = 'broadcasted_unconfirmed';
+      await this.updateWalletTransaction(currentAccount.address, walletTxId, {
+        fee: walletTx.fee,
+        txHash: signedTxId,
+        status: 'broadcasted_unconfirmed',
+      });
+
+      return {
+        txId: signedTxId,
+        walletTx,
+        broadcasted: true,
+      };
+    } catch (error) {
+      if (buildCtx.selectedNoteIds.length > 0) {
+        try {
+          await this.releaseInFlightNotes(currentAccount.address, buildCtx.selectedNoteIds);
+          await this.updateWalletTransaction(currentAccount.address, walletTxId, {
+            status: 'failed',
+          });
+        } catch (releaseError) {
+          console.error('[Vault] Error releasing notes:', releaseError);
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Estimate the chain fee for a bridge transaction (builds tx, returns fee).
+   * Does not lock notes or broadcast.
+   */
+  async estimateBridgeFee(
+    destinationAddress: string,
+    amountNicks: Nicks
+  ): Promise<{ fee: number } | { error: string }> {
+    if (this.state.locked || !this.mnemonic) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    try {
+      const buildCtx = await this.buildBridgeTransactionContext(
+        currentAccount,
+        destinationAddress,
+        amountNicks
+      );
+      await this.logBridgeReviewTransactionForInspection(buildCtx);
+      return { fee: Number(buildCtx.bridgeResult.fee) };
+    } catch (error) {
+      console.error('[Vault] Bridge fee estimation failed:', error);
+      return {
+        error: 'Fee estimation failed: ' + (error instanceof Error ? error.message : String(error)),
+      };
+    }
+  }
+
+  /**
+   * Build, sign, and broadcast a bridge transaction (Nockchain → Base)
+   * Uses UTXO store for spendable balance consistency.
+   *
+   * @param destinationAddress - EVM address on Base to receive NOCK
+   * @param amountNicks - Amount to bridge in nicks
+   * @param priceUsdAtTime - Optional USD price for display
+   */
+  async sendBridgeTransaction(
+    destinationAddress: string,
+    amountNicks: Nicks,
+    priceUsdAtTime?: number
+  ): Promise<
+    { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
+  > {
+    if (this.state.locked || !this.mnemonic) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    return withAccountLock(currentAccount.address, async () => {
+      const walletTxId = crypto.randomUUID();
+
+      try {
+        const buildCtx = await this.buildBridgeTransactionContext(
+          currentAccount,
+          destinationAddress,
+          amountNicks
+        );
+
+        const walletTx: WalletTransaction = {
+          id: walletTxId,
+          accountAddress: currentAccount.address,
+          direction: 'outgoing',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          priceUsdAtTime,
+          status: 'created',
+          inputNoteIds: buildCtx.selectedNoteIds,
+          recipient: destinationAddress,
+          amount: Number(amountNicks),
+          fee: buildCtx.estimatedFeeNum,
+          expectedChange: buildCtx.expectedChangeNicks > 0n ? Number(buildCtx.expectedChangeNicks) : 0,
+        };
+
+        return await this.sendBuiltBridgeTransaction(
+          currentAccount,
+          walletTxId,
+          buildCtx,
+          walletTx
+        );
+      } catch (error) {
+        console.error('[Vault] Bridge transaction failed:', error);
+        return {
+          error: `Bridge failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    });
+  }
+
+  /**
    * Sign a raw transaction using iris-wasm
    *
    * @param params - Transaction parameters with raw tx
@@ -2337,7 +2732,7 @@ export class Vault {
       if (!guard.isRawTxV1(rawTx)) {
         throw new Error('Only v1 raw transactions are supported');
       }
-      const builder = wasm.TxBuilder.fromNockchainTx(wasm.rawTxV1ToNockchainTx(rawTx), settings);
+      const builder = wasm.TxBuilder.fromRawTx(rawTx, settings);
 
       await builder.sign(privateKey);
 
