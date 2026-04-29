@@ -26,7 +26,7 @@ import {
 import wasm from './sdk-wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
-import { getEffectiveRpcEndpoint } from './rpc-config';
+import { getEffectiveRpcConfig, getEffectiveRpcEndpoint } from './rpc-config';
 import type { Note as BalanceNote, UTXOStore, WalletTxStore } from './types';
 import { base58 } from '@scure/base';
 import { initWasmModules } from './wasm-utils';
@@ -45,20 +45,35 @@ import {
   matchChangeOutputs,
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
-import type { Nicks } from '@nockbox/iris-wasm';
-import type { Nicks as WasmNicks } from '@nockbox/iris-sdk/wasm';
 import {
   assertNativeRawTx,
   assertNativeNote,
   assertNativeSpendCondition,
 } from './sign-raw-tx-compat';
-import * as guard from '@nockbox/iris-wasm/iris_wasm.guard';
+import type { SignMessageResponse } from '@nockbox/iris-sdk';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
+import { guard } from '@nockbox/iris-sdk/wasm';
 import { getTxEngineSettingsForHeight } from './rpc-config';
 import { buildBridgeTransaction, validateBridgeTransaction } from '@nockbox/iris-sdk';
 import { BRIDGE_CONFIG } from './bridge-config';
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
   return await getTxEngineSettingsForHeight(blockHeight);
+}
+
+async function latestConfiguredTxEngineHeight(): Promise<number> {
+  const config = await getEffectiveRpcConfig();
+  const heights = config.txEngineActivationHeights || {};
+  const latestHeight = Object.keys(heights)
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a)[0];
+
+  if (latestHeight === undefined) {
+    throw new Error('No tx engine settings configured');
+  }
+
+  return latestHeight;
 }
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
@@ -1616,9 +1631,9 @@ export class Vault {
   /**
    * Signs a message using Nockchain WASM cryptography
    * Derives the account's private key and signs the message digest
-   * @returns Object containing signature JSON and public key (hex-encoded)
+   * @returns Canonical API v1 signature response
    */
-  async signMessage(params: unknown): Promise<{ signature: string; publicKeyHex: string }> {
+  async signMessage(params: unknown): Promise<SignMessageResponse> {
     if (this.state.locked || !this.mnemonic) {
       throw new Error('Wallet is locked');
     }
@@ -1659,23 +1674,6 @@ export class Vault {
     const signingKeyBytes = new Uint8Array(pk.slice(0, 32));
     const signature = wasm.signMessage(signingKeyBytes, msgString);
 
-    // Keep legacy payload format: old WASM exposed c/s as little-endian bytes.
-    // New WASM exposes hex strings, so reverse byte order to preserve legacy compatibility.
-    const toLegacyHex = (v: string | Uint8Array): number[] => {
-      if (typeof v === 'string') {
-        let bytes = [];
-        for (let i = 0; i < v.length; i += 2) {
-          bytes.push(parseInt(v.substr(i, 2), 16));
-        }
-        return bytes.reverse();
-      }
-      return [...v];
-    };
-    const signatureJson = JSON.stringify({
-      c: toLegacyHex(signature.c),
-      s: toLegacyHex(signature.s),
-    });
-
     // Log whether the signature verifies (helps detect old SDK / old WASM API mismatch)
     try {
       const pubKey = accountKey.publicKey as Uint8Array;
@@ -1692,10 +1690,17 @@ export class Vault {
       console.warn('[vault] sign_message verification failed:', e);
     }
 
-    // Convert public key to hex string for easy transport
     const publicKeyHex = Array.from(accountKey.publicKey as Uint8Array)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
+    const publicKey = wasm.publicKeyFromHex(publicKeyHex);
+    if (!publicKey) {
+      if (currentAccount?.derivation !== 'master') {
+        accountKey.free();
+      }
+      masterKey.free();
+      throw new Error('Invalid public key');
+    }
 
     // Signature is plain data in new API; no explicit free needed.
     if (currentAccount?.derivation !== 'master') {
@@ -1703,10 +1708,9 @@ export class Vault {
     }
     masterKey.free();
 
-    // Return the signature JSON and public key
     return {
-      signature: signatureJson,
-      publicKeyHex,
+      signature,
+      publicKey,
     };
   }
 
@@ -2684,14 +2688,10 @@ export class Vault {
   /**
    * Sign a raw transaction using iris-wasm
    *
-   * @param params - Transaction parameters with raw tx jam and notes/spend conditions
+   * @param params - Transaction parameters with raw tx
    * @returns Signed transaction in canonical NockchainTx form
    */
-  async signRawTx(params: {
-    rawTx: wasm.RawTx;
-    notes: wasm.Note[];
-    spendConditions: wasm.SpendCondition[];
-  }): Promise<wasm.NockchainTx> {
+  async signRawTx(params: { rawTx: wasm.RawTx }): Promise<wasm.NockchainTx> {
     if (this.state.locked || !this.mnemonic) {
       throw new Error('Wallet is locked');
     }
@@ -2699,10 +2699,8 @@ export class Vault {
     // Initialize WASM modules
     await initWasmModules();
 
-    const { rawTx, notes, spendConditions } = params;
+    const { rawTx } = params;
     assertNativeRawTx(rawTx);
-    notes.forEach(assertNativeNote);
-    spendConditions.forEach(assertNativeSpendCondition);
 
     // Derive the account's private key
     const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
@@ -2764,9 +2762,11 @@ export class Vault {
 
     try {
       assertNativeRawTx(rawTx);
-      const endpoint = await getEffectiveRpcEndpoint();
-      const rpcClient = createBrowserClient(endpoint);
-      const blockHeight = await rpcClient.getCurrentBlockHeight();
+      const currentAccount = this.getCurrentAccount();
+      const cachedBlockHeight = currentAccount
+        ? this.getAccountBlockHeight(currentAccount.address)
+        : 0;
+      const blockHeight = cachedBlockHeight || (await latestConfiguredTxEngineHeight());
       const settings = await txEngineSettings(blockHeight);
       const outputs = wasm.rawTxOutputs(rawTx, blockHeight, settings);
       return outputs.map(output => wasm.noteToProtobuf(output));

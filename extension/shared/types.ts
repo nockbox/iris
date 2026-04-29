@@ -3,7 +3,7 @@
  */
 
 import { PROVIDER_METHODS, INTERNAL_METHODS, RPC_METHODS, ERROR_CODES } from './constants';
-import type { Nicks } from '@nockbox/iris-wasm';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
 
 /**
  * Account information for multi-account wallet

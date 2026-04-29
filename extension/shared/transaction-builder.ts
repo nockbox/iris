@@ -4,7 +4,7 @@
  */
 
 import wasm from './sdk-wasm.js';
-import type { Nicks } from '@nockbox/iris-wasm';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
 import { nicksToBigInt } from './currency.js';
 import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
@@ -16,6 +16,7 @@ import {
   createPkhCoinbaseCondition,
   createPkhRelativeTimelockCondition,
   createPkhAbsoluteTimelockCondition,
+  parseDigestString,
 } from './spend-conditions.js';
 import { firstNameFromCondition } from './first-name-derivation.js';
 
@@ -36,14 +37,6 @@ function getFeeFromBuilder(builder: wasm.TxBuilder): number {
 
 function getTxIdCompat(nockchainTx: wasm.NockchainTx): string {
   return nockchainTx.id;
-}
-
-function parseDigestString(value: string): wasm.Digest {
-  const bytes = base58.decode(value);
-  if (bytes.length !== 40) {
-    throw new Error(`Invalid digest length: ${bytes.length}, expected 40 bytes`);
-  }
-  return value as wasm.Digest;
 }
 
 function isSpendConditionList(
