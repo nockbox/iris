@@ -30,6 +30,9 @@ import RefreshIcon from '../assets/refresh-icon.svg';
 import ReceiptIcon from '../assets/receipt-icon.svg';
 import { resolveCounterpartyAccount } from '../../shared/account-lock-roots';
 import { useLockRootAccountMap } from '../hooks/useLockRootAccountMap';
+import SwapIconAsset from '../assets/swap_icon.svg';
+import BaseIconAsset from '../assets/base_icon.svg';
+import { SwapSubmittedToast } from '../components/SwapSubmittedToast';
 
 import './HomeScreen.tailwind.css';
 
@@ -351,6 +354,7 @@ export function HomeScreen() {
       className="w-[357px] h-[600px] overflow-hidden relative"
       style={{ backgroundColor: 'var(--color-home-fill)', color: 'var(--color-text-primary)' }}
     >
+      <SwapSubmittedToast />
       {/* Scroll container */}
       <div
         ref={scrollContainerRef}
@@ -670,7 +674,7 @@ export function HomeScreen() {
           </div>
 
           {/* Actions */}
-          <div className="grid grid-cols-2 gap-2 mb-3">
+          <div className="grid grid-cols-3 gap-2 mb-3">
             <div className="relative">
               <button
                 className="w-full rounded-card shadow-card flex flex-col items-start justify-center gap-4 p-3 font-sans text-[14px] font-medium transition-all hover:opacity-90 active:scale-[0.98]"
@@ -681,6 +685,19 @@ export function HomeScreen() {
                 Send
               </button>
             </div>
+            <button
+              className="rounded-card shadow-card flex flex-col items-start justify-center gap-4 p-3 font-sans text-[14px] font-medium transition-all hover:opacity-90 active:scale-[0.98]"
+              style={{
+                backgroundColor: 'var(--color-home-accent)',
+                color: 'var(--color-text-primary)',
+              }}
+              onClick={() => navigate('swap')}
+            >
+              <div className="relative h-5 w-5">
+                <img src={SwapIconAsset} alt="Swap" className="h-5 w-5" />
+              </div>
+              Swap
+            </button>
             <button
               className="rounded-card shadow-card flex flex-col items-start justify-center gap-4 p-3 font-sans text-[14px] font-medium transition-all hover:opacity-90 active:scale-[0.98]"
               style={{

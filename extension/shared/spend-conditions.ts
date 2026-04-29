@@ -3,11 +3,51 @@
  * Shared by transaction-builder and first-name-derivation.
  */
 
+import { base58 } from '@scure/base';
+import { guard } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
 
-/** Simple PKH lock (no timelock): [(pkh, m=1, hashes=[pkh])] — standard note. */
+export function parseDigestString(value: string): wasm.Digest {
+  const bytes = base58.decode(value);
+  if (bytes.length !== 40) {
+    throw new Error(`Invalid digest length: ${bytes.length}, expected 40 bytes`);
+  }
+  if (!guard.isDigest(value)) {
+    throw new Error('Invalid digest encoding');
+  }
+  return value;
+}
+
+function toBlockHeight(value: number): wasm.BlockHeight {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`Invalid block height: ${value}`);
+  }
+  return value as wasm.BlockHeight;
+}
+
+/** Simple PKH lock (no timelock) — standard note. */
 export function createSimplePkhCondition(pkhBase58: string): wasm.SpendCondition {
-  return [{ Pkh: { m: 1, hashes: [pkhBase58] } }];
+  const pkh = wasm.pkhSingle(parseDigestString(pkhBase58));
+  return wasm.spendConditionNewPkh(pkh);
+}
+
+function timPrimitive(
+  relMin: number | null,
+  relMax: number | null,
+  absMin: number | null,
+  absMax: number | null
+): wasm.LockPrimitive {
+  return {
+    tag: 'tim',
+    rel: {
+      min: relMin === null ? null : toBlockHeight(relMin),
+      max: relMax === null ? null : toBlockHeight(relMax),
+    },
+    abs: {
+      min: absMin === null ? null : toBlockHeight(absMin),
+      max: absMax === null ? null : toBlockHeight(absMax),
+    },
+  };
 }
 
 /** Base58 lock-root digest for a simple PKH spend condition. */
@@ -20,10 +60,8 @@ export function createPkhCoinbaseCondition(
   pkhBase58: string,
   timelockBlocks = 100
 ): wasm.SpendCondition {
-  return [
-    { Pkh: { m: 1, hashes: [pkhBase58] } },
-    { Tim: { rel: { min: timelockBlocks, max: null }, abs: { min: null, max: null } } },
-  ];
+  const pkhSc = wasm.spendConditionNewPkh(wasm.pkhSingle(parseDigestString(pkhBase58)));
+  return [...pkhSc, timPrimitive(timelockBlocks, null, null, null)];
 }
 
 /** Base58 lock-root digest for a PKH + coinbase timelock spend condition. */
@@ -36,10 +74,8 @@ export function createPkhRelativeTimelockCondition(
   pkhBase58: string,
   blocks: bigint
 ): wasm.SpendCondition {
-  return [
-    { Pkh: { m: 1, hashes: [pkhBase58] } },
-    { Tim: { rel: { min: Number(blocks), max: null }, abs: { min: null, max: null } } },
-  ];
+  const pkhSc = wasm.spendConditionNewPkh(wasm.pkhSingle(parseDigestString(pkhBase58)));
+  return [...pkhSc, timPrimitive(Number(blocks), null, null, null)];
 }
 
 /** PKH + absolute timelock (min height). */
@@ -47,8 +83,6 @@ export function createPkhAbsoluteTimelockCondition(
   pkhBase58: string,
   minHeight: bigint
 ): wasm.SpendCondition {
-  return [
-    { Pkh: { m: 1, hashes: [pkhBase58] } },
-    { Tim: { rel: { min: null, max: null }, abs: { min: Number(minHeight), max: null } } },
-  ];
+  const pkhSc = wasm.spendConditionNewPkh(wasm.pkhSingle(parseDigestString(pkhBase58)));
+  return [...pkhSc, timPrimitive(null, null, Number(minHeight), null)];
 }
