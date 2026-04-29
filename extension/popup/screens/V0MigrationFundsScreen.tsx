@@ -277,7 +277,7 @@ export function V0MigrationFundsScreen() {
           >
             <div className="flex items-center justify-between h-10 mb-2">
               <div className="w-7" />
-              <h2 className="text-[16px] font-medium">Select wallet</h2>
+onClick={() => { resetV0MigrationDraft(); navigate('settings'); }}
               <button type="button" onClick={() => setShowWalletPicker(false)} className="p-1.5">
                 <ChevronLeftIcon className="w-5 h-5 rotate-180" />
               </button>
