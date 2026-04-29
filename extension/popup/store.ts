@@ -17,6 +17,7 @@ import {
   WalletTransaction,
 } from '../shared/types';
 import { send } from './utils/messaging';
+import type { V0MigrationTxSignPayload } from '@nockbox/iris-sdk';
 
 /**
  * All available screens in the wallet
@@ -57,6 +58,12 @@ export type Screen =
   | 'send-submitted'
   | 'sent'
   | 'receive'
+  | 'v0-migration-intro'
+  | 'v0-migration-setup'
+  | 'v0-migration-funds'
+  | 'v0-migration-review'
+  | 'swap'
+  | 'swap-review'
   | 'tx-details'
 
   // Approval screens
@@ -129,6 +136,46 @@ interface AppStore {
   lastTransaction: TransactionDetails | null;
   setLastTransaction: (transaction: TransactionDetails | null) => void;
 
+  // UI-only draft state for transfering v0 funds flow
+  v0MigrationDraft: {
+    v0BalanceNock: number;
+    migratedAmountNock?: number;
+    feeNock?: number;
+    destinationAddress: string | null;
+    keyfileName?: string;
+    sourceAddress?: string;
+    v0Mnemonic?: string; // Kept in memory only until sign+broadcast
+    v0Notes?: any[];
+    v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
+    txId?: string;
+  };
+  setV0MigrationDraft: (
+    value: Partial<{
+      v0BalanceNock: number;
+      migratedAmountNock?: number;
+      feeNock?: number;
+      destinationAddress: string | null;
+      keyfileName?: string;
+      sourceAddress?: string;
+      v0Mnemonic?: string;
+      v0Notes?: any[];
+      v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
+      txId?: string;
+    }>
+  ) => void;
+  resetV0MigrationDraft: () => void;
+  // Prepared bridge swap transaction between swap and review screens
+  pendingBridgeSwap: {
+    amountNock: number;
+    destinationAddress: string;
+  } | null;
+  setPendingBridgeSwap: (
+    value: {
+      amountNock: number;
+      destinationAddress: string;
+    } | null
+  ) => void;
+
   // Pending connect request (for showing approval screen)
   pendingConnectRequest: ConnectRequest | null;
   setPendingConnectRequest: (request: ConnectRequest | null) => void;
@@ -156,6 +203,10 @@ interface AppStore {
   // Account whose settings are being viewed (set when opening settings from dropdown; avoids waiting for account switch)
   settingsAccountAddress: string | null;
   setSettingsAccountAddress: (address: string | null) => void;
+
+  // Swap submitted toast (drops down briefly, then disappears)
+  swapSubmittedToastVisible: boolean;
+  setSwapSubmittedToastVisible: (visible: boolean) => void;
 
   // Balance fetching state
   isBalanceFetching: boolean;
@@ -212,6 +263,18 @@ export const useStore = create<AppStore>((set, get) => ({
   onboardingMnemonic: null,
   onboardingPassword: null,
   lastTransaction: null,
+  v0MigrationDraft: {
+    v0BalanceNock: 0,
+    migratedAmountNock: undefined,
+    feeNock: undefined,
+    destinationAddress: null,
+    keyfileName: undefined,
+    sourceAddress: undefined,
+    v0Notes: undefined,
+    v0MigrationTxSignPayload: undefined,
+    txId: undefined,
+  },
+  pendingBridgeSwap: null,
   pendingConnectRequest: null,
   pendingSignRequest: null,
   pendingSignRawTxRequest: null,
@@ -220,6 +283,7 @@ export const useStore = create<AppStore>((set, get) => ({
   selectedTransaction: null,
   settingsAccountAddress: null,
   setSettingsAccountAddress: (address: string | null) => set({ settingsAccountAddress: address }),
+  swapSubmittedToastVisible: false,
   isBalanceFetching: false,
   isInitialized: false,
   priceUsd: 0,
@@ -364,6 +428,36 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ lastTransaction: transaction });
   },
 
+  setV0MigrationDraft: value => {
+    set(state => ({
+      v0MigrationDraft: {
+        ...state.v0MigrationDraft,
+        ...value,
+      },
+    }));
+  },
+
+  resetV0MigrationDraft: () => {
+    set({
+      v0MigrationDraft: {
+        v0BalanceNock: 0,
+        migratedAmountNock: undefined,
+        feeNock: undefined,
+        destinationAddress: null,
+        keyfileName: undefined,
+        sourceAddress: undefined,
+        v0Mnemonic: undefined,
+        v0Notes: undefined,
+        v0MigrationTxSignPayload: undefined,
+        txId: undefined,
+      },
+    });
+  },
+  
+  setPendingBridgeSwap: value => {
+    set({ pendingBridgeSwap: value });
+  },
+
   // Set pending connect request
   setPendingConnectRequest: (request: ConnectRequest | null) => {
     set({ pendingConnectRequest: request });
@@ -392,6 +486,10 @@ export const useStore = create<AppStore>((set, get) => ({
   // Set selected transaction for viewing details
   setSelectedTransaction: (transaction: WalletTransaction | null) => {
     set({ selectedTransaction: transaction });
+  },
+
+  setSwapSubmittedToastVisible: (visible: boolean) => {
+    set({ swapSubmittedToastVisible: visible });
   },
 
   // Initialize app on load
@@ -479,16 +577,20 @@ export const useStore = create<AppStore>((set, get) => ({
         }
       }
 
+      // When we will fetch balance, set loading so UI never shows 0 without a loading state
+      const willFetchBalance = !walletState.locked && !!walletState.address;
+
       set({
         wallet: walletState,
         currentScreen: initialScreen,
         isInitialized: true,
+        isBalanceFetching: willFetchBalance,
       });
 
       await get().refreshRpcDisplayConfig();
 
-      // Fetch balance if wallet is unlocked
-      if (!walletState.locked && walletState.address) {
+      // Fetch balance if wallet is unlocked (don't await - let it update when ready)
+      if (willFetchBalance) {
         get().fetchBalance();
         get().fetchWalletTransactions();
       }

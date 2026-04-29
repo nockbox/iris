@@ -3,7 +3,7 @@
  */
 
 import { PROVIDER_METHODS, INTERNAL_METHODS, RPC_METHODS, ERROR_CODES } from './constants';
-import type { Nicks } from './currency';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
 
 /**
  * Child wallet account, always nested under a SeedAccount.
@@ -164,7 +164,7 @@ export interface TransactionRequest {
   timestamp: number;
 }
 
-/** Pending signRawTx request. Native format (converted from protobuf at RPC boundary). */
+/** Pending signTx approval request stored in native wasm form. */
 export interface SignRawTxRequest {
   rawTx: unknown; // wasm.RawTx (native)
   notes: unknown[]; // wasm.Note[] (native); popup receives protobuf for display
@@ -297,10 +297,15 @@ export interface UTXOStore {
 export type WalletTxStatus =
   | 'created'
   | 'broadcast_pending'
+  | 'mempool_seen'
   | 'broadcasted_unconfirmed'
   | 'confirmed'
   | 'failed'
   | 'expired';
+
+export type WalletTxOrigin = 'popup_send' | 'provider_send' | 'history_sync';
+
+export type WalletTxConfirmationSource = 'api' | 'utxo_fallback' | 'history_sync';
 
 /**
  * Wallet transaction record
@@ -330,6 +335,10 @@ export interface WalletTransaction {
 
   /** Current status */
   status: WalletTxStatus;
+  /** Where this record originated from */
+  origin?: WalletTxOrigin;
+  /** Tx id used for Nockblocks tracking when available */
+  trackingTxId?: string;
 
   // For outgoing transactions
   /** Note IDs used as inputs (spent) */
@@ -352,8 +361,20 @@ export interface WalletTransaction {
   sender?: string;
 
   // Confirmation tracking
+  /** When the tx was first observed in mempool (ms since epoch) */
+  mempoolSeenAt?: number;
+  /** Last time mempool status was checked (ms since epoch) */
+  lastMempoolCheckAt?: number;
+  /** Last time confirmed status was checked (ms since epoch) */
+  lastConfirmationCheckAt?: number;
+  /** How this transaction was ultimately confirmed */
+  confirmationSource?: WalletTxConfirmationSource;
+  /** Confirmed block id when available */
+  blockId?: string;
   /** Block height when confirmed */
   confirmedAtBlock?: number;
+  /** Confirmed timestamp in seconds from chain API */
+  confirmedAtTimestamp?: number;
   /** Number of confirmations */
   confirmations?: number;
 }
@@ -374,6 +395,12 @@ export interface AccountSyncState {
   lastSyncedHeight: number;
   /** Timestamp of last successful sync */
   lastSyncedAt: number;
+  /** Whether confirmed history has been backfilled at least once */
+  historyInitialized?: boolean;
+  /** Tip height used for the most recent history sync window */
+  lastHistorySyncedTip?: number;
+  /** Timestamp of the last successful history backfill */
+  lastHistoryBackfillAt?: number;
 }
 
 /**

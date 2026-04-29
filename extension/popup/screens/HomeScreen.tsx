@@ -28,6 +28,11 @@ import SettingsGearIcon from '../assets/settings-gear-icon.svg';
 import PencilEditIcon from '../assets/pencil-edit-icon.svg';
 import RefreshIcon from '../assets/refresh-icon.svg';
 import ReceiptIcon from '../assets/receipt-icon.svg';
+import { resolveCounterpartyAccount } from '../../shared/account-lock-roots';
+import { useLockRootAccountMap } from '../hooks/useLockRootAccountMap';
+import SwapIconAsset from '../assets/swap_icon.svg';
+import BaseIconAsset from '../assets/base_icon.svg';
+import { SwapSubmittedToast } from '../components/SwapSubmittedToast';
 
 import './HomeScreen.tailwind.css';
 
@@ -53,6 +58,7 @@ export function HomeScreen() {
     setSettingsAccountAddress,
   } = useStore();
   const { theme } = useTheme();
+  const lockRootToAccount = useLockRootAccountMap(wallet.accounts);
 
   const [balanceHidden, setBalanceHidden] = useState(false);
   const [walletDropdownOpen, setWalletDropdownOpen] = useState(false);
@@ -347,13 +353,14 @@ export function HomeScreen() {
     }
   };
 
-  // Only show outgoing transactions in history (we don't store incoming)
-  const displayTransactions = walletTransactions.filter(tx => tx.direction === 'outgoing');
+  const displayTransactions = walletTransactions;
 
   // Group wallet transactions by date
   const transactionsByDate = displayTransactions.reduce(
     (acc, tx) => {
-      const date = new Date(tx.createdAt).toLocaleDateString('en-US', {
+      const txTimestampMs =
+        (tx.confirmedAtTimestamp || 0) > 0 ? tx.confirmedAtTimestamp! * 1000 : tx.createdAt;
+      const date = new Date(txTimestampMs).toLocaleDateString('en-US', {
         day: 'numeric',
         month: 'short',
         year: 'numeric',
@@ -365,9 +372,20 @@ export function HomeScreen() {
 
       // Convert amount from nicks to NOCK
       const amountNock = (tx.amount || 0) / NOCK_TO_NICKS;
-      const type = tx.direction === 'outgoing' ? 'sent' : 'received';
-      // For incoming transactions, show sender if known, otherwise leave empty
-      const address = tx.direction === 'outgoing' ? tx.recipient : tx.sender;
+      const type =
+        tx.direction === 'incoming' ? 'received' : tx.direction === 'self' ? 'self' : 'sent';
+      const counterparty =
+        tx.direction === 'outgoing'
+          ? tx.recipient
+          : tx.direction === 'incoming'
+            ? tx.sender
+            : tx.recipient || tx.sender || currentAccount?.address;
+      const peerAccount = resolveCounterpartyAccount(
+        counterparty,
+        wallet.accounts ?? [],
+        lockRootToAccount
+      );
+      const address = peerAccount?.address ?? counterparty;
 
       // Only show USD value if we have historical price stored
       const usdValue = tx.priceUsdAtTime
@@ -376,11 +394,20 @@ export function HomeScreen() {
 
       acc[date].push({
         type,
-        from: truncateAddress(address || ''),
+        from:
+          type === 'self'
+            ? 'Your wallets'
+            : address
+              ? truncateAddress(address)
+              : type === 'received'
+                ? 'Unknown sender'
+                : 'Unknown recipient',
         amount:
           type === 'sent'
             ? `-${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
-            : `${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`,
+            : type === 'self'
+              ? `${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
+              : `${amountNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`,
         usdValue,
         status: getDisplayStatus(tx.status),
         confirmations: tx.confirmations,
@@ -403,6 +430,7 @@ export function HomeScreen() {
       className="w-[357px] h-[600px] overflow-hidden relative"
       style={{ backgroundColor: 'var(--color-home-fill)', color: 'var(--color-text-primary)' }}
     >
+      <SwapSubmittedToast />
       {/* Scroll container */}
       <div
         ref={scrollContainerRef}
@@ -818,7 +846,7 @@ export function HomeScreen() {
           </div>
 
           {/* Actions */}
-          <div className="grid grid-cols-2 gap-2 mb-3">
+          <div className="grid grid-cols-3 gap-2 mb-3">
             <div className="relative">
               <button
                 className="w-full rounded-card shadow-card flex flex-col items-start justify-center gap-4 p-3 font-sans text-[14px] font-medium transition-all hover:opacity-90 active:scale-[0.98]"
@@ -829,6 +857,19 @@ export function HomeScreen() {
                 Send
               </button>
             </div>
+            <button
+              className="rounded-card shadow-card flex flex-col items-start justify-center gap-4 p-3 font-sans text-[14px] font-medium transition-all hover:opacity-90 active:scale-[0.98]"
+              style={{
+                backgroundColor: 'var(--color-home-accent)',
+                color: 'var(--color-text-primary)',
+              }}
+              onClick={() => navigate('swap')}
+            >
+              <div className="relative h-5 w-5">
+                <img src={SwapIconAsset} alt="Swap" className="h-5 w-5" />
+              </div>
+              Swap
+            </button>
             <button
               className="rounded-card shadow-card flex flex-col items-start justify-center gap-4 p-3 font-sans text-[14px] font-medium transition-all hover:opacity-90 active:scale-[0.98]"
               style={{
@@ -951,7 +992,11 @@ export function HomeScreen() {
                             className="text-[14px] font-medium truncate"
                             style={{ color: 'var(--color-text-primary)' }}
                           >
-                            {t.type === 'received' ? 'Received' : 'Sent'}
+                            {t.type === 'received'
+                              ? 'Received'
+                              : t.type === 'self'
+                                ? 'Internal'
+                                : 'Sent'}
                           </div>
                           <div
                             className="text-[12px] flex items-center gap-1.5 truncate"
