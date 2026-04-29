@@ -6,18 +6,13 @@
 
 import { Vault } from '../shared/vault';
 import { isNockAddress } from '../shared/validators';
-import {
-  toRawTx,
-  toNote,
-  toSpendCondition,
-  noteToProtobuf,
-  assertNativeRawTx,
-  assertNativeNote,
-  assertNativeSpendCondition,
-} from '../shared/sign-raw-tx-compat';
-import { isLegacySignRawTxRequest } from '@nockbox/iris-sdk';
-import type { Note, SpendCondition } from '@nockbox/iris-sdk/wasm';
-import type { Nicks } from '../shared/currency';
+import { noteToProtobuf, assertNativeRawTx, assertNativeNote } from '../shared/sign-raw-tx-compat';
+import { isSignTxRequest, mapRpcRequest, mapRpcResponse, RPC_API_VERSION } from '@nockbox/iris-sdk';
+import type { RpcRequest, RpcResponse, ConnectResponse } from '@nockbox/iris-sdk';
+import wasm from '../shared/sdk-wasm.js';
+import type { Note } from '@nockbox/iris-sdk/wasm';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
+import type { Digest } from '@nockbox/iris-sdk/wasm';
 import {
   PROVIDER_METHODS,
   INTERNAL_METHODS,
@@ -31,7 +26,8 @@ import {
   APPROVAL_CONSTANTS,
   CHAIN_ID,
 } from '../shared/constants';
-import { getEffectiveRpcEndpoint } from '../shared/rpc-config';
+import { getEffectiveRpcConfig } from '../shared/rpc-config';
+import type { RpcConfig } from '../shared/rpc-config';
 import type {
   TransactionRequest,
   SignRequest,
@@ -264,6 +260,134 @@ function parseNicksParam(
   }
 
   return String(value) as Nicks;
+}
+
+type IncomingRpcRequest = {
+  method?: string;
+  params?: any;
+  api?: unknown;
+};
+
+const LEGACY_RPC_API_VERSION = '0';
+
+/**
+ * Provider requests that do not specify `api` are treated as legacy API 0.
+ */
+function resolveSourceApiVersion(requestApi: unknown): string {
+  return typeof requestApi === 'string' && requestApi.trim()
+    ? requestApi.trim()
+    : LEGACY_RPC_API_VERSION;
+}
+
+function isProviderMethod(method: unknown): method is string {
+  return (
+    method === PROVIDER_METHODS.CONNECT ||
+    method === PROVIDER_METHODS.SIGN_MESSAGE ||
+    method === PROVIDER_METHODS.SEND_TRANSACTION ||
+    method === PROVIDER_METHODS.GET_WALLET_INFO ||
+    method === PROVIDER_METHODS.SIGN_TX ||
+    // Legacy v0 API method
+    method === 'nock_signRawTx'
+  );
+}
+
+async function bridgeIncomingProviderPayload(
+  sourceRequest: IncomingRpcRequest
+): Promise<IncomingRpcRequest> {
+  if (!sourceRequest?.method) {
+    return sourceRequest;
+  }
+
+  if (!isProviderMethod(sourceRequest.method)) {
+    return sourceRequest;
+  }
+
+  const sourceApi = resolveSourceApiVersion(sourceRequest.api);
+  if (sourceApi === RPC_API_VERSION) {
+    return {
+      ...sourceRequest,
+      api: sourceApi,
+    };
+  }
+
+  const mappedRequest = mapRpcRequest(sourceRequest as RpcRequest, sourceApi, RPC_API_VERSION);
+
+  return {
+    ...(mappedRequest as IncomingRpcRequest),
+    api: sourceApi,
+  };
+}
+
+function toRpcResponse(response: unknown): RpcResponse<unknown> {
+  if (
+    response &&
+    typeof response === 'object' &&
+    'error' in (response as Record<string, unknown>)
+  ) {
+    return response as RpcResponse<unknown>;
+  }
+  return { result: response };
+}
+
+function bridgeOutgoingProviderResponse(
+  sourceRequest: IncomingRpcRequest,
+  response: unknown
+): unknown {
+  if (!sourceRequest?.method || !isProviderMethod(sourceRequest.method)) {
+    return response;
+  }
+
+  const sourceApi = resolveSourceApiVersion(sourceRequest.api);
+  const mappedRequest = mapRpcRequest(sourceRequest as RpcRequest, sourceApi, RPC_API_VERSION);
+  const bridged = mapRpcResponse(
+    mappedRequest.method,
+    toRpcResponse(response),
+    RPC_API_VERSION,
+    sourceApi
+  );
+  if (bridged.error) {
+    return { error: bridged.error };
+  }
+  return bridged.result;
+}
+
+function toInvalidParamsError(err: unknown): { error: { code: number; message: string } } {
+  return {
+    error: {
+      code: -32602,
+      message: err instanceof Error ? err.message : 'Invalid params',
+    },
+  };
+}
+
+function toInternalProviderError(err: unknown): { error: { code: number; message: string } } {
+  return {
+    error: {
+      code: -32603,
+      message: err instanceof Error ? err.message : 'Internal wallet error',
+    },
+  };
+}
+
+function buildConnectResponse(address: string, rpcConfig: RpcConfig): ConnectResponse {
+  const { txEngineActivationHeights, coinbaseTimelockBlocks } = rpcConfig;
+  if (!txEngineActivationHeights || coinbaseTimelockBlocks == null) {
+    throw new Error('RPC config is missing tx engine or coinbase timelock settings');
+  }
+
+  return {
+    account: {
+      type: 'v1',
+      address: address as Digest,
+    },
+    rpcConfig: {
+      rpcUrl: rpcConfig.rpcUrl,
+      networkName: rpcConfig.networkName,
+      blockExplorerUrl: rpcConfig.blockExplorerUrl,
+      txEngineActivationHeights,
+      coinbaseTimelockBlocks,
+    },
+  };
 }
 
 /**
@@ -546,12 +670,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     await initPromise;
     await ensureSessionRestored();
-    const { payload } = msg || {};
+    const sourcePayload = ((msg || {}).payload || {}) as IncomingRpcRequest;
+    let payload: any;
+    try {
+      payload = await bridgeIncomingProviderPayload(sourcePayload);
+    } catch (err) {
+      sendResponse(toInvalidParamsError(err));
+      return;
+    }
+    const sendBridgedResponse = async (response: unknown): Promise<void> => {
+      try {
+        sendResponse(await bridgeOutgoingProviderResponse(sourcePayload, response));
+      } catch (err) {
+        console.error('[Background] Failed to bridge provider response:', err);
+        sendResponse(toInternalProviderError(err));
+      }
+    };
     await touchActivity(payload?.method);
 
     // Guard: internal methods (wallet:*) can only be called from popup/extension pages
     if (payload?.method?.startsWith('wallet:') && !isFromPopup(_sender)) {
-      sendResponse({ error: ERROR_CODES.UNAUTHORIZED });
+      await sendBridgedResponse({ error: ERROR_CODES.UNAUTHORIZED });
       return;
     }
 
@@ -580,7 +719,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           // Store pending request with response callback
           pendingRequests.set(connectRequestId, {
             request: connectRequest,
-            sendResponse,
+            sendResponse: response => {
+              void sendBridgedResponse(response);
+            },
             origin: connectRequest.origin,
           });
 
@@ -591,12 +732,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        // Origin approved - return address
-        const connectEndpoint = await getEffectiveRpcEndpoint();
-        sendResponse({
-          pkh: vault.getAddress(),
-          grpcEndpoint: connectEndpoint,
-        });
+        try {
+          const connectRpcConfig = await getEffectiveRpcConfig();
+          await sendBridgedResponse(buildConnectResponse(vault.getAddress(), connectRpcConfig));
+        } catch (err) {
+          console.error('[Background] Failed to build connect response:', err);
+          await sendBridgedResponse(toInternalProviderError(err));
+          return;
+        }
 
         // Emit connect event when dApp connects successfully
         await emitWalletEvent('connect', { chainId: CHAIN_ID });
@@ -606,28 +749,34 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Validate origin
         const signMessageOrigin = _sender.url || _sender.origin || '';
         if (!isOriginApproved(signMessageOrigin)) {
-          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
           return;
         }
 
         if (vault.isLocked()) {
-          sendResponse({ error: ERROR_CODES.LOCKED });
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
         // Create sign message approval request
         const newSignRequestId = crypto.randomUUID();
+        const signMessageParams =
+          payload.params && typeof payload.params === 'object'
+            ? (payload.params as { message?: unknown })
+            : undefined;
         const signRequest: SignRequest = {
           id: newSignRequestId,
           origin: signMessageOrigin,
-          message: payload.params?.[0] || '',
+          message: typeof signMessageParams?.message === 'string' ? signMessageParams.message : '',
           timestamp: Date.now(),
         };
 
         // Store pending request with response callback
         pendingRequests.set(newSignRequestId, {
           request: signRequest,
-          sendResponse,
+          sendResponse: response => {
+            void sendBridgedResponse(response);
+          },
           origin: signRequest.origin,
         });
 
@@ -637,30 +786,29 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Response will be sent when user approves/rejects
         return;
 
-      case PROVIDER_METHODS.SIGN_RAW_TX:
+      case PROVIDER_METHODS.SIGN_TX:
         // Validate origin
         const signRawTxOrigin = _sender.url || _sender.origin || '';
         if (!isOriginApproved(signRawTxOrigin)) {
-          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
           return;
         }
 
         if (vault.isLocked()) {
-          sendResponse({ error: ERROR_CODES.LOCKED });
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
-        const rawTxParams = payload.params?.[0];
-        if (!isLegacySignRawTxRequest(rawTxParams)) {
-          sendResponse({ error: { code: -32602, message: 'Invalid params' } });
+        const signTxParams = payload.params;
+
+        if (!isSignTxRequest(signTxParams)) {
+          await sendBridgedResponse({ error: { code: -32602, message: 'Invalid params' } });
           return;
         }
 
-        const nativeRawTx = toRawTx(rawTxParams.rawTx);
-        const nativeNotes = rawTxParams.notes.map((n: unknown) => toNote(n));
-        const nativeSpendConditions = rawTxParams.spendConditions.map((sc: unknown) =>
-          toSpendCondition(sc)
-        );
+        const nativeRawTx = wasm.nockchainTxToRawTx(signTxParams.tx);
+        const nativeNotes = (signTxParams.notes ?? []) as Note[];
+        const nativeSpendConditions = wasm.rawTxInputSpendConditions(nativeRawTx);
         assertNativeRawTx(nativeRawTx);
 
         const outputs = await vault.computeOutputs(nativeRawTx);
@@ -679,7 +827,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Store pending request with response callback
         pendingRequests.set(signRawTxId, {
           request: signRawTxRequest,
-          sendResponse,
+          sendResponse: response => {
+            void sendBridgedResponse(response);
+          },
           origin: signRawTxRequest.origin,
         });
 
@@ -693,17 +843,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Validate origin
         const sendTxOrigin = _sender.url || _sender.origin || '';
         if (!isOriginApproved(sendTxOrigin)) {
-          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
           return;
         }
 
         if (vault.isLocked()) {
-          sendResponse({ error: ERROR_CODES.LOCKED });
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
-        const { to, amount, fee } = payload.params?.[0] ?? {};
+        const sendTxParams =
+          payload.params && typeof payload.params === 'object' ? payload.params : {};
+        const { to, amount, fee } = sendTxParams;
         if (!isNockAddress(to)) {
-          sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
+          await sendBridgedResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
         }
         let amountNicks: Nicks;
@@ -712,7 +864,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           amountNicks = parseNicksParam(amount, 'amount');
           feeNicks = parseNicksParam(fee, 'fee', { allowZero: true });
         } catch (err) {
-          sendResponse({ error: err instanceof Error ? err.message : 'Invalid params' });
+          await sendBridgedResponse(toInvalidParamsError(err));
           return;
         }
 
@@ -730,7 +882,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Store pending request with response callback
         pendingRequests.set(txRequestId, {
           request: txRequest,
-          sendResponse,
+          sendResponse: response => {
+            void sendBridgedResponse(response);
+          },
           origin: txRequest.origin,
         });
 
@@ -744,20 +898,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Validate origin
         const getInfoOrigin = _sender.url || _sender.origin || '';
         if (!isOriginApproved(getInfoOrigin)) {
-          sendResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
           return;
         }
 
         if (vault.isLocked()) {
-          sendResponse({ error: ERROR_CODES.LOCKED });
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
-        const stateEndpoint = await getEffectiveRpcEndpoint();
-        sendResponse({
-          pkh: vault.getAddress(),
-          grpcEndpoint: stateEndpoint,
-        });
+        try {
+          const walletInfoRpcConfig = await getEffectiveRpcConfig();
+          await sendBridgedResponse(buildConnectResponse(vault.getAddress(), walletInfoRpcConfig));
+        } catch (err) {
+          console.error('[Background] Failed to build wallet info response:', err);
+          await sendBridgedResponse(toInternalProviderError(err));
+        }
         return;
 
       // Internal methods (called from popup)
@@ -1174,8 +1330,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
 
           try {
-            const { signature, publicKeyHex } = await vault.signMessage([signRequest.message]);
-            approveSignPending.sendResponse({ signature, publicKeyHex });
+            const signMessageResponse = await vault.signMessage([signRequest.message]);
+            approveSignPending.sendResponse(signMessageResponse);
             cancelPendingRequest(approveSignId);
             processNextRequest();
             sendResponse({ success: true });
@@ -1218,14 +1374,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
           try {
             assertNativeRawTx(signRawTxRequest.rawTx);
-            signRawTxRequest.notes.forEach(assertNativeNote);
-            signRawTxRequest.spendConditions.forEach(assertNativeSpendCondition);
-            const signature = await vault.signRawTx({
+            const signedTx = await vault.signRawTx({
               rawTx: signRawTxRequest.rawTx,
-              notes: signRawTxRequest.notes as Note[],
-              spendConditions: signRawTxRequest.spendConditions as SpendCondition[],
             });
-            approveSignRawTxPending.sendResponse(signature);
+            approveSignRawTxPending.sendResponse({ tx: signedTx });
             cancelPendingRequest(approveSignRawTxId);
             processNextRequest();
             sendResponse({ success: true });
@@ -1277,21 +1429,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             return;
           }
 
-          // Add origin to approved list
-          await approveOrigin(connectRequest.origin);
+          try {
+            const approveRpcConfig = await getEffectiveRpcConfig();
+            const connectResponse = buildConnectResponse(vault.getAddress(), approveRpcConfig);
 
-          // Return wallet info
-          const approveEndpoint = await getEffectiveRpcEndpoint();
-          approveConnectPending.sendResponse({
-            pkh: vault.getAddress(),
-            grpcEndpoint: approveEndpoint,
-          });
-          cancelPendingRequest(approveConnectId);
-          processNextRequest();
-          sendResponse({ success: true });
+            // Add origin only after the response can be built.
+            await approveOrigin(connectRequest.origin);
+            approveConnectPending.sendResponse(connectResponse);
+            cancelPendingRequest(approveConnectId);
+            processNextRequest();
+            sendResponse({ success: true });
 
-          // Emit connect event
-          await emitWalletEvent('connect', { chainId: CHAIN_ID });
+            // Emit connect event
+            await emitWalletEvent('connect', { chainId: CHAIN_ID });
+          } catch (err) {
+            console.error('[Background] Failed to approve connection:', err);
+            const errorMessage =
+              err instanceof Error ? err.message : 'Failed to approve connection';
+            cancelPendingRequest(approveConnectId, -32603, errorMessage);
+            processNextRequest();
+            sendResponse({ error: errorMessage });
+          }
         } else {
           sendResponse({ error: ERROR_CODES.NOT_FOUND });
         }
