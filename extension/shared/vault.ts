@@ -2465,11 +2465,7 @@ export class Vault {
     buildCtx: Awaited<ReturnType<Vault['buildBridgeTransactionContext']>>
   ): Promise<void> {
     const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
-    const signedTx = await this.signRawTx({
-      rawTx,
-      notes: buildCtx.wasmNotes,
-      spendConditions: buildCtx.spendConditions,
-    });
+    const signedTx = await this.signRawTx({ rawTx });
 
     const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
     const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
