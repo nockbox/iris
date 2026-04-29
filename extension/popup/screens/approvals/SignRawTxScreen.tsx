@@ -106,7 +106,8 @@ export function SignRawTxScreen() {
     window.close();
   }
 
-  // Network fee from native rawTx. RawTxV1: SpendsV1 = [Name, SpendV1][], SpendV1.spend.fee (string).
+  // Network fee from native rawTx. RawTxV1.spends is a ZMap<Name, SpendV1>
+  // serialized as [Name, SpendV1][].
   let totalFeeNicks = 0;
   try {
     const spends =
@@ -115,8 +116,8 @@ export function SignRawTxScreen() {
         : undefined;
     if (spends && Array.isArray(spends) && spends.length > 0) {
       totalFeeNicks = spends.reduce((sum: number, entry: unknown) => {
-        const spendV1 = (entry as [unknown, unknown])[1] as { spend?: { fee?: string } };
-        const feeValue = spendV1?.spend?.fee;
+        const spendV1 = (entry as [unknown, unknown])[1] as { fee?: string };
+        const feeValue = spendV1?.fee;
         const fee = feeValue ? parseInt(feeValue, 10) : 0;
         return sum + (isNaN(fee) ? 0 : fee);
       }, 0);

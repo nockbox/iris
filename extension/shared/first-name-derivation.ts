@@ -9,6 +9,7 @@
 import wasm from './sdk-wasm.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
 import { createSimplePkhCondition, createPkhCoinbaseCondition } from './spend-conditions.js';
+import { DEFAULT_COINBASE_TIMELOCK_BLOCKS } from '@nockbox/iris-sdk';
 import { getEffectiveRpcConfig } from './rpc-config.js';
 
 /** Derives first-name (base58) from a spend condition. */
@@ -77,7 +78,7 @@ export async function deriveCoinbaseFirstName(pkhBase58: string): Promise<string
   }
 
   const config = await getEffectiveRpcConfig();
-  const timelock = config.coinbaseTimelockBlocks ?? 100;
+  const timelock = config.coinbaseTimelockBlocks ?? DEFAULT_COINBASE_TIMELOCK_BLOCKS;
   const firstNameBase58 = firstNameFromCondition(createPkhCoinbaseCondition(pkhBase58, timelock));
 
   // Verify it's the right length (40 bytes → ~55 chars base58)

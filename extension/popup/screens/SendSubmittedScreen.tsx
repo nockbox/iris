@@ -1,10 +1,14 @@
+import { useState } from 'react';
 import { useStore } from '../store';
 import { formatNock } from '../../shared/currency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
+import { CheckIcon } from '../components/icons/CheckIcon';
 import { SendPaperPlaneIcon } from '../components/icons/SendPaperPlaneIcon';
+import { truncateAddress } from '../utils/format';
 
 export function SendSubmittedScreen() {
-  const { navigate, lastTransaction, priceUsd } = useStore();
+  const { navigate, lastTransaction, priceUsd, blockExplorerUrl } = useStore();
+  const [copiedTxId, setCopiedTxId] = useState(false);
 
   function handleBack() {
     navigate('home');
@@ -23,6 +27,25 @@ export function SendSubmittedScreen() {
           maximumFractionDigits: 2,
         })}`
       : '—';
+
+  const txId = lastTransaction.txid;
+
+  function handleViewExplorer() {
+    if (!txId) return;
+    const base = blockExplorerUrl.replace(/\/$/, '');
+    window.open(`${base}/tx/${txId}`, '_blank');
+  }
+
+  async function handleCopyTxId() {
+    if (!txId) return;
+    try {
+      await navigator.clipboard.writeText(txId);
+      setCopiedTxId(true);
+      setTimeout(() => setCopiedTxId(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy transaction ID:', err);
+    }
+  }
 
   return (
     <div
@@ -108,6 +131,66 @@ export function SendSubmittedScreen() {
                 </div>
               </div>
             </div>
+
+            {txId && (
+              <>
+                <div
+                  className="rounded-lg p-3 flex items-center justify-between gap-2.5"
+                  style={{ backgroundColor: 'var(--color-surface-900)' }}
+                >
+                  <div
+                    className="text-sm font-medium leading-[18px] tracking-[0.14px]"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    Transaction ID
+                  </div>
+                  <div
+                    className="text-sm font-medium leading-[18px] tracking-[0.14px] truncate"
+                    style={{ color: 'var(--color-text-muted)' }}
+                    title={txId}
+                  >
+                    {truncateAddress(txId)}
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleViewExplorer}
+                    className="flex-1 py-[7px] px-3 bg-transparent rounded-full text-sm font-medium leading-[18px] tracking-[0.14px] transition-colors focus:outline-none focus-visible:ring-2 whitespace-nowrap"
+                    style={{
+                      border: '1px solid var(--color-surface-700)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                    onMouseEnter={e =>
+                      (e.currentTarget.style.backgroundColor = 'var(--color-surface-900)')
+                    }
+                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                  >
+                    View on explorer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyTxId}
+                    disabled={copiedTxId}
+                    className="flex-1 py-[7px] px-3 bg-transparent rounded-full text-sm font-medium leading-[18px] tracking-[0.14px] transition-colors focus:outline-none focus-visible:ring-2 whitespace-nowrap disabled:opacity-100 flex items-center justify-center gap-1.5"
+                    style={{
+                      border: '1px solid var(--color-surface-700)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                    onMouseEnter={e => {
+                      if (!copiedTxId) {
+                        e.currentTarget.style.backgroundColor = 'var(--color-surface-900)';
+                      }
+                    }}
+                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                  >
+                    {copiedTxId && <CheckIcon className="w-3.5 h-3.5" />}
+                    {copiedTxId ? 'Copied!' : 'Copy transaction ID'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
 
