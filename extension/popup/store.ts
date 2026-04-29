@@ -16,6 +16,7 @@ import {
   WalletTransaction,
 } from '../shared/types';
 import { send } from './utils/messaging';
+import type { V0MigrationTxSignPayload } from '@nockbox/iris-sdk';
 
 /**
  * All available screens in the wallet
@@ -51,6 +52,10 @@ export type Screen =
   | 'send-submitted'
   | 'sent'
   | 'receive'
+  | 'v0-migration-intro'
+  | 'v0-migration-setup'
+  | 'v0-migration-funds'
+  | 'v0-migration-review'
   | 'swap'
   | 'swap-review'
   | 'tx-details'
@@ -104,6 +109,34 @@ interface AppStore {
   lastTransaction: TransactionDetails | null;
   setLastTransaction: (transaction: TransactionDetails | null) => void;
 
+  // UI-only draft state for transfering v0 funds flow
+  v0MigrationDraft: {
+    v0BalanceNock: number;
+    migratedAmountNock?: number;
+    feeNock?: number;
+    destinationAddress: string | null;
+    keyfileName?: string;
+    sourceAddress?: string;
+    v0Mnemonic?: string; // Kept in memory only until sign+broadcast
+    v0Notes?: any[];
+    v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
+    txId?: string;
+  };
+  setV0MigrationDraft: (
+    value: Partial<{
+      v0BalanceNock: number;
+      migratedAmountNock?: number;
+      feeNock?: number;
+      destinationAddress: string | null;
+      keyfileName?: string;
+      sourceAddress?: string;
+      v0Mnemonic?: string;
+      v0Notes?: any[];
+      v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
+      txId?: string;
+    }>
+  ) => void;
+  resetV0MigrationDraft: () => void;
   // Prepared bridge swap transaction between swap and review screens
   pendingBridgeSwap: {
     amountNock: number;
@@ -196,6 +229,17 @@ export const useStore = create<AppStore>((set, get) => ({
 
   onboardingMnemonic: null,
   lastTransaction: null,
+  v0MigrationDraft: {
+    v0BalanceNock: 0,
+    migratedAmountNock: undefined,
+    feeNock: undefined,
+    destinationAddress: null,
+    keyfileName: undefined,
+    sourceAddress: undefined,
+    v0Notes: undefined,
+    v0MigrationTxSignPayload: undefined,
+    txId: undefined,
+  },
   pendingBridgeSwap: null,
   pendingConnectRequest: null,
   pendingSignRequest: null,
@@ -259,6 +303,32 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ lastTransaction: transaction });
   },
 
+  setV0MigrationDraft: value => {
+    set(state => ({
+      v0MigrationDraft: {
+        ...state.v0MigrationDraft,
+        ...value,
+      },
+    }));
+  },
+
+  resetV0MigrationDraft: () => {
+    set({
+      v0MigrationDraft: {
+        v0BalanceNock: 0,
+        migratedAmountNock: undefined,
+        feeNock: undefined,
+        destinationAddress: null,
+        keyfileName: undefined,
+        sourceAddress: undefined,
+        v0Mnemonic: undefined,
+        v0Notes: undefined,
+        v0MigrationTxSignPayload: undefined,
+        txId: undefined,
+      },
+    });
+  },
+  
   setPendingBridgeSwap: value => {
     set({ pendingBridgeSwap: value });
   },

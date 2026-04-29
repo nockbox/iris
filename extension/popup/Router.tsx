@@ -38,6 +38,10 @@ import { WalletSettingsScreen } from './screens/WalletSettingsScreen';
 import { WalletStylingScreen } from './screens/WalletStylingScreen';
 import { AboutScreen } from './screens/AboutScreen';
 import { RecoveryPhraseScreen } from './screens/RecoveryPhraseScreen';
+import { V0MigrationIntroScreen } from './screens/V0MigrationIntroScreen';
+import { V0MigrationSetupScreen } from './screens/V0MigrationSetupScreen';
+import { V0MigrationFundsScreen } from './screens/V0MigrationFundsScreen';
+import { V0MigrationReviewScreen } from './screens/V0MigrationReviewScreen';
 
 export function Router() {
   const { currentScreen } = useStore();
@@ -87,6 +91,14 @@ export function Router() {
       return <AboutScreen />;
     case 'recovery-phrase':
       return <RecoveryPhraseScreen />;
+    case 'v0-migration-intro':
+      return <V0MigrationIntroScreen />;
+    case 'v0-migration-setup':
+      return <V0MigrationSetupScreen />;
+    case 'v0-migration-funds':
+      return <V0MigrationFundsScreen />;
+    case 'v0-migration-review':
+      return <V0MigrationReviewScreen />;
 
     // Transactions
     case 'send':
