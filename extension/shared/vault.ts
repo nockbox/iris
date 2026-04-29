@@ -26,8 +26,14 @@ import {
 import wasm from './sdk-wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
+import type {
+  Note as BalanceNote,
+  UTXOStore,
+  WalletTxStore,
+  SyncStateStore,
+  AccountSyncState,
+} from './types';
 import { getEffectiveRpcConfig, getEffectiveRpcEndpoint } from './rpc-config';
-import type { Note as BalanceNote, UTXOStore, WalletTxStore } from './types';
 import { base58 } from '@scure/base';
 import { initWasmModules } from './wasm-utils';
 import {
@@ -54,6 +60,14 @@ import type { SignMessageResponse } from '@nockbox/iris-sdk';
 import type { Nicks } from '@nockbox/iris-sdk/wasm';
 import { guard } from '@nockbox/iris-sdk/wasm';
 import { getTxEngineSettingsForHeight } from './rpc-config';
+import { getBothFirstNames } from './first-name-derivation';
+import {
+  createNockblocksClient,
+  isNockblocksConfigured,
+  type NockblocksOutput,
+  type NockblocksSpend,
+  type NockblocksTransaction,
+} from './nockblocks-client.js';
 import { buildBridgeTransaction, validateBridgeTransaction } from '@nockbox/iris-sdk';
 import { BRIDGE_CONFIG } from './bridge-config';
 
@@ -190,6 +204,7 @@ interface EncryptedAccountDataBlob {
 interface EncryptedAccountData {
   utxoStore: UTXOStore;
   walletTxStore: WalletTxStore;
+  accountSyncState: SyncStateStore;
   cachedBalances: Record<string, number>; // address -> balance in nicks
 }
 
@@ -248,6 +263,12 @@ export class Vault {
 
   /** Decrypted wallet transactions (only stored in memory while unlocked) */
   private walletTxStore: WalletTxStore = {};
+
+  /** Per-account sync metadata for history and polling */
+  private accountSyncState: SyncStateStore = {};
+
+  /** Serialize Nockblocks history refreshes per account (avoid overlapping background syncs). */
+  private nockblocksHistoryRefreshChains = new Map<string, Promise<void>>();
 
   /** Cached balances per account (only stored in memory while unlocked) */
   private cachedBalances: Record<string, number> = {};
@@ -442,6 +463,7 @@ export class Vault {
       let utxoStore: UTXOStore = {};
       let walletTxStore: WalletTxStore = {};
       let cachedBalances: Record<string, number> = {};
+      let accountSyncState: SyncStateStore = {};
       let loadedFromEncrypted = false;
 
       if (encAccountData) {
@@ -462,6 +484,7 @@ export class Vault {
             }
           }
           walletTxStore = accountData.walletTxStore || {};
+          accountSyncState = accountData.accountSyncState || {};
           cachedBalances = accountData.cachedBalances || {};
           loadedFromEncrypted = true;
           console.log('[Vault] Loaded account data from encrypted blob');
@@ -496,6 +519,7 @@ export class Vault {
       this.encryptionKey = key;
       this.utxoStore = utxoStore;
       this.walletTxStore = walletTxStore;
+      this.accountSyncState = accountSyncState;
       this.cachedBalances = cachedBalances;
 
       // Complete migration: encrypt and remove legacy stores
@@ -503,7 +527,8 @@ export class Vault {
         const hasData =
           Object.keys(utxoStore).length > 0 ||
           Object.keys(walletTxStore).length > 0 ||
-          Object.keys(cachedBalances).length > 0;
+          Object.keys(cachedBalances).length > 0 ||
+          Object.keys(accountSyncState).length > 0;
         if (hasData) {
           await this.saveAccountData();
           await chrome.storage.local.remove([
@@ -576,6 +601,7 @@ export class Vault {
     let utxoStore: UTXOStore = {};
     let walletTxStore: WalletTxStore = {};
     let cachedBalances: Record<string, number> = {};
+    let accountSyncState: SyncStateStore = {};
     let loadedFromEncrypted = false;
 
     if (encAccountData) {
@@ -589,6 +615,7 @@ export class Vault {
         const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
         utxoStore = accountData.utxoStore || {};
         walletTxStore = accountData.walletTxStore || {};
+        accountSyncState = accountData.accountSyncState || {};
         cachedBalances = accountData.cachedBalances || {};
         loadedFromEncrypted = true;
       }
@@ -600,6 +627,7 @@ export class Vault {
     this.encryptionKey = key;
     this.utxoStore = utxoStore;
     this.walletTxStore = walletTxStore;
+    this.accountSyncState = accountSyncState;
     this.cachedBalances = cachedBalances;
 
     this.state = {
@@ -674,7 +702,9 @@ export class Vault {
     this.encryptionKey = null;
     this.utxoStore = {};
     this.walletTxStore = {};
+    this.accountSyncState = {};
     this.cachedBalances = {};
+    this.nockblocksHistoryRefreshChains.clear();
     return { ok: true };
   }
 
@@ -695,6 +725,10 @@ export class Vault {
     this.mnemonic = null;
     this.encryptionKey = null; // Clear encryption key as well
     this.utxoStore = {};
+    this.walletTxStore = {};
+    this.accountSyncState = {};
+    this.cachedBalances = {};
+    this.nockblocksHistoryRefreshChains.clear();
 
     return { ok: true };
   }
@@ -828,6 +862,7 @@ export class Vault {
     const payload: EncryptedAccountData = {
       utxoStore: this.utxoStore,
       walletTxStore: this.walletTxStore,
+      accountSyncState: this.accountSyncState,
       cachedBalances: this.cachedBalances,
     };
 
@@ -872,6 +907,15 @@ export class Vault {
     this.utxoStore[accountAddress].notes = Array.from(existingMap.values());
     this.utxoStore[accountAddress].version += 1;
     this.utxoStore[accountAddress].blockHeight = blockHeight;
+    this.accountSyncState[accountAddress] = {
+      ...this.getAccountSyncState(accountAddress),
+      accountAddress,
+      lastSyncedHeight: Math.max(
+        this.getAccountSyncState(accountAddress).lastSyncedHeight,
+        blockHeight
+      ),
+      lastSyncedAt: Date.now(),
+    };
 
     await this.saveAccountData();
   }
@@ -998,6 +1042,12 @@ export class Vault {
     this.utxoStore[accountAddress].notes = notes;
     this.utxoStore[accountAddress].version += 1;
     this.utxoStore[accountAddress].blockHeight = blockHeight;
+    this.accountSyncState[accountAddress] = {
+      ...this.getAccountSyncState(accountAddress),
+      accountAddress,
+      lastSyncedHeight: blockHeight,
+      lastSyncedAt: Date.now(),
+    };
 
     await this.saveAccountData();
   }
@@ -1013,6 +1063,72 @@ export class Vault {
     return this.walletTxStore[accountAddress] || [];
   }
 
+  private sortWalletTransactions(accountAddress: string): void {
+    if (!this.walletTxStore[accountAddress]) return;
+
+    this.walletTxStore[accountAddress].sort((a, b) => {
+      const aTime = a.confirmedAtTimestamp ? a.confirmedAtTimestamp * 1000 : a.createdAt;
+      const bTime = b.confirmedAtTimestamp ? b.confirmedAtTimestamp * 1000 : b.createdAt;
+      return bTime - aTime;
+    });
+  }
+
+  private capWalletTransactions(accountAddress: string): void {
+    if (this.walletTxStore[accountAddress]?.length > 1000) {
+      this.walletTxStore[accountAddress] = this.walletTxStore[accountAddress].slice(0, 1000);
+    }
+  }
+
+  private findWalletTransactionIndex(
+    accountAddress: string,
+    tx: Partial<WalletTransaction>
+  ): number {
+    const transactions = this.walletTxStore[accountAddress] || [];
+    const trackingTxId = tx.trackingTxId || tx.txHash;
+
+    return transactions.findIndex(existing => {
+      if (tx.id && existing.id === tx.id) return true;
+      if (
+        trackingTxId &&
+        (existing.trackingTxId === trackingTxId || existing.txHash === trackingTxId)
+      ) {
+        return true;
+      }
+      return false;
+    });
+  }
+
+  getAccountSyncState(accountAddress: string): AccountSyncState {
+    return (
+      this.accountSyncState[accountAddress] || {
+        accountAddress,
+        lastSyncedHeight: 0,
+        lastSyncedAt: 0,
+        historyInitialized: false,
+        lastHistorySyncedTip: 0,
+        lastHistoryBackfillAt: 0,
+      }
+    );
+  }
+
+  private setAccountSyncState(accountAddress: string, updates: Partial<AccountSyncState>): void {
+    const current = this.getAccountSyncState(accountAddress);
+    this.accountSyncState[accountAddress] = {
+      ...current,
+      ...updates,
+      accountAddress,
+      lastSyncedAt: updates.lastSyncedAt ?? Date.now(),
+    };
+  }
+
+  async updateAccountSyncState(
+    accountAddress: string,
+    updates: Partial<AccountSyncState>
+  ): Promise<void> {
+    this.setAccountSyncState(accountAddress, updates);
+    await this.saveAccountData();
+  }
+
   /**
    * Add a new wallet transaction
    * Automatically persists to encrypted storage
@@ -1022,21 +1138,58 @@ export class Vault {
       this.walletTxStore[tx.accountAddress] = [];
     }
 
-    // Check for duplicate
-    const exists = this.walletTxStore[tx.accountAddress].some(t => t.id === tx.id);
-    if (exists) {
+    const existingIndex = this.findWalletTransactionIndex(tx.accountAddress, tx);
+    if (existingIndex !== -1) {
       console.warn(`[Vault] Transaction ${tx.id} already exists, skipping add`);
       return;
     }
 
     // Add to beginning (most recent first)
     this.walletTxStore[tx.accountAddress].unshift(tx);
+    this.sortWalletTransactions(tx.accountAddress);
 
-    // Limit to 200 transactions per account
-    if (this.walletTxStore[tx.accountAddress].length > 200) {
-      this.walletTxStore[tx.accountAddress] = this.walletTxStore[tx.accountAddress].slice(0, 200);
+    // Keep a larger window now that confirmed history is stored here too.
+    this.capWalletTransactions(tx.accountAddress);
+
+    await this.saveAccountData();
+  }
+
+  private upsertWalletTransactionInMemory(
+    tx: WalletTransaction,
+    opts?: { skipSort?: boolean }
+  ): void {
+    if (!this.walletTxStore[tx.accountAddress]) {
+      this.walletTxStore[tx.accountAddress] = [];
     }
 
+    const txIndex = this.findWalletTransactionIndex(tx.accountAddress, tx);
+    if (txIndex === -1) {
+      this.walletTxStore[tx.accountAddress].unshift(tx);
+    } else {
+      const existing = this.walletTxStore[tx.accountAddress][txIndex];
+      this.walletTxStore[tx.accountAddress][txIndex] = {
+        ...existing,
+        ...tx,
+        id: existing.id,
+        origin: existing.origin || tx.origin,
+        inputNoteIds: existing.inputNoteIds || tx.inputNoteIds,
+        expectedChange: existing.expectedChange ?? tx.expectedChange,
+        expectedChangeNoteIds: existing.expectedChangeNoteIds || tx.expectedChangeNoteIds,
+        recipient: existing.recipient || tx.recipient,
+        sender: existing.sender || tx.sender,
+        priceUsdAtTime: existing.priceUsdAtTime ?? tx.priceUsdAtTime,
+        updatedAt: Date.now(),
+      };
+    }
+
+    if (!opts?.skipSort) {
+      this.sortWalletTransactions(tx.accountAddress);
+      this.capWalletTransactions(tx.accountAddress);
+    }
+  }
+
+  async upsertWalletTransaction(tx: WalletTransaction): Promise<void> {
+    this.upsertWalletTransactionInMemory(tx);
     await this.saveAccountData();
   }
 
@@ -1053,18 +1206,28 @@ export class Vault {
       return;
     }
 
-    const txIndex = this.walletTxStore[accountAddress].findIndex(t => t.id === txId);
+    const txIndex = this.findWalletTransactionIndex(accountAddress, { id: txId });
     if (txIndex === -1) {
       console.warn(`[Vault] Transaction ${txId} not found for update`);
       return;
     }
 
+    const existing = this.walletTxStore[accountAddress][txIndex];
     this.walletTxStore[accountAddress][txIndex] = {
-      ...this.walletTxStore[accountAddress][txIndex],
+      ...existing,
       ...updates,
+      id: existing.id,
+      origin: existing.origin || updates.origin,
+      inputNoteIds: existing.inputNoteIds || updates.inputNoteIds,
+      expectedChange: existing.expectedChange ?? updates.expectedChange,
+      expectedChangeNoteIds: existing.expectedChangeNoteIds || updates.expectedChangeNoteIds,
+      recipient: existing.recipient || updates.recipient,
+      sender: existing.sender || updates.sender,
+      priceUsdAtTime: existing.priceUsdAtTime ?? updates.priceUsdAtTime,
       updatedAt: Date.now(),
     };
 
+    this.sortWalletTransactions(accountAddress);
     await this.saveAccountData();
   }
 
@@ -1078,6 +1241,7 @@ export class Vault {
         t.direction === 'outgoing' &&
         (t.status === 'created' ||
           t.status === 'broadcast_pending' ||
+          t.status === 'mempool_seen' ||
           t.status === 'broadcasted_unconfirmed')
     );
   }
@@ -1135,6 +1299,355 @@ export class Vault {
     };
   }
 
+  private sumSeedValue(seeds?: Array<{ gift?: number }>): number {
+    return (seeds || []).reduce((sum, seed) => sum + (seed.gift || 0), 0);
+  }
+
+  private getUniqueLockRootFromOutputs(outputs: NockblocksOutput[]): string | undefined {
+    const lockRoots = new Set<string>();
+    for (const output of outputs) {
+      for (const seed of output.seeds || []) {
+        if (seed.lockRoot) {
+          lockRoots.add(seed.lockRoot);
+        }
+      }
+    }
+    return lockRoots.size === 1 ? [...lockRoots][0] : undefined;
+  }
+
+  private getUniqueLockRootFromSpends(spends: NockblocksSpend[]): string | undefined {
+    const spendLockRoots = new Set<string>();
+    for (const spend of spends) {
+      if (spend.lockRoot) {
+        spendLockRoots.add(spend.lockRoot);
+      }
+    }
+
+    if (spendLockRoots.size === 1) {
+      return [...spendLockRoots][0];
+    }
+
+    if (spendLockRoots.size > 1) {
+      return undefined;
+    }
+
+    const seedLockRoots = new Set<string>();
+    for (const spend of spends) {
+      for (const seed of spend.seeds || []) {
+        if (seed.lockRoot) {
+          seedLockRoots.add(seed.lockRoot);
+        }
+      }
+    }
+    return seedLockRoots.size === 1 ? [...seedLockRoots][0] : undefined;
+  }
+
+  private getTransactionTrackingId(tx: WalletTransaction): string | undefined {
+    return tx.trackingTxId || tx.txHash;
+  }
+
+  private async getOwnFirstNameSet(accountAddress: string): Promise<Set<string>> {
+    const { simple, coinbase } = await getBothFirstNames(accountAddress);
+    return new Set([simple, coinbase]);
+  }
+
+  private buildWalletTransactionFromChainTransaction(
+    accountAddress: string,
+    tx: NockblocksTransaction,
+    ownFirstNames: Set<string>
+  ): WalletTransaction | null {
+    const txId = tx.txId || tx.id;
+    if (!txId) {
+      return null;
+    }
+
+    const outputs = tx.outputs || tx.transaction?.outputs || [];
+    const spends = tx.spends || tx.transaction?.spends || [];
+    const ownOutputs = outputs.filter((output: NockblocksOutput) =>
+      Boolean(output.firstName && ownFirstNames.has(output.firstName))
+    );
+    const externalOutputs = outputs.filter(
+      (output: NockblocksOutput) => !output.firstName || !ownFirstNames.has(output.firstName)
+    );
+    const ownSpends = spends.filter((spend: NockblocksSpend) =>
+      Boolean(spend.firstName && ownFirstNames.has(spend.firstName))
+    );
+    const externalSpends = spends.filter(
+      (spend: NockblocksSpend) => !spend.firstName || !ownFirstNames.has(spend.firstName)
+    );
+
+    if (ownOutputs.length === 0 && ownSpends.length === 0) {
+      return null;
+    }
+
+    const ownOutputAmount = ownOutputs.reduce(
+      (sum: number, output: NockblocksOutput) => sum + this.sumSeedValue(output.seeds),
+      0
+    );
+    const externalOutputAmount = externalOutputs.reduce(
+      (sum: number, output: NockblocksOutput) => sum + this.sumSeedValue(output.seeds),
+      0
+    );
+    const fee = spends.reduce((sum: number, spend: NockblocksSpend) => sum + (spend.fee || 0), 0);
+
+    let direction: WalletTransaction['direction'] = 'incoming';
+    if (ownSpends.length > 0 && externalOutputs.length === 0) {
+      direction = 'self';
+    } else if (ownSpends.length > 0) {
+      direction = 'outgoing';
+    }
+
+    const createdAt = (tx.timestamp || tx.heardAtTimestamp || Math.floor(Date.now() / 1000)) * 1000;
+    const amount =
+      direction === 'incoming'
+        ? ownOutputAmount
+        : direction === 'self'
+          ? ownOutputAmount
+          : externalOutputAmount;
+
+    const recipient =
+      direction === 'incoming'
+        ? accountAddress
+        : direction === 'self'
+          ? accountAddress
+          : this.getUniqueLockRootFromOutputs(externalOutputs);
+    const sender =
+      direction === 'incoming' ? this.getUniqueLockRootFromSpends(externalSpends) : accountAddress;
+
+    return {
+      id: txId,
+      txHash: txId,
+      trackingTxId: txId,
+      accountAddress,
+      direction,
+      createdAt,
+      updatedAt: Date.now(),
+      status: 'confirmed',
+      origin: 'history_sync',
+      amount,
+      fee: direction === 'incoming' ? undefined : fee,
+      recipient,
+      sender,
+      blockId: tx.blockId,
+      confirmedAtBlock: tx.blockHeight,
+      confirmedAtTimestamp: tx.timestamp,
+      confirmationSource: 'history_sync',
+      confirmations: tx.blockHeight ? 1 : undefined,
+    };
+  }
+
+  private async refreshPendingTransactionStatuses(accountAddress: string): Promise<number> {
+    if (!isNockblocksConfigured()) {
+      return 0;
+    }
+
+    const pendingTxs = this.getPendingOutgoingTransactions(accountAddress);
+    if (pendingTxs.length === 0) {
+      return 0;
+    }
+
+    const client = createNockblocksClient();
+    const ownFirstNames = await this.getOwnFirstNameSet(accountAddress);
+    let confirmedCount = 0;
+
+    for (const tx of pendingTxs) {
+      const trackingId = this.getTransactionTrackingId(tx);
+      if (!trackingId) continue;
+
+      const now = Date.now();
+      const ageMs = now - tx.createdAt;
+      let mempoolSeenAt = tx.mempoolSeenAt;
+      const shouldCheckMempool =
+        ageMs <= 5 * 60 * 1000 &&
+        (!tx.lastMempoolCheckAt || now - tx.lastMempoolCheckAt >= 15 * 1000);
+
+      if (shouldCheckMempool) {
+        try {
+          const mempoolTx = await client.getMempoolTransactionByTxid(trackingId);
+          mempoolSeenAt = mempoolTx
+            ? (mempoolTx.heardAtTimestamp || Math.floor(now / 1000)) * 1000
+            : tx.mempoolSeenAt;
+          await this.updateWalletTransaction(accountAddress, tx.id, {
+            status: mempoolTx ? 'mempool_seen' : tx.status,
+            mempoolSeenAt,
+            lastMempoolCheckAt: now,
+          });
+        } catch (error) {
+          console.warn('[Vault] Mempool check failed:', error);
+        }
+      }
+
+      const confirmDelayMs = mempoolSeenAt ? 15 * 1000 : 60 * 1000;
+      const shouldCheckConfirmation =
+        ageMs >= confirmDelayMs &&
+        (!tx.lastConfirmationCheckAt || now - tx.lastConfirmationCheckAt >= 30 * 1000);
+
+      if (!shouldCheckConfirmation) {
+        continue;
+      }
+
+      try {
+        const confirmedTx = await client.getTransactionByTxid(trackingId);
+        if (!confirmedTx) {
+          await this.updateWalletTransaction(accountAddress, tx.id, {
+            lastConfirmationCheckAt: now,
+          });
+          continue;
+        }
+
+        const chainTx = this.buildWalletTransactionFromChainTransaction(
+          accountAddress,
+          confirmedTx,
+          ownFirstNames
+        );
+
+        await this.updateWalletTransaction(accountAddress, tx.id, {
+          ...(chainTx || {}),
+          status: 'confirmed',
+          txHash: confirmedTx.txId || confirmedTx.id || trackingId,
+          trackingTxId: confirmedTx.txId || confirmedTx.id || trackingId,
+          blockId: confirmedTx.blockId,
+          confirmedAtBlock: confirmedTx.blockHeight,
+          confirmedAtTimestamp: confirmedTx.timestamp,
+          confirmationSource: 'api',
+          confirmations: confirmedTx.blockHeight ? 1 : tx.confirmations,
+          lastConfirmationCheckAt: now,
+        });
+        confirmedCount++;
+      } catch (error) {
+        console.warn('[Vault] Confirmation check failed:', error);
+      }
+    }
+
+    return confirmedCount;
+  }
+
+  private finalizeBulkWalletTxIngest(accountAddress: string): void {
+    this.sortWalletTransactions(accountAddress);
+    this.capWalletTransactions(accountAddress);
+  }
+
+  private enqueueNockblocksHistoryRefresh(accountAddress: string, fn: () => Promise<void>): void {
+    const prev = this.nockblocksHistoryRefreshChains.get(accountAddress) ?? Promise.resolve();
+    const next = prev
+      .catch(() => {
+        /* keep chain alive even if prior refresh failed */
+      })
+      .then(fn);
+    this.nockblocksHistoryRefreshChains.set(accountAddress, next);
+  }
+
+  private async syncConfirmedHistory(accountAddress: string): Promise<number> {
+    if (!isNockblocksConfigured()) {
+      return 0;
+    }
+
+    const client = createNockblocksClient();
+    const syncState = this.getAccountSyncState(accountAddress);
+    const ownFirstNames = await this.getOwnFirstNameSet(accountAddress);
+    const tip = await client.getTip();
+    const maxIncrementalHistoryBlocks = 500;
+    const lastHistorySyncedTip = syncState.lastHistorySyncedTip ?? 0;
+    const historyTipGap = Math.max(tip.height - lastHistorySyncedTip, 0);
+    let syncedCount = 0;
+
+    if (!syncState.historyInitialized || historyTipGap > maxIncrementalHistoryBlocks) {
+      const limit = 1000;
+      let offset = 0;
+
+      while (true) {
+        const historyTransactions = await client.getTransactionsByAddress(accountAddress, {
+          limit,
+          offset,
+        });
+        if (historyTransactions.length === 0) {
+          break;
+        }
+
+        for (const transaction of historyTransactions) {
+          const walletTx = this.buildWalletTransactionFromChainTransaction(
+            accountAddress,
+            transaction,
+            ownFirstNames
+          );
+          if (!walletTx) continue;
+          this.upsertWalletTransactionInMemory(walletTx, { skipSort: true });
+          syncedCount++;
+        }
+        this.finalizeBulkWalletTxIngest(accountAddress);
+
+        if (historyTransactions.length < limit) {
+          break;
+        }
+
+        offset += historyTransactions.length;
+      }
+
+      this.setAccountSyncState(accountAddress, {
+        historyInitialized: true,
+        lastHistoryBackfillAt: Date.now(),
+        lastHistorySyncedTip: tip.height,
+        lastSyncedHeight: Math.max(syncState.lastSyncedHeight, tip.height),
+      });
+      await this.saveAccountData();
+
+      return syncedCount;
+    }
+
+    const startBlock = lastHistorySyncedTip + 1;
+    const heights: number[] = [];
+    for (let height = startBlock; height <= tip.height; height++) {
+      heights.push(height);
+    }
+
+    for (let i = 0; i < heights.length; i += 25) {
+      const blocks = await client.getBlocksByHeight(heights.slice(i, i + 25));
+      for (const block of blocks) {
+        for (const transaction of block.transactions) {
+          const walletTx = this.buildWalletTransactionFromChainTransaction(
+            accountAddress,
+            {
+              ...transaction,
+              blockId: transaction.blockId || block.blockId,
+              blockHeight: transaction.blockHeight || block.height,
+              timestamp: transaction.timestamp || block.timestamp,
+            },
+            ownFirstNames
+          );
+
+          if (!walletTx) continue;
+          this.upsertWalletTransactionInMemory(walletTx, { skipSort: true });
+          syncedCount++;
+        }
+      }
+      this.finalizeBulkWalletTxIngest(accountAddress);
+    }
+
+    this.setAccountSyncState(accountAddress, {
+      historyInitialized: true,
+      lastHistorySyncedTip: tip.height,
+      lastSyncedHeight: Math.max(syncState.lastSyncedHeight, tip.height),
+    });
+    await this.saveAccountData();
+
+    return syncedCount;
+  }
+
+  private refreshNockblocksHistoryInBackground(accountAddress: string): void {
+    if (!isNockblocksConfigured()) {
+      return;
+    }
+
+    this.enqueueNockblocksHistoryRefresh(accountAddress, async () => {
+      try {
+        await this.refreshPendingTransactionStatuses(accountAddress);
+        await this.syncConfirmedHistory(accountAddress);
+      } catch (error) {
+        console.warn('[Vault] Nockblocks history refresh failed:', error);
+      }
+    });
+  }
+
   /**
    * Sync UTXOs for a single account with chain state
    * This uses the encrypted in-memory UTXO store
@@ -1156,7 +1669,7 @@ export class Vault {
     const endpoint = await getEffectiveRpcEndpoint();
     const rpcClient = createBrowserClient(endpoint);
 
-    return withAccountLock(accountAddress, async () => {
+    const syncResult = await withAccountLock(accountAddress, async () => {
       // 1. Fetch current UTXOs from chain
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
       const blockHeight = balanceResult.blockHeight;
@@ -1185,6 +1698,7 @@ export class Vault {
             await this.updateWalletTransaction(accountAddress, tx.id, {
               status: 'confirmed',
               expectedChangeNoteIds: changeNoteIds,
+              confirmationSource: tx.confirmationSource || 'utxo_fallback',
             });
           }
         }
@@ -1238,6 +1752,7 @@ export class Vault {
           if (allInputsSpent) {
             await this.updateWalletTransaction(accountAddress, tx.id, {
               status: 'confirmed',
+              confirmationSource: tx.confirmationSource || 'utxo_fallback',
             });
             confirmedFromPreviousSpent++;
           }
@@ -1286,6 +1801,9 @@ export class Vault {
         expired: expiredTxs.length,
       };
     });
+
+    this.refreshNockblocksHistoryInBackground(accountAddress);
+    return syncResult;
   }
 
   /**
@@ -2130,7 +2648,8 @@ export class Vault {
     amount: Nicks,
     fee?: Nicks,
     sendMax?: boolean,
-    priceUsdAtTime?: number
+    priceUsdAtTime?: number,
+    origin: WalletTransaction['origin'] = 'popup_send'
   ): Promise<
     { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
   > {
@@ -2221,6 +2740,7 @@ export class Vault {
             updatedAt: Date.now(),
             priceUsdAtTime,
             status: 'created',
+            origin,
             inputNoteIds: selectedNoteIds,
             recipient: to,
             amount: Number(amount),
@@ -2251,17 +2771,24 @@ export class Vault {
           );
 
           // 7. Broadcast transaction
+          await this.updateWalletTransaction(currentAccount.address, walletTxId, {
+            status: 'broadcast_pending',
+          });
           const protobufTx = nockchainTxToProtobuf(constructedTx.nockchainTx);
           await rpcClient.sendTransaction(protobufTx);
 
           // 8. Update tx status to broadcasted
           walletTx.fee = constructedTx.feeUsed;
           walletTx.txHash = constructedTx.txId;
+          walletTx.trackingTxId = constructedTx.txId;
           walletTx.status = 'broadcasted_unconfirmed';
           await this.updateWalletTransaction(currentAccount.address, walletTxId, {
             fee: constructedTx.feeUsed,
             txHash: constructedTx.txId,
+            trackingTxId: constructedTx.txId,
             status: 'broadcasted_unconfirmed',
+            lastMempoolCheckAt: Date.now(),
+            lastConfirmationCheckAt: 0,
           });
 
           return {

@@ -50,6 +50,11 @@ function timPrimitive(
   };
 }
 
+/** Base58 lock-root digest for a simple PKH spend condition. */
+export function simplePkhLockRootBase58(pkhBase58: string): string {
+  return wasm.spendConditionHash(createSimplePkhCondition(pkhBase58)) as string;
+}
+
 /** PKH + coinbase timelock: [(pkh), (tim, rel.min=timelockBlocks)]. Default 100 blocks. */
 export function createPkhCoinbaseCondition(
   pkhBase58: string,
@@ -57,6 +62,11 @@ export function createPkhCoinbaseCondition(
 ): wasm.SpendCondition {
   const pkhSc = wasm.spendConditionNewPkh(wasm.pkhSingle(parseDigestString(pkhBase58)));
   return [...pkhSc, timPrimitive(timelockBlocks, null, null, null)];
+}
+
+/** Base58 lock-root digest for a PKH + coinbase timelock spend condition. */
+export function coinbasePkhLockRootBase58(pkhBase58: string, timelockBlocks: number): string {
+  return wasm.spendConditionHash(createPkhCoinbaseCondition(pkhBase58, timelockBlocks)) as string;
 }
 
 /** PKH + relative timelock (min blocks). */

@@ -146,7 +146,7 @@ export function TransactionApprovalScreen() {
 
               {/* Balance After */}
               <div className="text-center text-xs py-2" style={{ color: textMuted }}>
-                Balance after: {formatNock(wallet.balance - totalNum / NOCK_TO_NICKS)} NOCK
+                Balance after: {formatNock(wallet.spendableBalance - totalNum / NOCK_TO_NICKS)} NOCK
               </div>
             </div>
           </div>

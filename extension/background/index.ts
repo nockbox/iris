@@ -1281,15 +1281,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
 
           try {
-            // Sign the transaction using the vault
-            const txIdHex = await vault.signTransaction(
+            const v2Result = await vault.sendTransactionV2(
               txRequest.to,
               txRequest.amount,
-              txRequest.fee
+              txRequest.fee,
+              false,
+              undefined,
+              'provider_send'
             );
 
+            if ('error' in v2Result) {
+              throw new Error(v2Result.error);
+            }
+
             approveTxPending.sendResponse({
-              txid: txIdHex,
+              txid: v2Result.txId,
               amount: txRequest.amount,
               fee: txRequest.fee,
             });
@@ -1645,7 +1651,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             amountV2Nicks,
             feeV2Nicks,
             sendMaxV2, // optional, sweep all UTXOs to recipient
-            priceUsdAtTimeV2 // optional, USD price at time of tx
+            priceUsdAtTimeV2, // optional, USD price at time of tx
+            'popup_send'
           );
 
           if ('error' in v2Result) {
