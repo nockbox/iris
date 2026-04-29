@@ -882,13 +882,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
         if ('ok' in setupResult && setupResult.ok) {
           manuallyLocked = false;
-          await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
-          await persistUnlockSession();
         }
-        // Respond immediately so the popup isn't blocked by long-running discovery.
+        // Respond as soon as setup completes — do not await session/local persistence or discovery.
         sendResponse(setupResult);
 
         if ('ok' in setupResult && setupResult.ok) {
+          void (async () => {
+            await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
+            await persistUnlockSession();
+          })().catch(err => console.error('[Background] Post-SETUP persistence failed:', err));
           // Only scan for existing on-chain sub-wallets when importing a phrase (not brand-new generation).
           const importedExistingPhrase = payload.params?.[2] === true;
           if (importedExistingPhrase) {
