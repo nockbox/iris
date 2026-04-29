@@ -4,6 +4,7 @@
 
 import { useState } from 'react';
 import { INTERNAL_METHODS, ERROR_CODES } from '../../../shared/constants';
+import type { SeedAccount, SubAccount } from '../../../shared/types';
 import { useStore } from '../../store';
 import { send } from '../../utils/messaging';
 import { Alert } from '../../components/Alert';
@@ -16,6 +17,8 @@ import vectorRight from '../../assets/vector-right.svg';
 import vectorTopRight from '../../assets/vector-top-right.svg';
 import vectorTopRightRotated from '../../assets/vector-top-right-rotated.svg';
 import vectorBottomLeft from '../../assets/vector-bottom-left.svg';
+
+type SeedSourceSummary = Omit<SeedAccount, 'mnemonic'>;
 
 export function LockedScreen() {
   const [password, setPassword] = useState('');
@@ -45,8 +48,9 @@ export function LockedScreen() {
     const result = await send<{
       ok?: boolean;
       address?: string;
-      accounts?: Array<{ name: string; address: string; index: number }>;
-      currentAccount?: { name: string; address: string; index: number };
+      accounts?: SubAccount[];
+      currentAccount?: SubAccount;
+      activeSeedSourceId?: string | null;
       error?: string;
     }>(INTERNAL_METHODS.UNLOCK, [password]);
 
@@ -62,9 +66,10 @@ export function LockedScreen() {
 
       // Load cached balances from encrypted storage (now unlocked)
       const { INTERNAL_METHODS: IM } = await import('../../../shared/constants');
-      const balanceResp = await send<{ ok?: boolean; balances?: Record<string, number> }>(
-        IM.GET_CACHED_BALANCES
-      );
+      const [balanceResp, seedSourcesResp] = await Promise.all([
+        send<{ ok?: boolean; balances?: Record<string, number> }>(IM.GET_CACHED_BALANCES),
+        send<{ seedSources?: SeedSourceSummary[] }>(IM.GET_SEED_SOURCES),
+      ]);
       const cachedBalances = balanceResp?.balances || {};
       const cachedBalance = currentAccount ? (cachedBalances[currentAccount.address] ?? 0) : 0;
 
@@ -73,7 +78,9 @@ export function LockedScreen() {
         locked: false,
         address: result.address || null,
         accounts,
+        seedSources: seedSourcesResp?.seedSources || [],
         currentAccount,
+        activeSeedSourceId: result.activeSeedSourceId || null,
         balance: cachedBalance,
         availableBalance: cachedBalance,
         accountBalances: cachedBalances,

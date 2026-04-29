@@ -24,7 +24,8 @@ function yieldToPaint(): Promise<void> {
 }
 
 export function V0MigrationFundsScreen() {
-  const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft } = useStore();
+  const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft, resetV0MigrationDraft } =
+    useStore();
   const visibleAccounts = wallet.accounts.filter(account => !account.hidden);
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [buildError, setBuildError] = useState('');
@@ -240,7 +241,10 @@ export function V0MigrationFundsScreen() {
         <div className="flex gap-3">
           <button
             type="button"
-            onClick={() => navigate('settings')}
+            onClick={() => {
+              resetV0MigrationDraft();
+              navigate('settings');
+            }}
             className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-surface-800)] text-[var(--color-text-primary)] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 font-sans font-medium"
             style={{
               fontSize: 'var(--font-size-base)',
@@ -277,7 +281,6 @@ export function V0MigrationFundsScreen() {
           >
             <div className="flex items-center justify-between h-10 mb-2">
               <div className="w-7" />
-onClick={() => { resetV0MigrationDraft(); navigate('settings'); }}
               <button type="button" onClick={() => setShowWalletPicker(false)} className="p-1.5">
                 <ChevronLeftIcon className="w-5 h-5 rotate-180" />
               </button>

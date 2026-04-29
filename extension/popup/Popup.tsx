@@ -6,7 +6,7 @@ import { useEffect } from 'react';
 import { useStore } from './store';
 import { send } from './utils/messaging';
 import { INTERNAL_METHODS, UI_CONSTANTS } from '../shared/constants';
-import { Account } from '../shared/types';
+import { SubAccount } from '../shared/types';
 import { Router } from './Router';
 import { useApprovalDetection } from './hooks/useApprovalDetection';
 
@@ -21,6 +21,8 @@ export function Popup() {
     setPendingTransactionRequest,
     setPendingSignRequest,
     setPendingSignRawTxRequest,
+    refreshWalletAccounts,
+    fetchBalance,
   } = useStore();
 
   // Initialize app on mount
@@ -44,21 +46,32 @@ export function Popup() {
     navigate,
   });
 
-  // Listen for wallet events (e.g., auto-lock)
+  // Listen for wallet events (e.g., auto-lock, background sub-wallet discovery)
   useEffect(() => {
     const handleMessage = (message: any) => {
-      if (message.type === 'WALLET_EVENT' && message.eventType === 'LOCKED') {
+      if (message?.type !== 'WALLET_EVENT') return;
+      if (message.eventType === 'LOCKED') {
         syncWallet({
           ...wallet,
           locked: true,
         });
         navigate('locked');
+        return;
+      }
+      if (message.eventType === 'ACCOUNTS_UPDATED') {
+        // Background finished discovering additional sub-wallets. Pull the new
+        // account list and re-sync balances so they show up without requiring
+        // a manual refresh.
+        void (async () => {
+          await refreshWalletAccounts();
+          void fetchBalance();
+        })();
       }
     };
 
     chrome.runtime.onMessage.addListener(handleMessage);
     return () => chrome.runtime.onMessage.removeListener(handleMessage);
-  }, [wallet, syncWallet, navigate]);
+  }, [wallet, syncWallet, navigate, refreshWalletAccounts, fetchBalance]);
 
   // Poll for vault state changes (e.g., auto-lock)
   useEffect(() => {
@@ -69,8 +82,8 @@ export function Popup() {
       const state = await send<{
         locked: boolean;
         address: string;
-        accounts: Account[];
-        currentAccount: Account | null;
+        accounts: SubAccount[];
+        currentAccount: SubAccount | null;
       }>(INTERNAL_METHODS.GET_STATE);
 
       // If vault became locked, navigate to locked screen

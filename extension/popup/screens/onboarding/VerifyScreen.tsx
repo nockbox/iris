@@ -3,7 +3,9 @@
  */
 
 import { useState, useMemo } from 'react';
+import { INTERNAL_METHODS, ERROR_CODES } from '../../../shared/constants';
 import { useStore } from '../../store';
+import { send } from '../../utils/messaging';
 import { Alert } from '../../components/Alert';
 import lockIcon from '../../assets/lock-icon.svg';
 
@@ -26,9 +28,20 @@ function generateRandomPositions(): number[] {
 }
 
 export function VerifyScreen() {
-  const { onboardingMnemonic, navigate, setOnboardingMnemonic } = useStore();
+  const {
+    onboardingMnemonic,
+    navigate,
+    setOnboardingMnemonic,
+    setOnboardingPassword,
+    currentScreen,
+    createMnemonicSeedSource,
+    syncWallet,
+    refreshWalletAccounts,
+  } = useStore();
+  const isAddWalletFlow = currentScreen === 'wallet-add-verify';
   const [inputs, setInputs] = useState<Record<number, string>>({});
   const [error, setError] = useState<string>('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Generate random positions once per mnemonic (stable across re-renders)
   const testPositions = useMemo(() => generateRandomPositions(), [onboardingMnemonic]);
@@ -48,28 +61,101 @@ export function VerifyScreen() {
     setError('');
   }
 
-  function handleVerify() {
-    // Check if all positions are filled
+  async function handleVerify() {
     const allFilled = testPositions.every(pos => inputs[pos]?.length > 0);
     if (!allFilled) {
       setError('Please fill in all word fields');
       return;
     }
 
-    // Verify all words are correct
     const allCorrect = testPositions.every(pos => inputs[pos] === words[pos].toLowerCase());
 
-    if (allCorrect) {
-      // Clear the mnemonic from memory and navigate to success
-      setOnboardingMnemonic(null);
-      navigate('onboarding-success');
-    } else {
+    if (!allCorrect) {
       setError('One or more words are incorrect. Please check your secret phrase and try again.');
+      return;
+    }
+
+    setError('');
+    setIsSubmitting(true);
+    try {
+      if (isAddWalletFlow) {
+        if (!onboardingMnemonic) {
+          setError('No recovery phrase found. Please restart the wallet backup flow.');
+          return;
+        }
+        const result = await createMnemonicSeedSource(onboardingMnemonic);
+        if (result && typeof result === 'object' && 'error' in result) {
+          setError(`Error: ${result.error}`);
+          return;
+        }
+        navigate('home');
+        setOnboardingPassword(null);
+        setOnboardingMnemonic(null);
+        return;
+      }
+
+      const vaultSnap = await send<{ hasVault?: boolean }>(INTERNAL_METHODS.GET_STATE);
+      if (vaultSnap?.hasVault) {
+        await refreshWalletAccounts();
+        navigate('onboarding-success');
+        setOnboardingPassword(null);
+        setOnboardingMnemonic(null);
+        return;
+      }
+
+      const password = useStore.getState().onboardingPassword;
+      if (!password) {
+        setError('Session expired. Please restart wallet setup from the beginning.');
+        return;
+      }
+
+      const result = await send<{
+        ok?: boolean;
+        address?: string;
+        mnemonic?: string;
+        error?: string;
+      }>(INTERNAL_METHODS.SETUP, [password, onboardingMnemonic]);
+
+      if (result?.error) {
+        setError(
+          result.error === ERROR_CODES.INVALID_MNEMONIC
+            ? 'Invalid secret phrase. Please go back and try again.'
+            : `Error: ${result.error}`
+        );
+        setOnboardingPassword(null);
+        return;
+      }
+
+      const firstAccount = {
+        name: 'Wallet 1',
+        address: result.address || '',
+        index: 0,
+      };
+      syncWallet({
+        locked: false,
+        address: result.address || null,
+        accounts: [firstAccount],
+        seedSources: [],
+        currentAccount: firstAccount,
+        activeSeedSourceId: null,
+        balance: 0,
+        availableBalance: 0,
+        spendableBalance: 0,
+        accountBalances: {},
+        accountSpendableBalances: {},
+        accountBalanceDetails: {},
+      });
+      await refreshWalletAccounts();
+      navigate('onboarding-success');
+      setOnboardingPassword(null);
+      setOnboardingMnemonic(null);
+    } finally {
+      setIsSubmitting(false);
     }
   }
 
   function handleBack() {
-    navigate('onboarding-backup');
+    navigate(isAddWalletFlow ? 'wallet-add-backup' : 'onboarding-backup');
   }
 
   return (
@@ -200,8 +286,10 @@ export function VerifyScreen() {
               Back
             </button>
             <button
-              onClick={handleVerify}
-              className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90"
+              type="button"
+              onClick={() => void handleVerify()}
+              disabled={isSubmitting}
+              className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
                 fontFamily: 'var(--font-sans)',
                 fontSize: 'var(--font-size-base)',
@@ -210,7 +298,7 @@ export function VerifyScreen() {
                 letterSpacing: '0.01em',
               }}
             >
-              Create wallet
+              {isSubmitting ? 'Working…' : 'Create wallet'}
             </button>
           </div>
         </div>

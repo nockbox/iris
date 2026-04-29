@@ -82,6 +82,21 @@ type UnlockSessionCache = {
 
 let sessionRestorePromise: Promise<void> | null = null;
 
+// In-flight UTXO sync to prevent concurrent sync passes from racing with each other.
+// Keyed by account address (or "*" for all-accounts sync) so that a sync for one
+// account doesn't cause a caller asking for a different account to receive a
+// stale reused result.
+const utxoSyncInFlight = new Map<
+  string,
+  Promise<{
+    ok: boolean;
+    results: Record<string, { success: boolean; error?: string }>;
+  }>
+>();
+
+// Track pending sub-wallet discoveries (fire-and-forget) so we don't double-schedule.
+const subwalletDiscoveryInFlight = new Set<string>();
+
 async function clearUnlockSessionCache(): Promise<void> {
   try {
     await chrome.storage.session?.remove(SESSION_STORAGE_KEYS.UNLOCK_CACHE);
@@ -612,6 +627,49 @@ async function emitWalletEvent(eventType: string, data: unknown) {
   }
 }
 
+/**
+ * Emit a wallet event to the popup (extension runtime).
+ * chrome.tabs.sendMessage does not reach the popup; chrome.runtime.sendMessage does.
+ * Safe to call when no popup is open (errors swallowed).
+ */
+async function emitPopupEvent(eventType: string, data: unknown) {
+  try {
+    await chrome.runtime.sendMessage({
+      type: 'WALLET_EVENT',
+      eventType,
+      data,
+    });
+  } catch (error) {
+    // Popup not open, ignore
+  }
+}
+
+/**
+ * Fire-and-forget sub-wallet discovery. Runs in the background without blocking
+ * the SETUP/CREATE_MNEMONIC_SEED_SOURCE response. Notifies the popup when done
+ * so it can refresh accounts and re-fetch balances.
+ */
+function scheduleSubwalletDiscovery(seedId: string): void {
+  if (subwalletDiscoveryInFlight.has(seedId)) return;
+  subwalletDiscoveryInFlight.add(seedId);
+
+  (async () => {
+    try {
+      const result = await vault.discoverAndEnsureSubwalletsForSeed(seedId);
+      const added = 'ok' in result ? result.added : 0;
+      if (added > 0) {
+        const cur = vault.getCurrentAccount();
+        await emitWalletEvent('accountsChanged', [cur?.address].filter(Boolean));
+        await emitPopupEvent('ACCOUNTS_UPDATED', { seedId, added });
+      }
+    } catch (err) {
+      console.warn('[Background] Sub-wallet discovery failed:', err);
+    } finally {
+      subwalletDiscoveryInFlight.delete(seedId);
+    }
+  })();
+}
+
 // Initialize auto-lock setting, load approved origins, vault state, connection monitoring, and schedule alarms
 const initPromise = (async () => {
   const stored = await chrome.storage.local.get([
@@ -988,12 +1046,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       case INTERNAL_METHODS.SETUP:
         // params: password, mnemonic (optional). If no mnemonic, generates one automatically.
         const setupResult = await vault.setup(payload.params?.[0], payload.params?.[1]);
-        sendResponse(setupResult);
 
         if ('ok' in setupResult && setupResult.ok) {
           manuallyLocked = false;
-          await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
-          await persistUnlockSession();
+        }
+        // Respond as soon as setup completes — do not await session/local persistence or discovery.
+        sendResponse(setupResult);
+
+        if ('ok' in setupResult && setupResult.ok) {
+          void (async () => {
+            await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
+            await persistUnlockSession();
+          })().catch(err => console.error('[Background] Post-SETUP persistence failed:', err));
+          // Only scan for existing on-chain sub-wallets when importing a phrase (not brand-new generation).
+          const importedExistingPhrase = payload.params?.[2] === true;
+          if (importedExistingPhrase) {
+            const firstSeedId = vault.getSeedSources()[0]?.id;
+            if (firstSeedId) {
+              scheduleSubwalletDiscovery(firstSeedId);
+            }
+          }
         }
         return;
 
@@ -1009,6 +1081,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           address: await vault.getAddressSafe(),
           accounts: vault.getAccounts(),
           currentAccount: vault.getCurrentAccount(),
+          activeSeedSourceId: vault.getActiveSeedSourceId(),
         });
         return;
 
@@ -1016,6 +1089,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         sendResponse({
           accounts: vault.getAccounts(),
           currentAccount: vault.getCurrentAccount(),
+          activeSeedSourceId: vault.getActiveSeedSourceId(),
+        });
+        return;
+
+      case INTERNAL_METHODS.GET_SEED_SOURCES:
+        sendResponse({
+          seedSources: vault.getSeedSources(),
         });
         return;
 
@@ -1044,7 +1124,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case INTERNAL_METHODS.HIDE_ACCOUNT:
-        // params: [accountIndex]
+        // params: [accountAddress]
         const hideResult = await vault.hideAccount(payload.params?.[0]);
         sendResponse(hideResult);
 
@@ -1057,15 +1137,48 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
-      case INTERNAL_METHODS.CREATE_ACCOUNT:
-        // params: name (optional)
-        const createResult = await vault.createAccount(payload.params?.[0]);
-        sendResponse(createResult);
+      case INTERNAL_METHODS.CREATE_CHILD_ACCOUNT:
+        // params: [seedAccountId, name?]
+        const createChildResult = await vault.createChildAccount(
+          payload.params?.[0],
+          payload.params?.[1]
+        );
+        sendResponse(createChildResult);
+        if (!('error' in createChildResult)) {
+          const currentAfterChild = vault.getCurrentAccount();
+          if (currentAfterChild) {
+            await emitWalletEvent('accountsChanged', [currentAfterChild.address]);
+          }
+        }
+        return;
 
-        // Emit accountsChanged event to all tabs if successful
-        // New account is automatically set as current
-        if ('ok' in createResult && createResult.ok) {
-          await emitWalletEvent('accountsChanged', [createResult.account.address]);
+      case INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE:
+        // params: [mnemonic?, name?]
+        const createSeedResult = await vault.createMnemonicSeedSource(
+          payload.params?.[0],
+          payload.params?.[1]
+        );
+        // Respond immediately so the popup isn't blocked by long-running discovery.
+        sendResponse(createSeedResult);
+        if (!('error' in createSeedResult)) {
+          const cur = vault.getCurrentAccount();
+          await emitWalletEvent('accountsChanged', [
+            cur?.address ?? createSeedResult.account.address,
+          ]);
+          if (payload.params?.[2] === true) {
+            scheduleSubwalletDiscovery(createSeedResult.seedSource.id);
+          }
+        }
+        return;
+
+      case INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE:
+        // params: [{ address, name?, provider?, sourceRef?, accountRef? }]
+        const createExternalResult = await vault.createExternalSeedSource(
+          payload.params?.[0] || {}
+        );
+        sendResponse(createExternalResult);
+        if (!('error' in createExternalResult)) {
+          await emitWalletEvent('accountsChanged', [createExternalResult.account.address]);
         }
         return;
 
@@ -1101,25 +1214,72 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case INTERNAL_METHODS.SYNC_UTXOS:
-        // Sync UTXOs for all accounts - runs in background with encrypted Vault
-        try {
-          const accounts = vault.getAccounts();
-          const results: Record<string, { success: boolean; error?: string }> = {};
+        // Sync UTXOs - runs in background with encrypted Vault.
+        // Optional param: account address. If provided, only that account is
+        // synced. If omitted, only the currently-selected account is synced
+        // (callers can still pass an explicit address to sync a specific one).
+        // Guard on lock state: without the encryption key loaded we cannot persist
+        // sync results (saveAccountData throws), and iterating accounts while the
+        // vault is locked produces a cascade of misleading "Vault is locked" errors.
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
 
-          for (const account of accounts) {
-            try {
-              await vault.syncAccountUTXOs(account.address);
-              results[account.address] = { success: true };
-            } catch (syncErr) {
-              console.warn(`[Background] UTXO sync failed for ${account.name}:`, syncErr);
-              results[account.address] = {
-                success: false,
-                error: syncErr instanceof Error ? syncErr.message : String(syncErr),
-              };
-            }
+        try {
+          const requestedAddress =
+            (payload.params?.[0] as string | undefined) || vault.getCurrentAccount()?.address;
+
+          if (!requestedAddress) {
+            sendResponse({ ok: true, results: {} });
+            return;
           }
 
-          sendResponse({ ok: true, results });
+          const accounts = vault.getAccounts();
+          const account = accounts.find(a => a.address === requestedAddress);
+          if (!account) {
+            sendResponse({ error: 'Account not found' });
+            return;
+          }
+
+          // Serialize across concurrent callers for the same account (popup
+          // refreshes, multiple screens): a single in-flight sync is reused
+          // rather than kicking off parallel passes that race on
+          // saveAccountData. Keyed by address so different accounts can sync
+          // in parallel if ever requested concurrently.
+          let inFlight = utxoSyncInFlight.get(requestedAddress);
+          if (!inFlight) {
+            inFlight = (async () => {
+              const results: Record<string, { success: boolean; error?: string }> = {};
+
+              if (vault.isLocked()) {
+                results[account.address] = {
+                  success: false,
+                  error: ERROR_CODES.LOCKED,
+                };
+                return { ok: true, results };
+              }
+
+              try {
+                await vault.syncAccountUTXOs(account.address);
+                results[account.address] = { success: true };
+              } catch (syncErr) {
+                console.warn(`[Background] UTXO sync failed for ${account.name}:`, syncErr);
+                results[account.address] = {
+                  success: false,
+                  error: syncErr instanceof Error ? syncErr.message : String(syncErr),
+                };
+              }
+
+              return { ok: true, results };
+            })().finally(() => {
+              utxoSyncInFlight.delete(requestedAddress);
+            });
+            utxoSyncInFlight.set(requestedAddress, inFlight);
+          }
+
+          const syncOutcome = await inFlight;
+          sendResponse(syncOutcome);
         } catch (err) {
           console.error('[Background] SYNC_UTXOS error:', err);
           sendResponse({ error: 'Failed to sync UTXOs' });

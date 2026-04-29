@@ -14,9 +14,19 @@ import { EyeIcon } from '../../components/icons/EyeIcon';
 import { EyeOffIcon } from '../../components/icons/EyeOffIcon';
 import { InfoIcon } from '../../components/icons/InfoIcon';
 import { importKeyfile, type Keyfile } from '../../../shared/keyfile';
+import { validateMnemonic } from '../../../shared/wallet-crypto';
 
 export function ImportScreen() {
-  const { navigate, syncWallet, onboardingMnemonic, setOnboardingMnemonic } = useStore();
+  const {
+    navigate,
+    syncWallet,
+    refreshWalletAccounts,
+    createMnemonicSeedSource,
+    onboardingMnemonic,
+    setOnboardingMnemonic,
+    currentScreen,
+  } = useStore();
+  const isAddSeedFlow = currentScreen === 'wallet-add-import';
 
   // Clear any stale mnemonic state on mount to ensure fresh start
   useEffect(() => {
@@ -30,6 +40,7 @@ export function ImportScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [step, setStep] = useState<'mnemonic' | 'password'>('mnemonic');
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const firstInputRef = useAutoFocus<HTMLInputElement>();
@@ -85,11 +96,16 @@ export function ImportScreen() {
     }
   }
 
-  function handleContinue() {
+  async function handleContinue() {
     const mnemonic = words.join(' ').trim();
 
     if (words.some(w => !w)) {
       setError('Please enter all 24 words');
+      return;
+    }
+
+    if (isAddSeedFlow) {
+      await handleImport(mnemonic);
       return;
     }
 
@@ -98,35 +114,59 @@ export function ImportScreen() {
     setStep('password');
   }
 
-  async function handleImport() {
+  async function handleImport(mnemonicOverride?: string) {
     // Use stored mnemonic (set either by manual entry or keyfile import)
-    const mnemonic = onboardingMnemonic || words.join(' ').trim();
+    const mnemonic = mnemonicOverride || onboardingMnemonic || words.join(' ').trim();
 
-    // Validate password
-    if (!password) {
-      setError('Please enter a password');
+    if (!isAddSeedFlow) {
+      // Validate password
+      if (!password) {
+        setError('Please enter a password');
+        return;
+      }
+
+      if (password.length < UI_CONSTANTS.MIN_PASSWORD_LENGTH) {
+        setError(`Password must be at least ${UI_CONSTANTS.MIN_PASSWORD_LENGTH} characters`);
+        return;
+      }
+
+      if (password !== confirmPassword) {
+        setError('Passwords do not match');
+        return;
+      }
+    }
+
+    if (isAddSeedFlow) {
+      if (!validateMnemonic(mnemonic)) {
+        setError('Invalid secret phrase. Please check your words and try again.');
+        return;
+      }
+      setIsSubmitting(true);
+      try {
+        const result = await createMnemonicSeedSource(mnemonic, undefined, true);
+        if (result?.error) {
+          setError(
+            result.error === ERROR_CODES.DUPLICATE_SEED
+              ? 'This secret phrase is already in your wallet.'
+              : `Error: ${result.error}`
+          );
+          return;
+        }
+        navigate('home');
+      } finally {
+        setIsSubmitting(false);
+      }
       return;
     }
 
-    if (password.length < UI_CONSTANTS.MIN_PASSWORD_LENGTH) {
-      setError(`Password must be at least ${UI_CONSTANTS.MIN_PASSWORD_LENGTH} characters`);
-      return;
-    }
-
-    if (password !== confirmPassword) {
-      setError('Passwords do not match');
-      return;
-    }
-
-    // Import wallet (setup with existing mnemonic)
     const result = await send<{
       ok?: boolean;
       address?: string;
       mnemonic?: string;
       error?: string;
-    }>(INTERNAL_METHODS.SETUP, [password, mnemonic]);
+    }>(INTERNAL_METHODS.SETUP, [password, mnemonic, true]);
 
-    if (result?.error) {
+    if ('error' in result) {
       if (result.error === ERROR_CODES.INVALID_MNEMONIC) {
         setError('Invalid secret phrase. Please check your words and try again.');
       } else {
@@ -145,7 +185,9 @@ export function ImportScreen() {
         locked: false,
         address: result.address || null,
         accounts: [firstAccount],
+        seedSources: [],
         currentAccount: firstAccount,
+        activeSeedSourceId: null,
         balance: 0,
         availableBalance: 0,
         spendableBalance: 0,
@@ -153,6 +195,7 @@ export function ImportScreen() {
         accountSpendableBalances: {},
         accountBalanceDetails: {},
       });
+      await refreshWalletAccounts();
       setOnboardingMnemonic(null);
       navigate('onboarding-import-success');
     }
@@ -162,7 +205,7 @@ export function ImportScreen() {
     if (step === 'password') {
       setStep('mnemonic');
     } else {
-      navigate('onboarding-start');
+      navigate(isAddSeedFlow ? 'wallet-add-start' : 'onboarding-start');
     }
   }
 
@@ -191,11 +234,17 @@ export function ImportScreen() {
           return;
         }
 
-        // Skip word display - go directly to password setup
-        setOnboardingMnemonic(mnemonic);
-        setShowKeyfileImport(false);
-        setStep('password');
-        setError('');
+        if (isAddSeedFlow) {
+          setShowKeyfileImport(false);
+          setError('');
+          void handleImport(mnemonic);
+        } else {
+          // Skip word display - go directly to password setup
+          setOnboardingMnemonic(mnemonic);
+          setShowKeyfileImport(false);
+          setStep('password');
+          setError('');
+        }
       } catch (error) {
         setError(error instanceof Error ? error.message : 'Invalid keyfile format');
       }
@@ -212,7 +261,7 @@ export function ImportScreen() {
   }
 
   // Password setup step
-  if (step === 'password') {
+  if (step === 'password' && !isAddSeedFlow) {
     return (
       <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)]">
         {/* Header with back button */}
@@ -408,8 +457,9 @@ export function ImportScreen() {
                 Back
               </button>
               <button
-                onClick={handleImport}
-                className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90"
+                onClick={() => void handleImport()}
+                disabled={isSubmitting}
+                className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
                 style={{
                   fontFamily: 'var(--font-sans)',
                   fontSize: 'var(--font-size-base)',
@@ -418,7 +468,7 @@ export function ImportScreen() {
                   letterSpacing: '0.01em',
                 }}
               >
-                Import wallet
+                {isSubmitting ? 'Importing…' : 'Import wallet'}
               </button>
             </div>
           </div>
@@ -588,8 +638,8 @@ export function ImportScreen() {
         {/* Bottom button */}
         <div className="border-t border-[var(--color-surface-800)] px-4 py-3">
           <button
-            onClick={handleContinue}
-            disabled={words.some(w => !w)}
+            onClick={() => void handleContinue()}
+            disabled={words.some(w => !w) || isSubmitting}
             className="w-full h-12 px-5 py-[15px] bg-[var(--color-primary)] text-[#000000] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             style={{
               fontFamily: 'var(--font-sans)',
@@ -599,7 +649,7 @@ export function ImportScreen() {
               letterSpacing: '0.01em',
             }}
           >
-            Import wallet
+            {isSubmitting ? 'Importing…' : 'Import wallet'}
           </button>
         </div>
       </div>

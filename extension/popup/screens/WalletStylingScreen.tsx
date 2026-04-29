@@ -23,10 +23,16 @@ import WalletStyle14 from '../assets/wallet-icon-style-14.svg';
 import WalletStyle15 from '../assets/wallet-icon-style-15.svg';
 
 export function WalletStylingScreen() {
-  const { navigate, wallet, syncWallet } = useStore();
+  const { navigate, wallet, refreshWalletAccounts, settingsAccountAddress } = useStore();
 
-  // Get current account
-  const currentAccount = wallet.currentAccount || wallet.accounts[0];
+  // Style the account selected in wallet settings (if present), otherwise current account
+  const currentAccount =
+    (settingsAccountAddress
+      ? wallet.accounts.find(a => a.address === settingsAccountAddress)
+      : null) ??
+    wallet.currentAccount ??
+    wallet.accounts.find(a => !a.hidden) ??
+    wallet.accounts[0];
 
   // Load initial values from current account or use defaults
   const [selectedStyle, setSelectedStyle] = useState(currentAccount?.iconStyleId || 1);
@@ -65,7 +71,7 @@ export function WalletStylingScreen() {
       const color = currentAccount.iconColor || '#FFC413';
       setSelectedColor(color);
     }
-  }, [currentAccount?.index]);
+  }, [currentAccount?.address, currentAccount?.iconStyleId, currentAccount?.iconColor]);
 
   // Load and modify SVG based on selected style and color
   useEffect(() => {
@@ -90,27 +96,11 @@ export function WalletStylingScreen() {
 
     const result = await send<{ ok?: boolean; error?: string }>(
       INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING,
-      [currentAccount.index, styleId, selectedColor]
+      [currentAccount.address, styleId, selectedColor]
     );
 
     if (result?.ok) {
-      // Update wallet state
-      const updatedAccounts = wallet.accounts.map(acc =>
-        acc.index === currentAccount.index
-          ? { ...acc, iconStyleId: styleId, iconColor: selectedColor }
-          : acc
-      );
-      const updatedCurrentAccount = {
-        ...currentAccount,
-        iconStyleId: styleId,
-        iconColor: selectedColor,
-      };
-
-      syncWallet({
-        ...wallet,
-        accounts: updatedAccounts,
-        currentAccount: updatedCurrentAccount,
-      });
+      await refreshWalletAccounts();
     } else if (result?.error) {
       console.error('Failed to update styling:', result.error);
     }
@@ -123,27 +113,11 @@ export function WalletStylingScreen() {
 
     const result = await send<{ ok?: boolean; error?: string }>(
       INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING,
-      [currentAccount.index, selectedStyle, color]
+      [currentAccount.address, selectedStyle, color]
     );
 
     if (result?.ok) {
-      // Update wallet state
-      const updatedAccounts = wallet.accounts.map(acc =>
-        acc.index === currentAccount.index
-          ? { ...acc, iconStyleId: selectedStyle, iconColor: color }
-          : acc
-      );
-      const updatedCurrentAccount = {
-        ...currentAccount,
-        iconStyleId: selectedStyle,
-        iconColor: color,
-      };
-
-      syncWallet({
-        ...wallet,
-        accounts: updatedAccounts,
-        currentAccount: updatedCurrentAccount,
-      });
+      await refreshWalletAccounts();
     } else if (result?.error) {
       console.error('Failed to update styling:', result.error);
     }

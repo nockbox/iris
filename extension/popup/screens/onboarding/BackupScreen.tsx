@@ -9,7 +9,8 @@ import { CheckIcon } from '../../components/icons/CheckIcon';
 import lockIcon from '../../assets/lock-icon.svg';
 
 export function BackupScreen() {
-  const { onboardingMnemonic, navigate } = useStore();
+  const { onboardingMnemonic, navigate, currentScreen } = useStore();
+  const isAddWalletFlow = currentScreen === 'wallet-add-backup';
   const [isRevealed, setIsRevealed] = useState(false);
   const [hasConfirmed, setHasConfirmed] = useState(false);
   const [copiedAll, setCopiedAll] = useState(false);
@@ -30,7 +31,23 @@ export function BackupScreen() {
     // Should never happen, but handle gracefully
     return (
       <div className="w-[357px] h-[600px] bg-[var(--color-bg)] flex items-center justify-center p-4">
-        <Alert type="error">No mnemonic found. Please restart onboarding.</Alert>
+        <div className="w-full flex flex-col gap-4">
+          <Alert type="error">No mnemonic found. Please restart onboarding.</Alert>
+          <button
+            type="button"
+            onClick={() => navigate(isAddWalletFlow ? 'home' : 'onboarding-start')}
+            className="w-full h-12 px-5 py-[15px] bg-[var(--color-text-primary)] text-[var(--color-bg)] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90"
+            style={{
+              fontFamily: 'var(--font-sans)',
+              fontSize: 'var(--font-size-base)',
+              fontWeight: 500,
+              lineHeight: 'var(--line-height-snug)',
+              letterSpacing: '0.01em',
+            }}
+          >
+            {isAddWalletFlow ? 'Back to wallet' : 'Restart onboarding'}
+          </button>
+        </div>
       </div>
     );
   }
@@ -39,7 +56,7 @@ export function BackupScreen() {
 
   function handleContinue() {
     if (hasConfirmed) {
-      navigate('onboarding-verify');
+      navigate(isAddWalletFlow ? 'wallet-add-verify' : 'onboarding-verify');
     }
   }
 
@@ -48,7 +65,7 @@ export function BackupScreen() {
       {/* Header with back button */}
       <div className="flex items-center justify-between h-16 px-4 py-3 border-b border-[var(--color-divider)] shrink-0">
         <button
-          onClick={() => navigate('onboarding-create')}
+          onClick={() => navigate(isAddWalletFlow ? 'wallet-add-create' : 'onboarding-create')}
           className="p-2 -ml-2 hover:opacity-70 transition-opacity"
           aria-label="Go back"
         >

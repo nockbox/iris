@@ -4,9 +4,10 @@
 
 import { create } from 'zustand';
 import { INTERNAL_METHODS, APPROVAL_CONSTANTS, NOCK_TO_NICKS } from '../shared/constants';
-import { hasIncompleteOnboarding } from '../shared/onboarding';
+import { clearOnboardingState, hasIncompleteOnboarding } from '../shared/onboarding';
 import {
-  Account,
+  SubAccount,
+  SeedAccount,
   AccountBalance,
   TransactionDetails,
   SignRequest,
@@ -31,6 +32,11 @@ export type Screen =
   | 'onboarding-import'
   | 'onboarding-import-success'
   | 'onboarding-resume-backup'
+  | 'wallet-add-start'
+  | 'wallet-add-create'
+  | 'wallet-add-import'
+  | 'wallet-add-backup'
+  | 'wallet-add-verify'
 
   // Main app screens
   | 'home'
@@ -75,8 +81,11 @@ export type Screen =
 interface WalletState {
   locked: boolean;
   address: string | null;
-  accounts: Account[];
-  currentAccount: Account | null;
+  accounts: SubAccount[];
+  /** Mnemonic-stripped seed sources from background; matches vault.getSeedSources(). */
+  seedSources: Array<Omit<SeedAccount, 'mnemonic'>>;
+  currentAccount: SubAccount | null;
+  activeSeedSourceId: string | null;
   balance: number;
   availableBalance: number;
   spendableBalance: number; // Sum of UTXOs that are available (not in_flight) - can be spent NOW
@@ -100,10 +109,28 @@ interface AppStore {
   // Wallet state (synced from service worker)
   wallet: WalletState;
   syncWallet: (state: WalletState) => void;
+  refreshWalletAccounts: () => Promise<void>;
+  /** @param importedExistingPhrase - if true, scan chain for funded sub-wallets (import path only). */
+  createMnemonicSeedSource: (
+    mnemonic?: string,
+    name?: string,
+    importedExistingPhrase?: boolean
+  ) => Promise<any>;
+  createExternalSeedSource: (params: {
+    address: string;
+    name?: string;
+    provider?: 'ledger' | 'unknown';
+    sourceRef?: string;
+    accountRef?: string;
+  }) => Promise<any>;
+  createChildAccount: (seedAccountId?: string, name?: string) => Promise<any>;
 
   // Temporary onboarding state (cleared after completion)
   onboardingMnemonic: string | null;
   setOnboardingMnemonic: (mnemonic: string | null) => void;
+  /** Password held only until main onboarding SETUP runs after verify (never persisted). */
+  onboardingPassword: string | null;
+  setOnboardingPassword: (password: string | null) => void;
 
   // Last transaction details (for showing confirmation screen)
   lastTransaction: TransactionDetails | null;
@@ -173,6 +200,10 @@ interface AppStore {
   selectedTransaction: WalletTransaction | null;
   setSelectedTransaction: (transaction: WalletTransaction | null) => void;
 
+  // Account whose settings are being viewed (set when opening settings from dropdown; avoids waiting for account switch)
+  settingsAccountAddress: string | null;
+  setSettingsAccountAddress: (address: string | null) => void;
+
   // Swap submitted toast (drops down briefly, then disappears)
   swapSubmittedToastVisible: boolean;
   setSwapSubmittedToastVisible: (visible: boolean) => void;
@@ -218,7 +249,9 @@ export const useStore = create<AppStore>((set, get) => ({
     locked: true,
     address: null,
     accounts: [],
+    seedSources: [],
     currentAccount: null,
+    activeSeedSourceId: null,
     balance: 0,
     availableBalance: 0,
     spendableBalance: 0,
@@ -228,6 +261,7 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   onboardingMnemonic: null,
+  onboardingPassword: null,
   lastTransaction: null,
   v0MigrationDraft: {
     v0BalanceNock: 0,
@@ -247,6 +281,8 @@ export const useStore = create<AppStore>((set, get) => ({
   pendingTransactionRequest: null,
   walletTransactions: [],
   selectedTransaction: null,
+  settingsAccountAddress: null,
+  setSettingsAccountAddress: (address: string | null) => set({ settingsAccountAddress: address }),
   swapSubmittedToastVisible: false,
   isBalanceFetching: false,
   isInitialized: false,
@@ -293,9 +329,98 @@ export const useStore = create<AppStore>((set, get) => ({
     set({ wallet: state });
   },
 
+  refreshWalletAccounts: async () => {
+    try {
+      const [accountsResult, seedSourcesResult, cachedBalancesResult] = await Promise.all([
+        send<{
+          accounts: SubAccount[];
+          currentAccount: SubAccount | null;
+          activeSeedSourceId: string | null;
+        }>(INTERNAL_METHODS.GET_ACCOUNTS),
+        send<{ seedSources: WalletState['seedSources'] }>(INTERNAL_METHODS.GET_SEED_SOURCES),
+        send<{ balances?: Record<string, number> }>(INTERNAL_METHODS.GET_CACHED_BALANCES).catch(
+          () => ({ balances: undefined })
+        ),
+      ]);
+
+      const accounts = accountsResult.accounts || [];
+      const fetchedBalances = cachedBalancesResult?.balances;
+      const mergedAccountBalances = fetchedBalances
+        ? { ...get().wallet.accountBalances, ...fetchedBalances }
+        : get().wallet.accountBalances;
+      const currentAddress = accountsResult.currentAccount?.address;
+      const currentBalance = currentAddress ? (mergedAccountBalances[currentAddress] ?? 0) : 0;
+      const currentSpendable = currentAddress
+        ? (get().wallet.accountSpendableBalances[currentAddress] ?? currentBalance)
+        : 0;
+
+      set({
+        wallet: {
+          ...get().wallet,
+          accounts,
+          seedSources: seedSourcesResult?.seedSources || [],
+          currentAccount: accountsResult.currentAccount || null,
+          address: accountsResult.currentAccount?.address || null,
+          activeSeedSourceId: accountsResult.activeSeedSourceId || null,
+          balance: currentBalance,
+          availableBalance: currentBalance,
+          spendableBalance: currentSpendable,
+          accountBalances: mergedAccountBalances,
+        },
+      });
+    } catch (error) {
+      console.error('[Store] Failed to refresh wallet accounts:', error);
+    }
+  },
+
+  createMnemonicSeedSource: async (
+    mnemonic?: string,
+    name?: string,
+    importedExistingPhrase?: boolean
+  ) => {
+    const result = await send<any>(INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE, [
+      mnemonic,
+      name,
+      importedExistingPhrase === true,
+    ]);
+    if (!result?.error) {
+      await get().refreshWalletAccounts();
+      // Non-blocking refresh: avoid delaying backup flow UX.
+      void get().fetchBalance();
+      void get().fetchWalletTransactions();
+    }
+    return result;
+  },
+
+  createExternalSeedSource: async params => {
+    const result = await send<any>(INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE, [params]);
+    if (!result?.error) {
+      await get().refreshWalletAccounts();
+      // Non-blocking refresh to keep wallet actions snappy.
+      void get().fetchBalance();
+      void get().fetchWalletTransactions();
+    }
+    return result;
+  },
+
+  createChildAccount: async (seedAccountId?: string, name?: string) => {
+    const result = await send<any>(INTERNAL_METHODS.CREATE_CHILD_ACCOUNT, [seedAccountId, name]);
+    if (!result?.error) {
+      await get().refreshWalletAccounts();
+      // Non-blocking refresh to avoid blocking dropdown interactions.
+      void get().fetchBalance();
+      void get().fetchWalletTransactions();
+    }
+    return result;
+  },
+
   // Set temporary mnemonic during onboarding
   setOnboardingMnemonic: (mnemonic: string | null) => {
     set({ onboardingMnemonic: mnemonic });
+  },
+
+  setOnboardingPassword: (password: string | null) => {
+    set({ onboardingPassword: password });
   },
 
   // Set last transaction details
@@ -382,35 +507,44 @@ export const useStore = create<AppStore>((set, get) => ({
         locked: boolean;
         hasVault: boolean;
         address: string;
-        accounts: Account[];
-        currentAccount: Account | null;
+        accounts: SubAccount[];
+        currentAccount: SubAccount | null;
+        activeSeedSourceId: string | null;
       }>(INTERNAL_METHODS.GET_STATE);
 
-      // Load cached balances from encrypted storage (only if unlocked)
+      // Load cached balances and seed sources from encrypted storage (only if unlocked)
       let cachedBalances: Record<string, number> = {};
+      let seedSources: WalletState['seedSources'] = [];
       if (!state.locked) {
-        const balanceResp = await send<{ ok?: boolean; balances?: Record<string, number> }>(
-          INTERNAL_METHODS.GET_CACHED_BALANCES
-        );
+        const [balanceResp, seedSourcesResp] = await Promise.all([
+          send<{ ok?: boolean; balances?: Record<string, number> }>(
+            INTERNAL_METHODS.GET_CACHED_BALANCES
+          ),
+          send<{ seedSources: WalletState['seedSources'] }>(INTERNAL_METHODS.GET_SEED_SOURCES),
+        ]);
         if (balanceResp?.ok && balanceResp.balances) {
           cachedBalances = balanceResp.balances;
         }
+        seedSources = seedSourcesResp?.seedSources || [];
       }
 
       // Initial wallet state with confirmed balances (available balance computed after TX fetch)
       const confirmedBalance = state.currentAccount
         ? cachedBalances[state.currentAccount.address] || 0
         : 0;
+      const accounts = state.accounts || [];
       const walletState: WalletState = {
         locked: state.locked,
         address: state.address || null,
-        accounts: state.accounts || [],
+        accounts,
+        seedSources,
         currentAccount: state.currentAccount || null,
+        activeSeedSourceId: state.activeSeedSourceId || null,
         balance: confirmedBalance,
-        availableBalance: confirmedBalance, // Will be recalculated after fetching transactions
-        spendableBalance: confirmedBalance, // Will be recalculated after fetching transactions
-        accountBalances: cachedBalances, // Load all cached balances
-        accountSpendableBalances: cachedBalances, // Will be recalculated after fetching transactions
+        availableBalance: confirmedBalance,
+        spendableBalance: confirmedBalance,
+        accountBalances: cachedBalances,
+        accountSpendableBalances: cachedBalances,
         accountBalanceDetails: {},
       };
 
@@ -422,7 +556,10 @@ export const useStore = create<AppStore>((set, get) => ({
         // Let the approval useEffect handle navigation
         initialScreen = walletState.locked ? 'locked' : 'home';
       } else if (!state.hasVault) {
-        // No vault exists - start onboarding
+        const incompleteOnboardingNoVault = await hasIncompleteOnboarding();
+        if (incompleteOnboardingNoVault) {
+          await clearOnboardingState();
+        }
         initialScreen = 'onboarding-start';
       } else {
         // Check if user has incomplete onboarding (created wallet but didn't complete backup)
@@ -468,6 +605,14 @@ export const useStore = create<AppStore>((set, get) => ({
   // Also syncs UTXOs from chain (runs in popup context where WASM works)
   fetchBalance: async () => {
     try {
+      // Don't attempt to sync UTXOs while the vault is locked. SYNC_UTXOS
+      // requires the encryption key to persist results; calling it while locked
+      // yields cascading "Cannot save account data" / "Vault is locked" errors.
+      if (get().wallet.locked) {
+        set({ isBalanceFetching: false });
+        return;
+      }
+
       set({ isBalanceFetching: true });
 
       const accounts = get().wallet.accounts;
@@ -478,12 +623,15 @@ export const useStore = create<AppStore>((set, get) => ({
         return;
       }
 
-      // Sync UTXOs from chain for all accounts (runs in background with encrypted Vault)
+      // Only sync + fetch balance for the currently-selected account. Other
+      // accounts keep whatever cached balances they had; they'll be refreshed
+      // when the user switches to them. This avoids scaling balance-refresh
+      // latency with wallet count.
       try {
         const syncResult = await send<{
           ok: boolean;
           results?: Record<string, { success: boolean; error?: string }>;
-        }>(INTERNAL_METHODS.SYNC_UTXOS, []);
+        }>(INTERNAL_METHODS.SYNC_UTXOS, [currentAccount.address]);
         if (!syncResult.ok) {
           console.warn('[Store] UTXO sync failed:', syncResult);
         }
@@ -491,49 +639,55 @@ export const useStore = create<AppStore>((set, get) => ({
         console.warn('[Store] UTXO sync error:', syncErr);
       }
 
-      // Fetch UTXO store balance for ALL accounts
-      const accountBalances: Record<string, number> = {};
-      const accountSpendableBalances: Record<string, number> = {};
-      const accountBalanceDetails: Record<string, AccountBalance> = {};
+      // Start from existing cached balances so non-current accounts keep their
+      // last-known values in the UI.
+      const accountBalances: Record<string, number> = { ...get().wallet.accountBalances };
+      const accountSpendableBalances: Record<string, number> = {
+        ...get().wallet.accountSpendableBalances,
+      };
+      const accountBalanceDetails: Record<string, AccountBalance> = {
+        ...get().wallet.accountBalanceDetails,
+      };
 
-      for (const account of accounts) {
-        try {
-          const storeBalance = await send<{
-            available: number;
-            spendableNow: number;
-            pendingOut: number;
-            pendingChange: number;
-            total: number;
-            utxoCount: number;
-            availableUtxoCount: number;
-          }>(INTERNAL_METHODS.GET_BALANCE_FROM_STORE, [account.address]);
+      try {
+        const storeBalance = await send<{
+          available: number;
+          spendableNow: number;
+          pendingOut: number;
+          pendingChange: number;
+          total: number;
+          utxoCount: number;
+          availableUtxoCount: number;
+        }>(INTERNAL_METHODS.GET_BALANCE_FROM_STORE, [currentAccount.address]);
 
-          // Convert from nicks to NOCK for display
-          const availableNock = storeBalance.available / NOCK_TO_NICKS;
-          const spendableNock = storeBalance.spendableNow / NOCK_TO_NICKS;
-          const totalNock = storeBalance.total / NOCK_TO_NICKS;
-          const pendingOutNock = storeBalance.pendingOut / NOCK_TO_NICKS;
-          accountBalances[account.address] = availableNock;
-          accountSpendableBalances[account.address] = spendableNock;
-          accountBalanceDetails[account.address] = {
-            confirmed: totalNock,
-            pendingOut: pendingOutNock,
-            pendingIn: 0,
-            available: availableNock,
-          };
-        } catch (err) {
-          console.warn(`[Store] Could not get balance for ${account.name}:`, err);
-          // Keep previous balance if fetch fails
-          accountBalances[account.address] = get().wallet.accountBalances[account.address] ?? 0;
-          accountSpendableBalances[account.address] =
-            get().wallet.accountSpendableBalances[account.address] ?? 0;
-          accountBalanceDetails[account.address] = get().wallet.accountBalanceDetails[
-            account.address
-          ] ?? {
-            confirmed: accountBalances[account.address],
+        // Convert from nicks to NOCK for display
+        const availableNock = storeBalance.available / NOCK_TO_NICKS;
+        const spendableNock = storeBalance.spendableNow / NOCK_TO_NICKS;
+        const totalNock = storeBalance.total / NOCK_TO_NICKS;
+        const pendingOutNock = storeBalance.pendingOut / NOCK_TO_NICKS;
+        accountBalances[currentAccount.address] = availableNock;
+        accountSpendableBalances[currentAccount.address] = spendableNock;
+        accountBalanceDetails[currentAccount.address] = {
+          confirmed: totalNock,
+          pendingOut: pendingOutNock,
+          pendingIn: 0,
+          available: availableNock,
+        };
+      } catch (err) {
+        console.warn(`[Store] Could not get balance for ${currentAccount.name}:`, err);
+        // Keep previous balance if fetch fails
+        if (accountBalances[currentAccount.address] === undefined) {
+          accountBalances[currentAccount.address] = 0;
+        }
+        if (accountSpendableBalances[currentAccount.address] === undefined) {
+          accountSpendableBalances[currentAccount.address] = 0;
+        }
+        if (accountBalanceDetails[currentAccount.address] === undefined) {
+          accountBalanceDetails[currentAccount.address] = {
+            confirmed: accountBalances[currentAccount.address],
             pendingOut: 0,
             pendingIn: 0,
-            available: accountBalances[account.address],
+            available: accountBalances[currentAccount.address],
           };
         }
       }
@@ -549,12 +703,22 @@ export const useStore = create<AppStore>((set, get) => ({
         console.warn('[Store] Failed to cache balances:', cacheErr);
       }
 
+      // If the user switched accounts while we were awaiting the sync/fetch,
+      // don't clobber the top-level `balance` / `availableBalance` / etc. with
+      // stale numbers from the previous account.
+      const latestCurrent = get().wallet.currentAccount;
+      const accountStillCurrent = latestCurrent?.address === currentAccount.address;
+
       set({
         wallet: {
           ...get().wallet,
-          balance: currentBalance,
-          availableBalance: currentBalance,
-          spendableBalance: currentSpendable,
+          ...(accountStillCurrent
+            ? {
+                balance: currentBalance,
+                availableBalance: currentBalance,
+                spendableBalance: currentSpendable,
+              }
+            : {}),
           accountBalances,
           accountSpendableBalances,
           accountBalanceDetails,

@@ -14,10 +14,23 @@ import PencilEditIcon from '../assets/pencil-edit-icon.svg';
 import SettingsGearIcon from '../assets/settings-gear-icon.svg';
 
 export function WalletSettingsScreen() {
-  const { navigate, wallet, syncWallet } = useStore();
+  const {
+    navigate,
+    wallet,
+    refreshWalletAccounts,
+    fetchBalance,
+    settingsAccountAddress,
+    setSettingsAccountAddress,
+  } = useStore();
 
-  // Get current account from vault
-  const currentAccount = wallet.currentAccount || wallet.accounts[0];
+  // Use the account we're editing (when opened from dropdown) or current account
+  const currentAccount =
+    (settingsAccountAddress
+      ? wallet.accounts.find(a => a.address === settingsAccountAddress)
+      : null) ??
+    wallet.currentAccount ??
+    wallet.accounts.find(a => !a.hidden) ??
+    wallet.accounts[0];
   const walletName = currentAccount?.name || 'Wallet';
   const walletAddress = currentAccount?.address || '';
 
@@ -44,6 +57,7 @@ export function WalletSettingsScreen() {
   }, [walletName]);
 
   function handleClose() {
+    setSettingsAccountAddress(null);
     navigate('home');
   }
   function handleStyling() {
@@ -60,25 +74,13 @@ export function WalletSettingsScreen() {
       return;
     }
 
-    // Call the vault to rename the account
     const result = await send<{ ok?: boolean; error?: string }>(INTERNAL_METHODS.RENAME_ACCOUNT, [
-      currentAccount.index,
+      currentAccount.address,
       editedName.trim(),
     ]);
 
     if (result?.ok) {
-      // Update wallet state with new name
-      const updatedAccounts = wallet.accounts.map(acc =>
-        acc.index === currentAccount.index ? { ...acc, name: editedName.trim() } : acc
-      );
-      const updatedCurrentAccount = { ...currentAccount, name: editedName.trim() };
-
-      syncWallet({
-        ...wallet,
-        accounts: updatedAccounts,
-        currentAccount: updatedCurrentAccount,
-      });
-
+      await refreshWalletAccounts();
       setIsEditingName(false);
     } else if (result?.error) {
       alert(`Failed to rename account: ${result.error}`);
@@ -113,32 +115,19 @@ export function WalletSettingsScreen() {
   async function confirmRemoveWallet() {
     if (!currentAccount) return;
 
-    const result = await send<{ ok?: boolean; switchedTo?: number; error?: string }>(
+    const result = await send<{ ok?: boolean; switchedTo?: string; error?: string }>(
       INTERNAL_METHODS.HIDE_ACCOUNT,
-      [currentAccount.index]
+      [currentAccount.address]
     );
 
     if (result?.ok) {
-      // Update wallet state - filter out hidden account
-      const updatedAccounts = wallet.accounts.map(acc =>
-        acc.index === currentAccount.index ? { ...acc, hidden: true } : acc
-      );
+      // Reload accounts + seedSources from vault — only patching flat `accounts` left
+      // `seedSources` stale so Home grouped list / "Add sub-wallet" rows were wrong.
+      await refreshWalletAccounts();
+      void fetchBalance();
 
-      // If we switched accounts, update the current account
-      let updatedCurrentAccount = currentAccount;
-      if (result.switchedTo !== undefined) {
-        updatedCurrentAccount =
-          updatedAccounts.find(acc => acc.index === result.switchedTo) || currentAccount;
-      }
-
-      syncWallet({
-        ...wallet,
-        accounts: updatedAccounts,
-        currentAccount: updatedCurrentAccount,
-      });
-
-      // Close settings and go back to home
       setShowRemoveConfirm(false);
+      setSettingsAccountAddress(null);
       navigate('home');
     } else if (result?.error) {
       setShowRemoveConfirm(false);
