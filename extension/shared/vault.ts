@@ -2418,7 +2418,7 @@ export class Vault {
         {
           inputNotes: wasmNotes,
           spendConditions,
-          amountInNicks: amountNicks as WasmNicks,
+          amountInNicks: amountNicks as Nicks,
           destinationAddress,
           refundPkh: senderPKH,
         },
