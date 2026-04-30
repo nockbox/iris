@@ -151,12 +151,16 @@ export async function buildV0MigrationTx(
           result.v0MigrationTxSignPayload,
           txEngineSettings
         );
-        const feeNicks = await feeNicksAfterSign(builder, privateKey);
-        result = {
-          ...result,
-          fee: feeNicks as BuildV0MigrationTxResult['fee'],
-          feeNock: Number(BigInt(feeNicks)) / NOCK_TO_NICKS,
-        };
+        try {
+          const feeNicks = await feeNicksAfterSign(builder, privateKey);
+          result = {
+            ...result,
+            fee: feeNicks as BuildV0MigrationTxResult['fee'],
+            feeNock: Number(BigInt(feeNicks)) / NOCK_TO_NICKS,
+          };
+        } finally {
+          builder.free();
+        }
       } finally {
         privateKey.free();
       }
@@ -186,10 +190,12 @@ export async function signAndBroadcastV0Migration(
     throw new Error('Cannot derive signing key from mnemonic');
   }
 
+  let builder: wasm.TxBuilder | undefined;
+
   try {
     const { rawTx, notes, spendConditions, refundLock } = payload;
 
-    const builder = buildV0MigrationTxBuilderFromPayload(
+    builder = buildV0MigrationTxBuilderFromPayload(
       { rawTx, notes, spendConditions, refundLock },
       txEngineSettings
     );
@@ -204,11 +210,11 @@ export async function signAndBroadcastV0Migration(
     const signedTx = builder.build();
     const signedRawTx = wasm.nockchainTxToRawTx(signedTx) as wasm.RawTxV1;
     const protobuf = wasm.rawTxToProtobuf(signedRawTx);
+    const txId = signedTx.id;
 
     const rpcClient = createBrowserClient(grpcEndpoint);
     // Note: the node's WalletSendTransaction ACK is an empty Acknowledged
     await rpcClient.sendTransaction(protobuf);
-    const txId = signedTx.id;
 
     // Confirmation is driven by the normal wallet history-sync loop (see vault.ts),
     // which uses the same mempool/peek path as regular sends. Blocking here on
@@ -216,6 +222,7 @@ export async function signAndBroadcastV0Migration(
     // "Peek operation failed" for freshly-broadcast v0→v1 migration txs.
     return { txId, confirmed: false };
   } finally {
+    builder?.free();
     masterKey.free();
   }
 }
