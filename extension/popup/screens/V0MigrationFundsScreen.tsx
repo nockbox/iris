@@ -377,7 +377,8 @@ export function V0MigrationFundsScreen() {
               className="text-[13px] leading-[18px]"
               style={{ color: 'var(--color-text-muted)' }}
             >
-              Calculating the network fee and preparing your v0 notes. Don't close this popup. This could take a while.
+              Calculating the network fee and preparing your v0 notes. Don't close this popup. This
+              could take a while.
             </div>
           </div>
         </div>
