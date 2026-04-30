@@ -1,9 +1,10 @@
 @import 'tailwindcss';
 
-/* Raveo Display - variable font from https://github.com/jakubfoglar/raveo */
+/* Raveo Display — https://github.com/jakubfoglar/raveo (bundled subset, MPL-2.0). */
 @font-face {
   font-family: 'Raveo Display';
-  src: url('https://cdn.jsdelivr.net/gh/jakubfoglar/raveo@v1.1/fonts/variable/RaveoVF-subsetted.woff2')
+  src:
+    url('./fonts/RaveoVF-subsetted.woff2')
     format('woff2-variations');
   font-weight: 100 900;
   font-style: normal;
