@@ -7,15 +7,24 @@ import { base58 } from '@scure/base';
 import { guard } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
 
+/** PKH / lock-root digest: canonical base58-encoded 40-byte hash; must satisfy iris-wasm `guard.isDigest`. */
 export function parseDigestString(value: string): wasm.Digest {
-  const bytes = base58.decode(value);
+  const trimmed = value.trim();
+  let bytes: Uint8Array;
+  try {
+    bytes = base58.decode(trimmed);
+  } catch {
+    throw new Error('Invalid digest: not valid base58');
+  }
   if (bytes.length !== 40) {
     throw new Error(`Invalid digest length: ${bytes.length}, expected 40 bytes`);
   }
-  if (!guard.isDigest(value)) {
-    throw new Error('Invalid digest encoding');
+  if (!guard.isDigest(trimmed)) {
+    throw new Error(
+      'Invalid digest: not canonical Nockchain base58 atom encoding (iris-wasm Digest guard)'
+    );
   }
-  return value;
+  return trimmed;
 }
 
 function toBlockHeight(value: number): wasm.BlockHeight {
