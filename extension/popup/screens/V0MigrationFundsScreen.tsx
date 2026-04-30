@@ -24,13 +24,8 @@ function yieldToPaint(): Promise<void> {
 }
 
 export function V0MigrationFundsScreen() {
-  const {
-    navigate,
-    wallet,
-    v0MigrationDraft,
-    setV0MigrationDraft,
-    resetV0MigrationDraft,
-  } = useStore();
+  const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft, resetV0MigrationDraft } =
+    useStore();
   const visibleAccounts = wallet.accounts.filter(account => !account.hidden);
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [buildError, setBuildError] = useState('');

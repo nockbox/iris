@@ -22,9 +22,7 @@ import type { V0MigrationTxSignPayload } from '@nockbox/iris-sdk';
 // will live here until we stop supporting v0 migration down the line
 let v0MigrationMnemonic: string | undefined;
 let onboardingPassword: string | undefined;
-let walletTransactionsFetchInFlight:
-  | { address: string; promise: Promise<void> }
-  | null = null;
+let walletTransactionsFetchInFlight: { address: string; promise: Promise<void> } | null = null;
 
 export function setV0MigrationMnemonic(mnemonic: string | undefined) {
   v0MigrationMnemonic = mnemonic;

@@ -74,8 +74,7 @@ export function SwapReviewScreen() {
   const sendUsdValue = priceUsd > 0 ? formatUsd(sendAmountNock * priceUsd) : null;
   const receiveUsdValue = priceUsd > 0 ? formatUsd(receiveAmountNock * priceUsd) : null;
 
-  const networkFeeDisplay =
-    networkFeeNicks != null ? formatNock(nickToNock(networkFeeNicks)) : '—';
+  const networkFeeDisplay = networkFeeNicks != null ? formatNock(nickToNock(networkFeeNicks)) : '—';
 
   const bridgeProtocolFeeAmountDisplay = bridgeProtocolFeeNock.toLocaleString('en-US', {
     minimumFractionDigits: 0,

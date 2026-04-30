@@ -3552,8 +3552,7 @@ export class Vault {
     }
 
     const builtFeeNum = Number(bridgeResult.fee);
-    const expectedChangeNicks =
-      BigInt(selectedTotal) - BigInt(amountNicks) - BigInt(builtFeeNum);
+    const expectedChangeNicks = BigInt(selectedTotal) - BigInt(amountNicks) - BigInt(builtFeeNum);
 
     return {
       bridgeResult,
