@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { useStore } from '../store';
+import { setV0MigrationMnemonic, useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { Alert } from '../components/Alert';
 import lockIcon from '../assets/lock-icon.svg';
@@ -10,7 +10,7 @@ import { queryV0Balance } from '../../shared/v0-migration';
 const WORD_COUNT = 24;
 
 export function V0MigrationSetupScreen() {
-  const { navigate, setV0MigrationDraft } = useStore();
+  const { navigate, setV0MigrationDraft, resetV0MigrationDraft } = useStore();
   const [showKeyfileImport, setShowKeyfileImport] = useState(false);
   const [keyfileError, setKeyfileError] = useState('');
   const [discoverError, setDiscoverError] = useState('');
@@ -116,6 +116,7 @@ export function V0MigrationSetupScreen() {
     setDiscoverError('');
     setIsDiscovering(true);
     try {
+      setV0MigrationMnemonic(undefined);
       const mnemonic = words.join(' ').trim();
       const result = await queryV0Balance(mnemonic);
 
@@ -128,9 +129,9 @@ export function V0MigrationSetupScreen() {
         throw new Error(msg);
       }
 
+      setV0MigrationMnemonic(mnemonic);
       setV0MigrationDraft({
         sourceAddress: result.sourceAddress,
-        v0Mnemonic: mnemonic,
         v0Notes: result.v0Notes,
         v0BalanceNock: result.totalNock,
         migratedAmountNock: undefined,
@@ -278,7 +279,10 @@ export function V0MigrationSetupScreen() {
           <div className="flex gap-3">
             <button
               type="button"
-              onClick={() => navigate('settings')}
+              onClick={() => {
+                resetV0MigrationDraft();
+                navigate('settings');
+              }}
               className="flex-1 h-12 px-5 py-[15px] bg-[var(--color-surface-800)] text-[var(--color-text-primary)] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90 font-sans font-medium"
               style={{
                 fontSize: 'var(--font-size-base)',

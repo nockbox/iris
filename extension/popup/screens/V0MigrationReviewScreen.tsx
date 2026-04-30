@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useStore } from '../store';
+import { getV0MigrationMnemonic, useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../components/AccountIcon';
 import WalletIconYellow from '../assets/wallet-icon-yellow.svg';
@@ -75,20 +75,18 @@ export function V0MigrationReviewScreen() {
     logV0MigrationUnsignedTxPayload(payload);
   }, [v0MigrationDraft.v0MigrationTxSignPayload]);
 
+  const v0Mnemonic = getV0MigrationMnemonic();
   const canSend =
-    Boolean(v0MigrationDraft.v0MigrationTxSignPayload) &&
-    Boolean(v0MigrationDraft.v0Mnemonic) &&
-    !isSending;
+    Boolean(v0MigrationDraft.v0MigrationTxSignPayload) && Boolean(v0Mnemonic) && !isSending;
 
   async function handleSend() {
-    if (!canSend || !v0MigrationDraft.v0Mnemonic || !v0MigrationDraft.v0MigrationTxSignPayload)
-      return;
+    if (!canSend || !v0Mnemonic || !v0MigrationDraft.v0MigrationTxSignPayload) return;
 
     setSendError('');
     setIsSending(true);
     try {
       const { txId } = await signAndBroadcastV0Migration(
-        v0MigrationDraft.v0Mnemonic,
+        v0Mnemonic,
         v0MigrationDraft.v0MigrationTxSignPayload
       );
       const sentAmount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock ?? 0;

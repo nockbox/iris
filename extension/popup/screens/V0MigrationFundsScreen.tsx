@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { useStore } from '../store';
+import { getV0MigrationMnemonic, useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { AccountIcon } from '../components/AccountIcon';
 import WalletIconYellow from '../assets/wallet-icon-yellow.svg';
@@ -24,8 +24,13 @@ function yieldToPaint(): Promise<void> {
 }
 
 export function V0MigrationFundsScreen() {
-  const { navigate, wallet, v0MigrationDraft, setV0MigrationDraft, resetV0MigrationDraft } =
-    useStore();
+  const {
+    navigate,
+    wallet,
+    v0MigrationDraft,
+    setV0MigrationDraft,
+    resetV0MigrationDraft,
+  } = useStore();
   const visibleAccounts = wallet.accounts.filter(account => !account.hidden);
   const [showWalletPicker, setShowWalletPicker] = useState(false);
   const [buildError, setBuildError] = useState('');
@@ -83,7 +88,8 @@ export function V0MigrationFundsScreen() {
   async function handleContinue() {
     if (!destinationWallet || isBuilding) return;
 
-    if (!v0MigrationDraft.v0Mnemonic) {
+    const v0Mnemonic = getV0MigrationMnemonic();
+    if (!v0Mnemonic) {
       setBuildError('No recovery phrase loaded. Go back and import your recovery phrase again.');
       return;
     }
@@ -93,7 +99,7 @@ export function V0MigrationFundsScreen() {
     try {
       await yieldToPaint();
       const result = await buildV0MigrationTx(
-        v0MigrationDraft.v0Mnemonic,
+        v0Mnemonic,
         pkhAddressToDigest(destinationWallet.address)
       );
       if (!result.txId || !result.v0MigrationTxSignPayload) {

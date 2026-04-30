@@ -19,6 +19,21 @@ import {
 import { send } from './utils/messaging';
 import type { V0MigrationTxSignPayload } from '@nockbox/iris-sdk';
 
+// will live here until we stop supporting v0 migration down the line
+let v0MigrationMnemonic: string | undefined;
+
+export function setV0MigrationMnemonic(mnemonic: string | undefined) {
+  v0MigrationMnemonic = mnemonic;
+}
+
+export function getV0MigrationMnemonic() {
+  return v0MigrationMnemonic;
+}
+
+export function clearV0MigrationMnemonic() {
+  v0MigrationMnemonic = undefined;
+}
+
 /**
  * All available screens in the wallet
  */
@@ -144,7 +159,6 @@ interface AppStore {
     destinationAddress: string | null;
     keyfileName?: string;
     sourceAddress?: string;
-    v0Mnemonic?: string; // Kept in memory only until sign+broadcast
     v0Notes?: any[];
     v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
     txId?: string;
@@ -157,7 +171,6 @@ interface AppStore {
       destinationAddress: string | null;
       keyfileName?: string;
       sourceAddress?: string;
-      v0Mnemonic?: string;
       v0Notes?: any[];
       v0MigrationTxSignPayload?: V0MigrationTxSignPayload;
       txId?: string;
@@ -438,6 +451,7 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   resetV0MigrationDraft: () => {
+    clearV0MigrationMnemonic();
     set({
       v0MigrationDraft: {
         v0BalanceNock: 0,
@@ -446,7 +460,6 @@ export const useStore = create<AppStore>((set, get) => ({
         destinationAddress: null,
         keyfileName: undefined,
         sourceAddress: undefined,
-        v0Mnemonic: undefined,
         v0Notes: undefined,
         v0MigrationTxSignPayload: undefined,
         txId: undefined,
