@@ -302,7 +302,7 @@ export function V0MigrationReviewScreen() {
               className="text-[13px] leading-[18px]"
               style={{ color: 'var(--color-text-muted)' }}
             >
-              Signing and submitting your transaction. This could take a while.
+              Signing and submitting your transaction. Don't close the popup. This could take a while.
             </div>
           </div>
         </div>
