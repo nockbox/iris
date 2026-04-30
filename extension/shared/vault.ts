@@ -1011,6 +1011,9 @@ export class Vault {
     }
 
     const words = mnemonic ? mnemonic.trim() : generateMnemonic();
+    if (mnemonic && !validateMnemonic(words)) {
+      return { error: ERROR_CODES.INVALID_MNEMONIC };
+    }
 
     // Detect duplicate: same mnemonic already exists in the vault
     const existing = this.seedAccounts.find(s => s.type === 'mnemonic' && s.mnemonic === words);
@@ -3495,8 +3498,9 @@ export class Vault {
       throw new Error('No available UTXOs.');
     }
 
-    // Greedy selection headroom only (nicks); WASM fee drives actual fee / expectedChange below.
-    const selectionSlackNicks = 100 * NOCK_TO_NICKS;
+    // Greedy selection headroom for chain fee only (nicks). Keep small: WASM computes the
+    // real fee below; an oversized slack blocks near-max bridges (e.g. 105 NOCK → bridge 100).
+    const selectionSlackNicks = 10 * NOCK_TO_NICKS;
     const targetAmount = Number(amountNicks) + selectionSlackNicks;
     const selectedStoredNotes = selectNotesForAmount(availableStoredNotes, targetAmount);
     if (!selectedStoredNotes) {
