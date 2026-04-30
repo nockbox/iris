@@ -3482,8 +3482,9 @@ export class Vault {
       throw new Error('No available UTXOs.');
     }
 
-    const estimatedFeeNum = 2 * NOCK_TO_NICKS;
-    const targetAmount = Number(amountNicks) + estimatedFeeNum;
+    // Greedy selection headroom only (nicks); WASM fee drives actual fee / expectedChange below.
+    const selectionSlackNicks = 100 * NOCK_TO_NICKS;
+    const targetAmount = Number(amountNicks) + selectionSlackNicks;
     const selectedStoredNotes = selectNotesForAmount(availableStoredNotes, targetAmount);
     if (!selectedStoredNotes) {
       throw new Error('Insufficient available funds');
@@ -3491,30 +3492,9 @@ export class Vault {
 
     const selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
     const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
-    const expectedChangeNicks =
-      BigInt(selectedTotal) - BigInt(amountNicks) - BigInt(estimatedFeeNum);
 
     const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
     const senderPKH = currentAccount.address;
-
-    // Log selected inputs before spend-condition discovery so failures still have context.
-    console.log('[Bridge Swap] Selected input notes (pre-discovery):', {
-      senderPKH,
-      destinationAddress,
-      amountNicks,
-      selectedNoteIds,
-      selectedInputCount: sortedStoredNotes.length,
-      selectedNotes: sortedStoredNotes.map(n => ({
-        noteId: n.noteId,
-        assets: n.assets,
-        nameFirst: n.nameFirst,
-        protoNameFirst:
-          (n.protoNote as { note_version?: { V1?: { name?: { first?: string } } } } | undefined)
-            ?.note_version?.V1?.name?.first ?? null,
-        originPage: n.originPage,
-        hasProtoNote: Boolean(n.protoNote),
-      })),
-    });
 
     const wasmNotes = sortedStoredNotes.map(n => {
       if (!n.protoNote) {
@@ -3530,14 +3510,7 @@ export class Vault {
             nameFirst: n.nameFirst,
             originPage: n.originPage,
           });
-        } catch (error) {
-          console.error('[Bridge Swap] Spend-condition discovery failed for input note:', {
-            noteId: n.noteId,
-            nameFirst: n.nameFirst,
-            originPage: n.originPage,
-            assets: n.assets,
-            error: error instanceof Error ? error.message : String(error),
-          });
+        } catch {
           throw new Error(
             `Spend condition discovery failed for note ${n.noteId} (${n.nameFirst.slice(0, 16)}...)`
           );
@@ -3547,28 +3520,6 @@ export class Vault {
 
     const blockHeight = this.getAccountBlockHeight(currentAccount.address);
     const txEngineSettings = await getTxEngineSettingsForHeight(blockHeight);
-
-    const spendConditionSummaries = spendConditions.map((condition, idx) => {
-      let derivedNameFirst: string | null = null;
-      try {
-        derivedNameFirst = wasm.spendConditionFirstName(condition);
-      } catch {
-        // Keep null; we'll surface mismatch in debug object.
-      }
-      return {
-        noteId: sortedStoredNotes[idx]?.noteId,
-        expectedNameFirst: sortedStoredNotes[idx]?.nameFirst ?? null,
-        derivedNameFirst,
-        match:
-          derivedNameFirst !== null &&
-          derivedNameFirst === (sortedStoredNotes[idx]?.nameFirst ?? null),
-      };
-    });
-
-    console.log('[Bridge Swap] Resolved spend conditions:', {
-      senderPKH,
-      spendConditionSummaries,
-    });
 
     let bridgeResult: Awaited<ReturnType<typeof buildBridgeTransaction>>;
     try {
@@ -3581,30 +3532,15 @@ export class Vault {
           refundPkh: senderPKH,
         },
         BRIDGE_CONFIG,
-        { txEngineSettings, debug: true }
+        { txEngineSettings }
       );
     } catch (error) {
-      console.error('[Bridge Swap] buildBridgeTransaction failed:', {
-        senderPKH,
-        destinationAddress,
-        amountNicks,
-        selectedNoteIds,
-        spendConditionSummaries,
-        error: error instanceof Error ? error.message : String(error),
-      });
       throw error;
     }
 
-    console.log('[Bridge Swap] Build context:', {
-      destinationAddress,
-      amountNicks,
-      selectedNoteIds,
-      selectedInputCount: wasmNotes.length,
-      estimatedFeeNicks: estimatedFeeNum,
-      builtFeeNicks: Number(bridgeResult.fee),
-      expectedChangeNicks: expectedChangeNicks.toString(),
-      txId: bridgeResult.txId,
-    });
+    const builtFeeNum = Number(bridgeResult.fee);
+    const expectedChangeNicks =
+      BigInt(selectedTotal) - BigInt(amountNicks) - BigInt(builtFeeNum);
 
     return {
       bridgeResult,
@@ -3613,7 +3549,7 @@ export class Vault {
       wasmNotes,
       spendConditions,
       selectedNoteIds,
-      estimatedFeeNum,
+      estimatedFeeNum: builtFeeNum,
       expectedChangeNicks,
       txEngineSettings,
     };
@@ -3624,60 +3560,15 @@ export class Vault {
   ): Promise<void> {
     const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
     const signedTx = await this.signRawTx({ rawTx });
-
     const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
     const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
-    // Signing changes the tx bytes (witness data), so the id recomputes.
-    const signedTxId = signedRawTx.id;
 
     const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
       txEngineSettings: buildCtx.txEngineSettings,
-      debug: true,
     });
     if (!validation.valid) {
       throw new Error(validation.error ?? 'Bridge transaction validation failed');
     }
-    const expectedDestination = buildCtx.destinationAddress.toLowerCase();
-    const reconstructedDestination = (validation.destinationAddress ?? '').toLowerCase();
-    const destinationRoundtripMatch =
-      expectedDestination === reconstructedDestination ||
-      `0x${expectedDestination.replace(/^0x/, '')}` ===
-        `0x${reconstructedDestination.replace(/^0x/, '')}`;
-    const rpcEndpoint = await getEffectiveRpcEndpoint();
-    const rpcClient = createBrowserClient(rpcEndpoint);
-    const blockHeight = await rpcClient.getCurrentBlockHeight();
-    const outputs = wasm.rawTxOutputs(signedRawTx, blockHeight, buildCtx.txEngineSettings);
-    const derivedOutputs = outputs.map(output => {
-      const protobufNote = wasm.noteToProtobuf(output);
-      const note = protobufNote as Record<string, unknown>;
-      const noteVersion = note.note_version as Record<string, unknown> | undefined;
-      const v1 = noteVersion?.V1 as Record<string, unknown> | undefined;
-      const v1Name = v1?.name as Record<string, unknown> | undefined;
-      const v1Assets = v1?.assets as Record<string, unknown> | undefined;
-      return {
-        firstName: typeof v1Name?.first === 'string' ? v1Name.first : null,
-        assetsNicks: typeof v1Assets?.value === 'string' ? v1Assets.value : null,
-        fullOutputNote: protobufNote,
-      };
-    });
-
-    console.log('[Bridge Swap] Final signed transaction (before sendTransaction):', {
-      unsignedTxId: buildCtx.bridgeResult.txId,
-      signedTxId,
-      feeNicks: Number(buildCtx.bridgeResult.fee),
-      refundPkh: buildCtx.refundPkh,
-      destinationRoundtrip: {
-        requested: buildCtx.destinationAddress,
-        reconstructed: validation.destinationAddress,
-        belts: validation.belts,
-        match: destinationRoundtripMatch,
-      },
-      derivedOutputs,
-      fullSignedRawTx: signedRawTx,
-      protobufPayload: signedProtobufTx,
-    });
-
-    // TEMP: Remove this helper and its estimateBridgeFee call after bridge tx inspection is done.
   }
 
   /**
@@ -3700,7 +3591,6 @@ export class Vault {
       const signedTxId = signedRawTx.id;
       const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
         txEngineSettings: buildCtx.txEngineSettings,
-        debug: true,
       });
       if (!validation.valid) {
         throw new Error(validation.error ?? 'Bridge transaction validation failed');
