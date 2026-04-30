@@ -21,6 +21,9 @@ import type { V0MigrationTxSignPayload } from '@nockbox/iris-sdk';
 
 // will live here until we stop supporting v0 migration down the line
 let v0MigrationMnemonic: string | undefined;
+let walletTransactionsFetchInFlight:
+  | { address: string; promise: Promise<void> }
+  | null = null;
 
 export function setV0MigrationMnemonic(mnemonic: string | undefined) {
   v0MigrationMnemonic = mnemonic;
@@ -605,7 +608,6 @@ export const useStore = create<AppStore>((set, get) => ({
       // Fetch balance if wallet is unlocked (don't await - let it update when ready)
       if (willFetchBalance) {
         get().fetchBalance();
-        get().fetchWalletTransactions();
       }
     } catch (error) {
       console.error('Failed to initialize app:', error);
@@ -765,34 +767,48 @@ export const useStore = create<AppStore>((set, get) => ({
 
   // Fetch wallet transactions from encrypted store via background
   fetchWalletTransactions: async () => {
+    const currentAccount = get().wallet.currentAccount;
+    if (!currentAccount) return;
+
+    // Capture the address we're fetching for to detect account switches
+    const fetchingForAddress = currentAccount.address;
+    if (walletTransactionsFetchInFlight?.address === fetchingForAddress) {
+      return walletTransactionsFetchInFlight.promise;
+    }
+
+    const fetchPromise = (async () => {
+      try {
+        const response = await send<{
+          ok?: boolean;
+          transactions?: WalletTransaction[];
+          error?: string;
+        }>(INTERNAL_METHODS.GET_WALLET_TRANSACTIONS, [fetchingForAddress]);
+
+        if (response?.error) {
+          console.error('Failed to fetch wallet transactions:', response.error);
+          return;
+        }
+
+        // Check if user switched accounts while we were fetching
+        const accountAfterFetch = get().wallet.currentAccount;
+        if (accountAfterFetch?.address !== fetchingForAddress) {
+          return;
+        }
+
+        set({ walletTransactions: response.transactions || [] });
+      } catch (error) {
+        console.error('Failed to fetch wallet transactions:', error);
+      }
+    })();
+
+    walletTransactionsFetchInFlight = { address: fetchingForAddress, promise: fetchPromise };
+
     try {
-      const currentAccount = get().wallet.currentAccount;
-      if (!currentAccount) return;
-
-      // Capture the address we're fetching for to detect account switches
-      const fetchingForAddress = currentAccount.address;
-
-      const { send } = await import('./utils/messaging');
-      const response = await send<{
-        ok?: boolean;
-        transactions?: WalletTransaction[];
-        error?: string;
-      }>(INTERNAL_METHODS.GET_WALLET_TRANSACTIONS, [fetchingForAddress]);
-
-      if (response?.error) {
-        console.error('Failed to fetch wallet transactions:', response.error);
-        return;
+      await fetchPromise;
+    } finally {
+      if (walletTransactionsFetchInFlight?.promise === fetchPromise) {
+        walletTransactionsFetchInFlight = null;
       }
-
-      // Check if user switched accounts while we were fetching
-      const accountAfterFetch = get().wallet.currentAccount;
-      if (accountAfterFetch?.address !== fetchingForAddress) {
-        return;
-      }
-
-      set({ walletTransactions: response.transactions || [] });
-    } catch (error) {
-      console.error('Failed to fetch wallet transactions:', error);
     }
   },
 }));
