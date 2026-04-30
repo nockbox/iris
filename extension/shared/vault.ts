@@ -1653,6 +1653,19 @@ export class Vault {
     );
   }
 
+  private getPendingTrackableTransactions(accountAddress: string): WalletTransaction[] {
+    const transactions = this.getWalletTransactions(accountAddress);
+    return transactions.filter(
+      t =>
+        (t.direction === 'outgoing' || t.migrationFromV0) &&
+        Boolean(t.trackingTxId || t.txHash) &&
+        (t.status === 'created' ||
+          t.status === 'broadcast_pending' ||
+          t.status === 'mempool_seen' ||
+          t.status === 'broadcasted_unconfirmed')
+    );
+  }
+
   /**
    * Get all outgoing transactions (pending + confirmed) for change detection
    */
@@ -1869,7 +1882,7 @@ export class Vault {
       return 0;
     }
 
-    const pendingTxs = this.getPendingOutgoingTransactions(accountAddress);
+    const pendingTxs = this.getPendingTrackableTransactions(accountAddress);
     if (pendingTxs.length === 0) {
       return 0;
     }

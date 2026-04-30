@@ -39,6 +39,7 @@ import type {
   SignRequest,
   ConnectRequest,
   SignRawTxRequest,
+  WalletTransaction,
 } from '../shared/types';
 
 const vault = new Vault();
@@ -1298,6 +1299,64 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         } catch (err) {
           console.error('[Background] GET_WALLET_TRANSACTIONS error:', err);
           sendResponse({ error: 'Failed to get wallet transactions' });
+        }
+        return;
+
+      case INTERNAL_METHODS.RECORD_PENDING_V0_MIGRATION:
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+        try {
+          const tx = payload.params?.[0] as
+            | {
+                txId?: string;
+                accountAddress?: string;
+                amount?: number;
+                fee?: number;
+                sender?: string;
+                recipient?: string;
+                priceUsdAtTime?: number;
+              }
+            | undefined;
+
+          if (!tx?.txId || !tx.accountAddress || !tx.recipient) {
+            sendResponse({ error: 'Migration transaction details required' });
+            return;
+          }
+
+          const account = vault.getAccounts().find(a => a.address === tx.accountAddress);
+          if (!account) {
+            sendResponse({ error: 'Account not found' });
+            return;
+          }
+
+          const now = Date.now();
+          const walletTx: WalletTransaction = {
+            id: tx.txId,
+            txHash: tx.txId,
+            trackingTxId: tx.txId,
+            accountAddress: tx.accountAddress,
+            direction: 'incoming',
+            createdAt: now,
+            updatedAt: now,
+            priceUsdAtTime: tx.priceUsdAtTime,
+            status: 'broadcasted_unconfirmed',
+            origin: 'popup_send',
+            recipient: tx.recipient,
+            amount: tx.amount,
+            fee: tx.fee,
+            sender: tx.sender,
+            migrationFromV0: true,
+            lastMempoolCheckAt: 0,
+            lastConfirmationCheckAt: 0,
+          };
+
+          await vault.upsertWalletTransaction(walletTx);
+          sendResponse({ ok: true, transaction: walletTx });
+        } catch (err) {
+          console.error('[Background] RECORD_PENDING_V0_MIGRATION error:', err);
+          sendResponse({ error: 'Failed to record pending migration transaction' });
         }
         return;
 

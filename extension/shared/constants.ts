@@ -145,6 +145,9 @@ export const INTERNAL_METHODS = {
   /** Get wallet transactions for an account (from encrypted store) */
   GET_WALLET_TRANSACTIONS: 'wallet:getWalletTransactions',
 
+  /** Record a v0 migration transaction after broadcast, before chain confirmation */
+  RECORD_PENDING_V0_MIGRATION: 'wallet:recordPendingV0Migration',
+
   /** Get cached balances for all accounts (from encrypted store) */
   GET_CACHED_BALANCES: 'wallet:getCachedBalances',
 

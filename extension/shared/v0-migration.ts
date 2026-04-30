@@ -22,6 +22,7 @@ export type { V0BalanceResult };
 
 /** Dedupes React Strict Mode double-mount for the same built tx id. */
 let lastLoggedV0MigrationUnsignedTxId: string | undefined;
+const V0_MIGRATION_SIGNED_TX_DRY_RUN = true;
 
 /**
  * Log the unsigned migration tx for inspection before the user taps Send.
@@ -211,6 +212,54 @@ export async function signAndBroadcastV0Migration(
     const signedRawTx = wasm.nockchainTxToRawTx(signedTx) as wasm.RawTxV1;
     const protobuf = wasm.rawTxToProtobuf(signedRawTx);
     const txId = signedTx.id;
+
+    if (V0_MIGRATION_SIGNED_TX_DRY_RUN) {
+      const signedSpendsSummary =
+        ((protobuf as unknown as Record<string, unknown>).spends as
+          | Array<Record<string, unknown>>
+          | undefined)?.map((entry, i) => {
+          const spend = (entry.spend as Record<string, unknown> | undefined) ?? {};
+          const spendKind = (spend.spend_kind as Record<string, unknown> | undefined) ?? {};
+          const legacy = (spendKind.Legacy as Record<string, unknown> | undefined) ?? {};
+          const signature = (legacy.signature as Record<string, unknown> | undefined) ?? {};
+          const sigEntries = Array.isArray(signature.entries) ? signature.entries.length : 0;
+          const seeds = Array.isArray(legacy.seeds) ? legacy.seeds : [];
+          const seedLockRoots = [
+            ...new Set(
+              seeds
+                .map(seed => (seed as Record<string, unknown>).lock_root)
+                .filter((value): value is string => typeof value === 'string')
+            ),
+          ];
+
+          return {
+            index: i,
+            sigEntries,
+            seedLockRoots,
+            fee: (legacy.fee as Record<string, unknown> | undefined)?.value,
+          };
+        }) ?? [];
+
+      console.log('[V0 Migration] DRY RUN - fully-signed transaction (NOT broadcast):', {
+        signedTxId: txId,
+        unsignedTxId: (rawTx as { id?: string }).id,
+        idChangedAfterSigning: (rawTx as { id?: string }).id !== txId,
+        finalFeeNicks: String(builder.curFee()),
+        payloadRefundLock: refundLock,
+        allSpendsSigned: signedSpendsSummary.every(spend => spend.sigEntries > 0),
+        allSpendsToPayloadRefundLock: signedSpendsSummary.every(
+          spend => spend.seedLockRoots.length === 1 && spend.seedLockRoots[0] === refundLock
+        ),
+        spendsCount: signedSpendsSummary.length,
+        signedSpendsSummary,
+        protobuf,
+        fullSignedRawTx: signedRawTx,
+      });
+
+      throw new Error(
+        'V0 migration DRY RUN: transaction signed and logged. Broadcast intentionally skipped.'
+      );
+    }
 
     const rpcClient = createBrowserClient(grpcEndpoint);
     // Note: the node's WalletSendTransaction ACK is an empty Acknowledged

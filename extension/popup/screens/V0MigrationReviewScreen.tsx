@@ -10,6 +10,8 @@ import {
 } from '../../shared/v0-migration';
 import { formatNock } from '../../shared/currency';
 import { Alert } from '../components/Alert';
+import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../shared/constants';
+import { send } from '../utils/messaging';
 
 export function V0MigrationReviewScreen() {
   const {
@@ -92,13 +94,41 @@ export function V0MigrationReviewScreen() {
       );
       const sentAmount = v0MigrationDraft.migratedAmountNock ?? v0MigrationDraft.v0BalanceNock ?? 0;
       const feeNock = v0MigrationDraft.feeNock ?? 0;
+      const destinationAddress = v0MigrationDraft.destinationAddress;
+      const sourceAddress = v0MigrationDraft.sourceAddress;
       setLastTransaction({
         txid: txId,
         amount: sentAmount,
         fee: feeNock,
-        from: v0MigrationDraft.sourceAddress,
-        to: destinationWallet?.address,
+        from: sourceAddress,
+        to: destinationAddress ?? undefined,
       });
+      if (destinationAddress) {
+        try {
+          const recordResponse = await send<{ ok?: boolean; error?: string }>(
+            INTERNAL_METHODS.RECORD_PENDING_V0_MIGRATION,
+            [
+              {
+                txId,
+                accountAddress: destinationAddress,
+                amount: Math.round(sentAmount * NOCK_TO_NICKS),
+                fee: Math.round(feeNock * NOCK_TO_NICKS),
+                sender: sourceAddress,
+                recipient: destinationAddress,
+                priceUsdAtTime: priceUsd,
+              },
+            ]
+          );
+          if (recordResponse?.error) {
+            console.warn(
+              '[V0 Migration] Failed to record pending migration transaction:',
+              recordResponse.error
+            );
+          }
+        } catch (recordErr) {
+          console.warn('[V0 Migration] Failed to record pending migration transaction:', recordErr);
+        }
+      }
       resetV0MigrationDraft();
       void fetchBalance();
       void fetchWalletTransactions();
