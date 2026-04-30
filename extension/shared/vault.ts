@@ -16,14 +16,25 @@ import {
   ACCOUNT_COLORS,
   PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
+  MAX_SUBWALLET_DISCOVERY_SCAN,
 } from './constants';
-import { Account } from './types';
-import { buildMultiNotePayment, type Note } from './transaction-builder';
+import { SubAccount, SeedAccount } from './types';
+import {
+  buildMultiNotePayment,
+  discoverSpendConditionForNote,
+  type Note,
+} from './transaction-builder';
 import wasm from './sdk-wasm.js';
 import { queryV1Balance } from './balance-query';
 import { createBrowserClient } from './rpc-client-browser';
-import { getEffectiveRpcEndpoint } from './rpc-config';
-import type { Note as BalanceNote, UTXOStore, WalletTxStore } from './types';
+import type {
+  Note as BalanceNote,
+  UTXOStore,
+  WalletTxStore,
+  SyncStateStore,
+  AccountSyncState,
+} from './types';
+import { getEffectiveRpcConfig, getEffectiveRpcEndpoint } from './rpc-config';
 import { base58 } from '@scure/base';
 import { initWasmModules } from './wasm-utils';
 import {
@@ -41,16 +52,39 @@ import {
   matchChangeOutputs,
 } from './utxo-diff';
 import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
-import type { Nicks } from './currency';
-import {
-  assertNativeRawTx,
-  assertNativeNote,
-  assertNativeSpendCondition,
-} from './sign-raw-tx-compat';
+import { assertNativeRawTx } from './sign-raw-tx-compat';
+import type { SignMessageResponse } from '@nockbox/iris-sdk';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
+import { guard } from '@nockbox/iris-sdk/wasm';
 import { getTxEngineSettingsForHeight } from './rpc-config';
+import { getBothFirstNames } from './first-name-derivation';
+import {
+  createNockblocksClient,
+  isNockblocksConfigured,
+  type NockblocksOutput,
+  type NockblocksSpend,
+  type NockblocksTransaction,
+} from './nockblocks-client.js';
+import { buildBridgeTransaction, validateBridgeTransaction } from '@nockbox/iris-sdk';
+import { BRIDGE_CONFIG } from './bridge-config';
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
-  return getTxEngineSettingsForHeight(blockHeight);
+  return await getTxEngineSettingsForHeight(blockHeight);
+}
+
+async function latestConfiguredTxEngineHeight(): Promise<number> {
+  const config = await getEffectiveRpcConfig();
+  const heights = config.txEngineActivationHeights || {};
+  const latestHeight = Object.keys(heights)
+    .map(Number)
+    .filter(Number.isFinite)
+    .sort((a, b) => b - a)[0];
+
+  if (latestHeight === undefined) {
+    throw new Error('No tx engine settings configured');
+  }
+
+  return latestHeight;
 }
 
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
@@ -167,6 +201,7 @@ interface EncryptedAccountDataBlob {
 interface EncryptedAccountData {
   utxoStore: UTXOStore;
   walletTxStore: WalletTxStore;
+  accountSyncState: SyncStateStore;
   cachedBalances: Record<string, number>; // address -> balance in nicks
 }
 
@@ -194,14 +229,21 @@ interface EncryptedVault {
  * The decrypted vault payload (mnemonic + accounts)
  * This blob rarely changes (only on account creation/modification)
  */
-interface VaultPayload {
+interface LegacyVaultPayload {
   mnemonic: string;
-  accounts: Account[];
+  accounts: SubAccount[];
 }
+
+interface VaultPayloadV2 {
+  version: 2;
+  seedAccounts: SeedAccount[];
+}
+
+type VaultPayload = LegacyVaultPayload | VaultPayloadV2;
 
 interface VaultState {
   locked: boolean;
-  accounts: Account[];
+  accounts: SubAccount[];
   currentAccountIndex: number;
   enc: EncryptedVault | null;
 }
@@ -217,6 +259,9 @@ export class Vault {
   /** Decrypted mnemonic (only stored in memory while unlocked) */
   private mnemonic: string | null = null;
 
+  /** Decrypted seed account sources (mnemonic/external) */
+  private seedAccounts: SeedAccount[] = [];
+
   /** Derived encryption key (only stored in memory while unlocked, cleared on lock) */
   private encryptionKey: CryptoKey | null = null;
 
@@ -226,8 +271,165 @@ export class Vault {
   /** Decrypted wallet transactions (only stored in memory while unlocked) */
   private walletTxStore: WalletTxStore = {};
 
+  /** Per-account sync metadata for history and polling */
+  private accountSyncState: SyncStateStore = {};
+
+  /** Serialize Nockblocks history refreshes per account (avoid overlapping background syncs). */
+  private nockblocksHistoryRefreshChains = new Map<string, Promise<void>>();
+
   /** Cached balances per account (only stored in memory while unlocked) */
   private cachedBalances: Record<string, number> = {};
+
+  private isVaultPayloadV2(payload: VaultPayload): payload is VaultPayloadV2 {
+    return 'version' in payload && payload.version === 2 && Array.isArray(payload.seedAccounts);
+  }
+
+  private getSeedOrdinal(seedAccountId: string): number {
+    const idx = this.seedAccounts.findIndex(seed => seed.id === seedAccountId);
+    return idx >= 0 ? idx + 1 : 1;
+  }
+
+  private getDefaultMasterWalletName(seedOrdinal: number): string {
+    return `Wallet ${seedOrdinal}`;
+  }
+
+  private getDefaultChildWalletName(seedOrdinal: number, childOrdinal: number): string {
+    return `Wallet ${seedOrdinal}.${childOrdinal}`;
+  }
+
+  private isMasterAccount(account: SubAccount | null | undefined): boolean {
+    return (account?.index ?? -1) === 0;
+  }
+
+  /** Returns a style (icon + color) not already used by any account across all seeds. */
+  private pickUnusedStyleGlobally(): { iconStyleId: number; iconColor: string } {
+    const allAccounts = this.seedAccounts.flatMap(seed => seed.accounts);
+    const usedKeys = new Set(
+      allAccounts.map(
+        a => `${a.iconStyleId ?? 1}-${a.iconColor ?? PRESET_WALLET_STYLES[0].iconColor}`
+      )
+    );
+    for (const preset of PRESET_WALLET_STYLES) {
+      const key = `${preset.iconStyleId}-${preset.iconColor}`;
+      if (!usedKeys.has(key)) {
+        return { iconStyleId: preset.iconStyleId, iconColor: preset.iconColor };
+      }
+    }
+    // All presets used: pick random until we find an unused combo
+    const styleIds = Array.from({ length: 15 }, (_, i) => i + 1);
+    const colors = [...ACCOUNT_COLORS];
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const iconStyleId = styleIds[Math.floor(Math.random() * styleIds.length)];
+      const iconColor = colors[Math.floor(Math.random() * colors.length)];
+      const key = `${iconStyleId}-${iconColor}`;
+      if (!usedKeys.has(key)) return { iconStyleId, iconColor };
+    }
+    return { iconStyleId: 1, iconColor: PRESET_WALLET_STYLES[0].iconColor };
+  }
+
+  private createSeedAccountFromLegacy(mnemonic: string, legacyAccounts: SubAccount[]): SeedAccount {
+    const seedAccountId = crypto.randomUUID();
+    const seedOrdinal = this.getSeedOrdinal(seedAccountId);
+    const normalizedAccounts: SubAccount[] = legacyAccounts.map((account, idx) => {
+      const accountIndex = typeof account.index === 'number' ? account.index : idx;
+      return {
+        name:
+          account.name ||
+          (accountIndex === 0
+            ? this.getDefaultMasterWalletName(seedOrdinal)
+            : this.getDefaultChildWalletName(seedOrdinal, accountIndex)),
+        address: account.address,
+        index: accountIndex,
+        iconStyleId: account.iconStyleId,
+        iconColor: account.iconColor,
+        hidden: account.hidden,
+        createdAt: account.createdAt,
+      };
+    });
+
+    return {
+      id: seedAccountId,
+      name: this.getDefaultMasterWalletName(seedOrdinal),
+      type: 'mnemonic',
+      mnemonic,
+      createdAt: Date.now(),
+      accounts: normalizedAccounts,
+    };
+  }
+
+  private normalizeSeedAccount(seedAccount: SeedAccount, seedOrdinal: number): SeedAccount {
+    const seedId = seedAccount.id || crypto.randomUUID();
+    return {
+      ...seedAccount,
+      id: seedId,
+      name: seedAccount.name || this.getDefaultMasterWalletName(seedOrdinal),
+      accounts: (seedAccount.accounts || []).map((account, idx) => {
+        const accountIndex = typeof account.index === 'number' ? account.index : idx;
+        const { derivation: _derivation, ...accountWithoutDerivation } = account as SubAccount & {
+          derivation?: 'master' | 'slip10';
+        };
+        const normalized: SubAccount = {
+          ...accountWithoutDerivation,
+          index: accountIndex,
+          name:
+            account.name ||
+            (accountIndex === 0
+              ? this.getDefaultMasterWalletName(seedOrdinal)
+              : this.getDefaultChildWalletName(seedOrdinal, accountIndex)),
+        };
+
+        return normalized;
+      }),
+    };
+  }
+
+  private decodeVaultPayload(rawPayload: string): {
+    seedAccounts: SeedAccount[];
+    migrated: boolean;
+  } {
+    const parsed = JSON.parse(rawPayload) as VaultPayload;
+
+    if (this.isVaultPayloadV2(parsed)) {
+      return {
+        seedAccounts: parsed.seedAccounts.map((seedAccount, idx) =>
+          this.normalizeSeedAccount(seedAccount, idx + 1)
+        ),
+        migrated: false,
+      };
+    }
+
+    return {
+      seedAccounts: [this.createSeedAccountFromLegacy(parsed.mnemonic, parsed.accounts || [])],
+      migrated: true,
+    };
+  }
+
+  private rebuildFlatAccounts(): void {
+    this.state.accounts = this.seedAccounts.flatMap(seedAccount => seedAccount.accounts);
+    if (this.state.accounts.length === 0) {
+      this.state.currentAccountIndex = 0;
+      return;
+    }
+    if (this.state.currentAccountIndex >= this.state.accounts.length) {
+      this.state.currentAccountIndex = 0;
+    }
+  }
+
+  private getSeedAccountForWallet(account: SubAccount | null): SeedAccount | null {
+    if (!account) return null;
+    return (
+      this.seedAccounts.find(seed => seed.accounts.some(a => a.address === account.address)) || null
+    );
+  }
+
+  private getSigningMnemonicForCurrentAccount(): string | null {
+    const currentAccount = this.getCurrentAccount();
+    const seedAccount = this.getSeedAccountForWallet(currentAccount);
+    if (!seedAccount || seedAccount.type !== 'mnemonic') {
+      return null;
+    }
+    return seedAccount.mnemonic || null;
+  }
 
   /**
    * Check if a vault exists in storage (without decrypting)
@@ -290,8 +492,6 @@ export class Vault {
   ): Promise<{ ok: boolean; address: string; mnemonic: string } | { error: string }> {
     // Generate or validate mnemonic
     const words = mnemonic ? mnemonic.trim() : generateMnemonic();
-
-    // Validate imported mnemonic
     if (mnemonic && !validateMnemonic(words)) {
       return { error: ERROR_CODES.INVALID_MNEMONIC };
     }
@@ -302,24 +502,32 @@ export class Vault {
 
     const masterAddress = await deriveAddressFromMaster(words);
 
-    const firstAccount: Account = {
+    const firstSeedAccount: SeedAccount = {
+      id: crypto.randomUUID(),
       name: 'Wallet 1',
-      address: masterAddress,
-      index: 0,
-      iconStyleId: firstPreset.iconStyleId,
-      iconColor: firstPreset.iconColor,
+      type: 'mnemonic',
+      mnemonic: words,
       createdAt: Date.now(),
-      derivation: 'master',
+      accounts: [
+        {
+          name: 'Wallet 1',
+          address: masterAddress,
+          index: 0,
+          iconStyleId: firstPreset.iconStyleId,
+          iconColor: firstPreset.iconColor,
+          createdAt: Date.now(),
+        },
+      ],
     };
 
     // Generate PBKDF2 salt and derive encryption key
     const kdfSalt = rand(16);
     const { key } = await deriveKeyPBKDF2(password, kdfSalt);
 
-    // Encrypt mnemonic + accounts (notes are in a separate blob)
-    const vaultPayload: VaultPayload = {
-      mnemonic: words,
-      accounts: [firstAccount],
+    // Encrypt both mnemonic AND accounts together
+    const vaultPayload: VaultPayloadV2 = {
+      version: 2,
+      seedAccounts: [firstSeedAccount],
     };
     const payloadJson = JSON.stringify(vaultPayload);
     const { iv, ct } = await encryptGCM(key, new TextEncoder().encode(payloadJson));
@@ -351,23 +559,28 @@ export class Vault {
     // Auto-lock timer will handle locking after inactivity
     this.mnemonic = words;
     this.encryptionKey = key; // Cache the key for account operations (rename, create, etc.)
+    this.seedAccounts = [firstSeedAccount];
     this.state = {
       locked: false,
-      accounts: [firstAccount],
+      accounts: [...firstSeedAccount.accounts],
       currentAccountIndex: 0,
       enc: encData,
     };
 
-    return { ok: true, address: firstAccount.address, mnemonic: words };
+    return { ok: true, address: firstSeedAccount.accounts[0].address, mnemonic: words };
   }
 
   /**
    * Unlocks the vault with the provided password
    */
-  async unlock(
-    password: string
-  ): Promise<
-    | { ok: boolean; address: string; accounts: Account[]; currentAccount: Account }
+  async unlock(password: string): Promise<
+    | {
+        ok: boolean;
+        address: string;
+        accounts: SubAccount[];
+        currentAccount: SubAccount;
+        activeSeedSourceId: string | null;
+      }
     | { error: string }
   > {
     const stored = await chrome.storage.local.get([
@@ -410,15 +623,15 @@ export class Vault {
         return { error: ERROR_CODES.BAD_PASSWORD };
       }
 
-      // Parse vault payload
-      const payload = JSON.parse(pt) as VaultPayload;
-      const mnemonic = payload.mnemonic;
-      const accounts = payload.accounts;
+      const decoded = this.decodeVaultPayload(pt);
+      this.seedAccounts = decoded.seedAccounts;
+      this.rebuildFlatAccounts();
 
       // Load account data from separate encrypted blob
       let utxoStore: UTXOStore = {};
       let walletTxStore: WalletTxStore = {};
       let cachedBalances: Record<string, number> = {};
+      let accountSyncState: SyncStateStore = {};
       let loadedFromEncrypted = false;
 
       if (encAccountData) {
@@ -439,13 +652,13 @@ export class Vault {
             }
           }
           walletTxStore = accountData.walletTxStore || {};
+          accountSyncState = accountData.accountSyncState || {};
           cachedBalances = accountData.cachedBalances || {};
           loadedFromEncrypted = true;
-          console.log('[Vault] Loaded account data from encrypted blob');
         }
       }
 
-      // Migration: if no encrypted blob, check for legacy unencrypted stores
+      // Migration: fallback from legacy unencrypted stores
       if (!loadedFromEncrypted) {
         const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
         const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as
@@ -455,32 +668,41 @@ export class Vault {
           | Record<string, number>
           | undefined;
 
-        const hasLegacyData =
-          (legacyUtxoStore && Object.keys(legacyUtxoStore).length > 0) ||
-          (legacyWalletTxStore && Object.keys(legacyWalletTxStore).length > 0) ||
-          (legacyCachedBalances && Object.keys(legacyCachedBalances).length > 0);
-
-        if (hasLegacyData) {
-          console.log('[Vault] Migrating legacy unencrypted stores to encrypted blob');
-          utxoStore = legacyUtxoStore || {};
-          walletTxStore = legacyWalletTxStore || {};
-          cachedBalances = legacyCachedBalances || {};
-        }
+        utxoStore = legacyUtxoStore || {};
+        walletTxStore = legacyWalletTxStore || {};
+        cachedBalances = legacyCachedBalances || {};
       }
 
-      // Store decrypted data in memory
-      this.mnemonic = mnemonic;
       this.encryptionKey = key;
       this.utxoStore = utxoStore;
       this.walletTxStore = walletTxStore;
+      this.accountSyncState = accountSyncState;
       this.cachedBalances = cachedBalances;
 
-      // Complete migration: encrypt and remove legacy stores
+      const resolvedIndex =
+        currentAccountIndex >= 0 && currentAccountIndex < this.state.accounts.length
+          ? currentAccountIndex
+          : 0;
+      this.state = {
+        locked: false,
+        accounts: this.state.accounts,
+        currentAccountIndex: resolvedIndex,
+        enc,
+      };
+      this.mnemonic = this.getSigningMnemonicForCurrentAccount();
+
+      const currentAccount = this.state.accounts[resolvedIndex] || this.state.accounts[0];
+
+      // Persist legacy payload migration + legacy store migration
+      if (decoded.migrated) {
+        await this.saveAccountsToVault();
+      }
       if (!loadedFromEncrypted) {
         const hasData =
           Object.keys(utxoStore).length > 0 ||
           Object.keys(walletTxStore).length > 0 ||
-          Object.keys(cachedBalances).length > 0;
+          Object.keys(cachedBalances).length > 0 ||
+          Object.keys(accountSyncState).length > 0;
         if (hasData) {
           await this.saveAccountData();
           await chrome.storage.local.remove([
@@ -488,23 +710,14 @@ export class Vault {
             STORAGE_KEYS.WALLET_TX_STORE,
             STORAGE_KEYS.CACHED_BALANCES,
           ]);
-          console.log('[Vault] Migration complete');
         }
       }
-
-      this.state = {
-        locked: false,
-        accounts,
-        currentAccountIndex,
-        enc,
-      };
-
-      const currentAccount = accounts[currentAccountIndex] || accounts[0];
       return {
         ok: true,
         address: currentAccount?.address || '',
-        accounts,
+        accounts: this.state.accounts,
         currentAccount,
+        activeSeedSourceId: this.getSeedAccountForWallet(currentAccount)?.id || null,
       };
     } catch (err) {
       return { error: ERROR_CODES.BAD_PASSWORD };
@@ -514,16 +727,23 @@ export class Vault {
   /**
    * Unlocks the vault using a cached encryption key (used for session restore)
    */
-  async unlockWithKey(
-    key: CryptoKey
-  ): Promise<
-    | { ok: boolean; address: string; accounts: Account[]; currentAccount: Account }
+  async unlockWithKey(key: CryptoKey): Promise<
+    | {
+        ok: boolean;
+        address: string;
+        accounts: SubAccount[];
+        currentAccount: SubAccount;
+        activeSeedSourceId: string | null;
+      }
     | { error: string }
   > {
     const stored = await chrome.storage.local.get([
       STORAGE_KEYS.ENCRYPTED_VAULT,
       STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA,
       STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
+      STORAGE_KEYS.UTXO_STORE,
+      STORAGE_KEYS.WALLET_TX_STORE,
+      STORAGE_KEYS.CACHED_BALANCES,
     ]);
     const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
     const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as
@@ -546,13 +766,14 @@ export class Vault {
       return { error: ERROR_CODES.BAD_PASSWORD };
     }
 
-    const payload = JSON.parse(pt) as VaultPayload;
-    const accounts = payload.accounts;
+    const decoded = this.decodeVaultPayload(pt);
+    this.seedAccounts = decoded.seedAccounts;
+    this.rebuildFlatAccounts();
 
-    // Load account data (same as password unlock) so transaction history displays
     let utxoStore: UTXOStore = {};
     let walletTxStore: WalletTxStore = {};
     let cachedBalances: Record<string, number> = {};
+    let accountSyncState: SyncStateStore = {};
     let loadedFromEncrypted = false;
 
     if (encAccountData) {
@@ -561,37 +782,78 @@ export class Vault {
         new Uint8Array(encAccountData.cipher.iv),
         new Uint8Array(encAccountData.cipher.ct)
       ).catch(() => null);
-
       if (accountDataPt) {
         const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
         utxoStore = accountData.utxoStore || {};
+        for (const utxoKey in utxoStore) {
+          if (utxoStore[utxoKey].blockHeight == null) {
+            console.log('[Vault] Clearing old UTXO store with no blockHeight');
+            delete utxoStore[utxoKey];
+          }
+        }
         walletTxStore = accountData.walletTxStore || {};
+        accountSyncState = accountData.accountSyncState || {};
         cachedBalances = accountData.cachedBalances || {};
         loadedFromEncrypted = true;
       }
     }
 
-    // Key is only cached after unlock() runs, so migration has always happened.
-    // No legacy fallback needed.
-    this.mnemonic = payload.mnemonic;
+    if (!loadedFromEncrypted) {
+      const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
+      const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as WalletTxStore | undefined;
+      const legacyCachedBalances = stored[STORAGE_KEYS.CACHED_BALANCES] as
+        | Record<string, number>
+        | undefined;
+
+      utxoStore = legacyUtxoStore || {};
+      walletTxStore = legacyWalletTxStore || {};
+      cachedBalances = legacyCachedBalances || {};
+    }
+
     this.encryptionKey = key;
     this.utxoStore = utxoStore;
     this.walletTxStore = walletTxStore;
+    this.accountSyncState = accountSyncState;
     this.cachedBalances = cachedBalances;
+
+    const resolvedIndex =
+      currentAccountIndex >= 0 && currentAccountIndex < this.state.accounts.length
+        ? currentAccountIndex
+        : 0;
 
     this.state = {
       locked: false,
-      accounts,
-      currentAccountIndex,
+      accounts: this.state.accounts,
+      currentAccountIndex: resolvedIndex,
       enc,
     };
+    this.mnemonic = this.getSigningMnemonicForCurrentAccount();
 
-    const currentAccount = accounts[currentAccountIndex] || accounts[0];
+    const currentAccount = this.state.accounts[resolvedIndex] || this.state.accounts[0];
+    if (decoded.migrated) {
+      await this.saveAccountsToVault();
+    }
+    if (!loadedFromEncrypted) {
+      const hasData =
+        Object.keys(this.utxoStore).length > 0 ||
+        Object.keys(this.walletTxStore).length > 0 ||
+        Object.keys(this.cachedBalances).length > 0 ||
+        Object.keys(this.accountSyncState).length > 0;
+      if (hasData) {
+        await this.saveAccountData();
+        await chrome.storage.local.remove([
+          STORAGE_KEYS.UTXO_STORE,
+          STORAGE_KEYS.WALLET_TX_STORE,
+          STORAGE_KEYS.CACHED_BALANCES,
+        ]);
+      }
+    }
     return {
       ok: true,
       address: currentAccount?.address || '',
-      accounts,
+      accounts: this.state.accounts,
       currentAccount,
+      activeSeedSourceId: this.getSeedAccountForWallet(currentAccount)?.id || null,
     };
   }
 
@@ -608,14 +870,14 @@ export class Vault {
    * Requires wallet to be unlocked (encryptionKey must be in memory)
    */
   private async saveAccountsToVault(): Promise<void> {
-    if (!this.mnemonic || !this.state.enc || !this.encryptionKey) {
+    if (!this.state.enc || !this.encryptionKey) {
       throw new Error('Cannot save accounts: vault is locked or not initialized');
     }
 
-    // Re-encrypt mnemonic + accounts together with the key stored in memory
-    const vaultPayload: VaultPayload = {
-      mnemonic: this.mnemonic,
-      accounts: this.state.accounts,
+    // Re-encrypt seed accounts + child accounts together
+    const vaultPayload: VaultPayloadV2 = {
+      version: 2,
+      seedAccounts: this.seedAccounts,
     };
     const payloadJson = JSON.stringify(vaultPayload);
     const { iv, ct } = await encryptGCM(this.encryptionKey, new TextEncoder().encode(payloadJson));
@@ -648,10 +910,13 @@ export class Vault {
     // Clear sensitive data from memory for security
     this.state.accounts = []; // Clear accounts to enforce "no addresses while locked"
     this.mnemonic = null;
+    this.seedAccounts = [];
     this.encryptionKey = null;
     this.utxoStore = {};
     this.walletTxStore = {};
+    this.accountSyncState = {};
     this.cachedBalances = {};
+    this.nockblocksHistoryRefreshChains.clear();
     return { ok: true };
   }
 
@@ -670,8 +935,13 @@ export class Vault {
       enc: null,
     };
     this.mnemonic = null;
+    this.seedAccounts = [];
     this.encryptionKey = null; // Clear encryption key as well
     this.utxoStore = {};
+    this.walletTxStore = {};
+    this.accountSyncState = {};
+    this.cachedBalances = {};
+    this.nockblocksHistoryRefreshChains.clear();
 
     return { ok: true };
   }
@@ -684,11 +954,16 @@ export class Vault {
   }
 
   /**
-   * Gets the current account
+   * Gets the currently selected sub-account from the flattened account list.
    */
-  getCurrentAccount(): Account | null {
+  getCurrentAccount(): SubAccount | null {
+    // currentAccountIndex refers to the flattened `state.accounts` array position,
+    // not the per-seed derivation index on SubAccount.index.
     const account = this.state.accounts[this.state.currentAccountIndex];
-    return account || this.state.accounts[0] || null;
+    if (account && !account.hidden) return account;
+    // Safety net: if the stored index points at a hidden account (e.g. after a
+    // hide operation left a stale index), fall back to the first visible account.
+    return this.state.accounts.find(a => !a.hidden) || null;
   }
 
   /**
@@ -700,10 +975,189 @@ export class Vault {
   }
 
   /**
-   * Gets all accounts
+   * Returns the flattened sub-account list across all seed sources.
    */
-  getAccounts(): Account[] {
+  getAccounts(): SubAccount[] {
     return this.state.accounts;
+  }
+
+  /**
+   * Gets the seed source ID for the currently selected account
+   */
+  getActiveSeedSourceId(): string | null {
+    const currentAccount = this.getCurrentAccount();
+    return this.getSeedAccountForWallet(currentAccount)?.id || null;
+  }
+
+  /**
+   * Gets top-level seed/external account sources (mnemonic removed)
+   */
+  getSeedSources(): Array<Omit<SeedAccount, 'mnemonic'>> {
+    return this.seedAccounts.map(({ mnemonic: _mnemonic, ...seed }) => seed);
+  }
+
+  /**
+   * Creates a new mnemonic-based top-level account source (master derivation account)
+   */
+  async createMnemonicSeedSource(
+    mnemonic?: string,
+    name?: string
+  ): Promise<
+    | { seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount; mnemonic: string }
+    | { error: string }
+  > {
+    if (this.state.locked || !this.state.enc || !this.encryptionKey) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const words = mnemonic ? mnemonic.trim() : generateMnemonic();
+    if (mnemonic && !validateMnemonic(words)) {
+      return { error: ERROR_CODES.INVALID_MNEMONIC };
+    }
+
+    // Detect duplicate: same mnemonic already exists in the vault
+    const existing = this.seedAccounts.find(s => s.type === 'mnemonic' && s.mnemonic === words);
+    if (existing) {
+      // If the master account is hidden, restore it (and all its sub-accounts)
+      const masterHidden = existing.accounts.some(a => a.index === 0 && a.hidden);
+      if (masterHidden) {
+        existing.accounts.forEach(a => {
+          a.hidden = false;
+        });
+        this.rebuildFlatAccounts();
+        const newFlatIndex = this.state.accounts.findIndex(
+          acc => acc.address === existing.accounts.find(a => a.index === 0)?.address
+        );
+        if (newFlatIndex >= 0) {
+          this.state.currentAccountIndex = newFlatIndex;
+          await chrome.storage.local.set({
+            [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: newFlatIndex,
+          });
+        }
+        this.mnemonic = words;
+        await this.saveAccountsToVault();
+        const { mnemonic: _m, ...publicSeed } = existing;
+        return {
+          seedSource: publicSeed,
+          account: existing.accounts.find(a => a.index === 0)!,
+          mnemonic: words,
+        };
+      }
+      return { error: ERROR_CODES.DUPLICATE_SEED };
+    }
+
+    const seedOrdinal = this.seedAccounts.length + 1;
+    const seedId = crypto.randomUUID();
+    const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
+    const masterName = name?.trim() || this.getDefaultMasterWalletName(seedOrdinal);
+    const masterAddress = await deriveAddressFromMaster(words);
+
+    const masterAccount: SubAccount = {
+      name: masterName,
+      address: masterAddress,
+      index: 0,
+      iconStyleId,
+      iconColor,
+      createdAt: Date.now(),
+    };
+
+    const seedAccount: SeedAccount = {
+      id: seedId,
+      name: masterName,
+      type: 'mnemonic',
+      mnemonic: words,
+      createdAt: Date.now(),
+      accounts: [masterAccount],
+    };
+
+    this.seedAccounts.push(seedAccount);
+    this.rebuildFlatAccounts();
+
+    const newFlatIndex = this.state.accounts.findIndex(acc => acc.address === masterAddress);
+    this.state.currentAccountIndex =
+      newFlatIndex >= 0 ? newFlatIndex : this.state.accounts.length - 1;
+    this.mnemonic = words;
+
+    await Promise.all([
+      this.saveAccountsToVault(),
+      chrome.storage.local.set({
+        [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: this.state.currentAccountIndex,
+      }),
+    ]);
+
+    const { mnemonic: _mnemonic, ...publicSeed } = seedAccount;
+    return { seedSource: publicSeed, account: masterAccount, mnemonic: words };
+  }
+
+  /**
+   * Creates an external top-level account source (e.g. Ledger)
+   */
+  async createExternalSeedSource(params: {
+    address: string;
+    name?: string;
+    provider?: 'ledger' | 'unknown';
+    sourceRef?: string;
+    accountRef?: string;
+  }): Promise<
+    { seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount } | { error: string }
+  > {
+    if (this.state.locked || !this.state.enc || !this.encryptionKey) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+    if (!params.address || typeof params.address !== 'string') {
+      return { error: ERROR_CODES.INVALID_PARAMS };
+    }
+    const alreadyExists = this.seedAccounts.some(seed =>
+      seed.accounts.some(account => account.address === params.address)
+    );
+    if (alreadyExists) {
+      return { error: ERROR_CODES.DUPLICATE_SEED };
+    }
+
+    const seedOrdinal = this.seedAccounts.length + 1;
+    const seedId = crypto.randomUUID();
+    const provider = params.provider || 'unknown';
+    const masterName = params.name?.trim() || this.getDefaultMasterWalletName(seedOrdinal);
+    const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
+
+    const externalMasterAccount: SubAccount = {
+      name: masterName,
+      address: params.address,
+      index: 0,
+      iconStyleId,
+      iconColor,
+      createdAt: Date.now(),
+    };
+
+    const seedAccount: SeedAccount = {
+      id: seedId,
+      name: masterName,
+      type: 'external',
+      createdAt: Date.now(),
+      accounts: [externalMasterAccount],
+      external: {
+        provider,
+        sourceRef: params.sourceRef,
+      },
+    };
+
+    this.seedAccounts.push(seedAccount);
+    this.rebuildFlatAccounts();
+
+    const newFlatIndex = this.state.accounts.findIndex(acc => acc.address === params.address);
+    this.state.currentAccountIndex =
+      newFlatIndex >= 0 ? newFlatIndex : this.state.accounts.length - 1;
+    this.mnemonic = null;
+
+    await Promise.all([
+      this.saveAccountsToVault(),
+      chrome.storage.local.set({
+        [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: this.state.currentAccountIndex,
+      }),
+    ]);
+
+    const { mnemonic: _mnemonic, ...publicSeed } = seedAccount;
+    return { seedSource: publicSeed, account: externalMasterAccount };
   }
 
   /**
@@ -765,6 +1219,15 @@ export class Vault {
     return this.utxoStore[accountAddress]?.blockHeight || 0;
   }
 
+  private getCachedAccountBlockHeight(accountAddress: string): number {
+    const syncState = this.accountSyncState[accountAddress];
+    return Math.max(
+      this.getAccountBlockHeight(accountAddress),
+      syncState?.lastSyncedHeight ?? 0,
+      syncState?.lastHistorySyncedTip ?? 0
+    );
+  }
+
   /**
    * Get only available (spendable) notes for an account
    */
@@ -805,6 +1268,7 @@ export class Vault {
     const payload: EncryptedAccountData = {
       utxoStore: this.utxoStore,
       walletTxStore: this.walletTxStore,
+      accountSyncState: this.accountSyncState,
       cachedBalances: this.cachedBalances,
     };
 
@@ -849,6 +1313,15 @@ export class Vault {
     this.utxoStore[accountAddress].notes = Array.from(existingMap.values());
     this.utxoStore[accountAddress].version += 1;
     this.utxoStore[accountAddress].blockHeight = blockHeight;
+    this.accountSyncState[accountAddress] = {
+      ...this.getAccountSyncState(accountAddress),
+      accountAddress,
+      lastSyncedHeight: Math.max(
+        this.getAccountSyncState(accountAddress).lastSyncedHeight,
+        blockHeight
+      ),
+      lastSyncedAt: Date.now(),
+    };
 
     await this.saveAccountData();
   }
@@ -975,6 +1448,12 @@ export class Vault {
     this.utxoStore[accountAddress].notes = notes;
     this.utxoStore[accountAddress].version += 1;
     this.utxoStore[accountAddress].blockHeight = blockHeight;
+    this.accountSyncState[accountAddress] = {
+      ...this.getAccountSyncState(accountAddress),
+      accountAddress,
+      lastSyncedHeight: blockHeight,
+      lastSyncedAt: Date.now(),
+    };
 
     await this.saveAccountData();
   }
@@ -990,6 +1469,72 @@ export class Vault {
     return this.walletTxStore[accountAddress] || [];
   }
 
+  private sortWalletTransactions(accountAddress: string): void {
+    if (!this.walletTxStore[accountAddress]) return;
+
+    this.walletTxStore[accountAddress].sort((a, b) => {
+      const aTime = a.confirmedAtTimestamp ? a.confirmedAtTimestamp * 1000 : a.createdAt;
+      const bTime = b.confirmedAtTimestamp ? b.confirmedAtTimestamp * 1000 : b.createdAt;
+      return bTime - aTime;
+    });
+  }
+
+  private capWalletTransactions(accountAddress: string): void {
+    if (this.walletTxStore[accountAddress]?.length > 1000) {
+      this.walletTxStore[accountAddress] = this.walletTxStore[accountAddress].slice(0, 1000);
+    }
+  }
+
+  private findWalletTransactionIndex(
+    accountAddress: string,
+    tx: Partial<WalletTransaction>
+  ): number {
+    const transactions = this.walletTxStore[accountAddress] || [];
+    const trackingTxId = tx.trackingTxId || tx.txHash;
+
+    return transactions.findIndex(existing => {
+      if (tx.id && existing.id === tx.id) return true;
+      if (
+        trackingTxId &&
+        (existing.trackingTxId === trackingTxId || existing.txHash === trackingTxId)
+      ) {
+        return true;
+      }
+      return false;
+    });
+  }
+
+  getAccountSyncState(accountAddress: string): AccountSyncState {
+    return (
+      this.accountSyncState[accountAddress] || {
+        accountAddress,
+        lastSyncedHeight: 0,
+        lastSyncedAt: 0,
+        historyInitialized: false,
+        lastHistorySyncedTip: 0,
+        lastHistoryBackfillAt: 0,
+      }
+    );
+  }
+
+  private setAccountSyncState(accountAddress: string, updates: Partial<AccountSyncState>): void {
+    const current = this.getAccountSyncState(accountAddress);
+    this.accountSyncState[accountAddress] = {
+      ...current,
+      ...updates,
+      accountAddress,
+      lastSyncedAt: updates.lastSyncedAt ?? Date.now(),
+    };
+  }
+
+  async updateAccountSyncState(
+    accountAddress: string,
+    updates: Partial<AccountSyncState>
+  ): Promise<void> {
+    this.setAccountSyncState(accountAddress, updates);
+    await this.saveAccountData();
+  }
+
   /**
    * Add a new wallet transaction
    * Automatically persists to encrypted storage
@@ -999,21 +1544,60 @@ export class Vault {
       this.walletTxStore[tx.accountAddress] = [];
     }
 
-    // Check for duplicate
-    const exists = this.walletTxStore[tx.accountAddress].some(t => t.id === tx.id);
-    if (exists) {
+    const existingIndex = this.findWalletTransactionIndex(tx.accountAddress, tx);
+    if (existingIndex !== -1) {
       console.warn(`[Vault] Transaction ${tx.id} already exists, skipping add`);
       return;
     }
 
     // Add to beginning (most recent first)
     this.walletTxStore[tx.accountAddress].unshift(tx);
+    this.sortWalletTransactions(tx.accountAddress);
 
-    // Limit to 200 transactions per account
-    if (this.walletTxStore[tx.accountAddress].length > 200) {
-      this.walletTxStore[tx.accountAddress] = this.walletTxStore[tx.accountAddress].slice(0, 200);
+    // Keep a larger window now that confirmed history is stored here too.
+    this.capWalletTransactions(tx.accountAddress);
+
+    await this.saveAccountData();
+  }
+
+  private upsertWalletTransactionInMemory(
+    tx: WalletTransaction,
+    opts?: { skipSort?: boolean }
+  ): void {
+    if (!this.walletTxStore[tx.accountAddress]) {
+      this.walletTxStore[tx.accountAddress] = [];
     }
 
+    const txIndex = this.findWalletTransactionIndex(tx.accountAddress, tx);
+    if (txIndex === -1) {
+      this.walletTxStore[tx.accountAddress].unshift(tx);
+    } else {
+      const existing = this.walletTxStore[tx.accountAddress][txIndex];
+      this.walletTxStore[tx.accountAddress][txIndex] = {
+        ...existing,
+        ...tx,
+        id: existing.id,
+        origin: existing.origin || tx.origin,
+        inputNoteIds: existing.inputNoteIds || tx.inputNoteIds,
+        expectedChange: existing.expectedChange ?? tx.expectedChange,
+        expectedChangeNoteIds: existing.expectedChangeNoteIds || tx.expectedChangeNoteIds,
+        recipient: existing.recipient || tx.recipient,
+        sender: existing.sender || tx.sender,
+        priceUsdAtTime: existing.priceUsdAtTime ?? tx.priceUsdAtTime,
+        migrationFromV0: existing.migrationFromV0 || tx.migrationFromV0,
+        kind: existing.kind || tx.kind,
+        updatedAt: Date.now(),
+      };
+    }
+
+    if (!opts?.skipSort) {
+      this.sortWalletTransactions(tx.accountAddress);
+      this.capWalletTransactions(tx.accountAddress);
+    }
+  }
+
+  async upsertWalletTransaction(tx: WalletTransaction): Promise<void> {
+    this.upsertWalletTransactionInMemory(tx);
     await this.saveAccountData();
   }
 
@@ -1030,18 +1614,30 @@ export class Vault {
       return;
     }
 
-    const txIndex = this.walletTxStore[accountAddress].findIndex(t => t.id === txId);
+    const txIndex = this.findWalletTransactionIndex(accountAddress, { id: txId });
     if (txIndex === -1) {
       console.warn(`[Vault] Transaction ${txId} not found for update`);
       return;
     }
 
+    const existing = this.walletTxStore[accountAddress][txIndex];
     this.walletTxStore[accountAddress][txIndex] = {
-      ...this.walletTxStore[accountAddress][txIndex],
+      ...existing,
       ...updates,
+      id: existing.id,
+      origin: existing.origin || updates.origin,
+      inputNoteIds: existing.inputNoteIds || updates.inputNoteIds,
+      expectedChange: existing.expectedChange ?? updates.expectedChange,
+      expectedChangeNoteIds: existing.expectedChangeNoteIds || updates.expectedChangeNoteIds,
+      recipient: existing.recipient || updates.recipient,
+      sender: existing.sender || updates.sender,
+      priceUsdAtTime: existing.priceUsdAtTime ?? updates.priceUsdAtTime,
+      migrationFromV0: existing.migrationFromV0 || updates.migrationFromV0,
+      kind: existing.kind || updates.kind,
       updatedAt: Date.now(),
     };
 
+    this.sortWalletTransactions(accountAddress);
     await this.saveAccountData();
   }
 
@@ -1055,6 +1651,20 @@ export class Vault {
         t.direction === 'outgoing' &&
         (t.status === 'created' ||
           t.status === 'broadcast_pending' ||
+          t.status === 'mempool_seen' ||
+          t.status === 'broadcasted_unconfirmed')
+    );
+  }
+
+  private getPendingTrackableTransactions(accountAddress: string): WalletTransaction[] {
+    const transactions = this.getWalletTransactions(accountAddress);
+    return transactions.filter(
+      t =>
+        (t.direction === 'outgoing' || t.migrationFromV0) &&
+        Boolean(t.trackingTxId || t.txHash) &&
+        (t.status === 'created' ||
+          t.status === 'broadcast_pending' ||
+          t.status === 'mempool_seen' ||
           t.status === 'broadcasted_unconfirmed')
     );
   }
@@ -1112,6 +1722,376 @@ export class Vault {
     };
   }
 
+  private sumSeedValue(seeds?: Array<{ gift?: number }>): number {
+    return (seeds || []).reduce((sum, seed) => sum + (seed.gift || 0), 0);
+  }
+
+  private getUniqueLockRootFromOutputs(outputs: NockblocksOutput[]): string | undefined {
+    const lockRoots = new Set<string>();
+    for (const output of outputs) {
+      for (const seed of output.seeds || []) {
+        if (seed.lockRoot) {
+          lockRoots.add(seed.lockRoot);
+        }
+      }
+    }
+    return lockRoots.size === 1 ? [...lockRoots][0] : undefined;
+  }
+
+  private getUniqueLockRootFromSpends(spends: NockblocksSpend[]): string | undefined {
+    const spendLockRoots = new Set<string>();
+    for (const spend of spends) {
+      if (spend.lockRoot) {
+        spendLockRoots.add(spend.lockRoot);
+      }
+    }
+
+    if (spendLockRoots.size === 1) {
+      return [...spendLockRoots][0];
+    }
+
+    if (spendLockRoots.size > 1) {
+      return undefined;
+    }
+
+    const seedLockRoots = new Set<string>();
+    for (const spend of spends) {
+      for (const seed of spend.seeds || []) {
+        if (seed.lockRoot) {
+          seedLockRoots.add(seed.lockRoot);
+        }
+      }
+    }
+    return seedLockRoots.size === 1 ? [...seedLockRoots][0] : undefined;
+  }
+
+  private getTransactionTrackingId(tx: WalletTransaction): string | undefined {
+    return tx.trackingTxId || tx.txHash;
+  }
+
+  private async getOwnFirstNameSet(accountAddress: string): Promise<Set<string>> {
+    const { simple, coinbase } = await getBothFirstNames(accountAddress);
+    return new Set([simple, coinbase]);
+  }
+
+  private buildWalletTransactionFromChainTransaction(
+    accountAddress: string,
+    tx: NockblocksTransaction,
+    ownFirstNames: Set<string>
+  ): WalletTransaction | null {
+    const txId = tx.txId || tx.id;
+    if (!txId) {
+      return null;
+    }
+
+    const outputs = tx.outputs || tx.transaction?.outputs || [];
+    const spends = tx.spends || tx.transaction?.spends || [];
+    const ownOutputs = outputs.filter((output: NockblocksOutput) =>
+      Boolean(output.firstName && ownFirstNames.has(output.firstName))
+    );
+    const externalOutputs = outputs.filter(
+      (output: NockblocksOutput) => !output.firstName || !ownFirstNames.has(output.firstName)
+    );
+    const ownSpends = spends.filter((spend: NockblocksSpend) =>
+      Boolean(spend.firstName && ownFirstNames.has(spend.firstName))
+    );
+    const externalSpends = spends.filter(
+      (spend: NockblocksSpend) => !spend.firstName || !ownFirstNames.has(spend.firstName)
+    );
+
+    if (ownOutputs.length === 0 && ownSpends.length === 0) {
+      return null;
+    }
+
+    const ownOutputAmount = ownOutputs.reduce(
+      (sum: number, output: NockblocksOutput) => sum + this.sumSeedValue(output.seeds),
+      0
+    );
+    const externalOutputAmount = externalOutputs.reduce(
+      (sum: number, output: NockblocksOutput) => sum + this.sumSeedValue(output.seeds),
+      0
+    );
+    const fee = spends.reduce((sum: number, spend: NockblocksSpend) => sum + (spend.fee || 0), 0);
+
+    let direction: WalletTransaction['direction'] = 'incoming';
+    if (ownSpends.length > 0 && externalOutputs.length === 0) {
+      direction = 'self';
+    } else if (ownSpends.length > 0) {
+      direction = 'outgoing';
+    }
+
+    const createdAt = (tx.timestamp || tx.heardAtTimestamp || Math.floor(Date.now() / 1000)) * 1000;
+    const amount =
+      direction === 'incoming'
+        ? ownOutputAmount
+        : direction === 'self'
+          ? ownOutputAmount
+          : externalOutputAmount;
+
+    const recipient =
+      direction === 'incoming'
+        ? accountAddress
+        : direction === 'self'
+          ? accountAddress
+          : this.getUniqueLockRootFromOutputs(externalOutputs);
+
+    // v0→v1 migration spends carry `version: "v0_to_v1"` and a `signaturesV0[]`
+    const migrationSpend = externalSpends.find(
+      (spend: NockblocksSpend) => spend.version === 'v0_to_v1'
+    );
+    const migrationV0Pubkey = migrationSpend?.signaturesV0?.find(
+      sig => typeof sig?.pubkey === 'string' && sig.pubkey.length > 0
+    )?.pubkey;
+
+    const sender =
+      direction === 'incoming'
+        ? (migrationV0Pubkey ?? this.getUniqueLockRootFromSpends(externalSpends))
+        : accountAddress;
+
+    const migrationFromV0 =
+      direction === 'incoming' &&
+      (Boolean(migrationSpend) ||
+        (typeof sender === 'string' &&
+          sender.length >= 60 &&
+          typeof recipient === 'string' &&
+          recipient.length > 0 &&
+          recipient.length < 60));
+
+    return {
+      id: txId,
+      txHash: txId,
+      trackingTxId: txId,
+      accountAddress,
+      direction,
+      createdAt,
+      updatedAt: Date.now(),
+      status: 'confirmed',
+      origin: 'history_sync',
+      amount,
+      fee: direction === 'incoming' ? undefined : fee,
+      recipient,
+      sender,
+      ...(migrationFromV0 ? { migrationFromV0: true as const } : {}),
+      blockId: tx.blockId,
+      confirmedAtBlock: tx.blockHeight,
+      confirmedAtTimestamp: tx.timestamp,
+      confirmationSource: 'history_sync',
+      confirmations: tx.blockHeight ? 1 : undefined,
+    };
+  }
+
+  private async refreshPendingTransactionStatuses(accountAddress: string): Promise<number> {
+    if (!isNockblocksConfigured()) {
+      return 0;
+    }
+
+    const pendingTxs = this.getPendingTrackableTransactions(accountAddress);
+    if (pendingTxs.length === 0) {
+      return 0;
+    }
+
+    const client = createNockblocksClient();
+    const ownFirstNames = await this.getOwnFirstNameSet(accountAddress);
+    let confirmedCount = 0;
+
+    for (const tx of pendingTxs) {
+      const trackingId = this.getTransactionTrackingId(tx);
+      if (!trackingId) continue;
+
+      const now = Date.now();
+      const ageMs = now - tx.createdAt;
+      let mempoolSeenAt = tx.mempoolSeenAt;
+      const shouldCheckMempool =
+        ageMs <= 5 * 60 * 1000 &&
+        (!tx.lastMempoolCheckAt || now - tx.lastMempoolCheckAt >= 15 * 1000);
+
+      if (shouldCheckMempool) {
+        try {
+          const mempoolTx = await client.getMempoolTransactionByTxid(trackingId);
+          mempoolSeenAt = mempoolTx
+            ? (mempoolTx.heardAtTimestamp || Math.floor(now / 1000)) * 1000
+            : tx.mempoolSeenAt;
+          await this.updateWalletTransaction(accountAddress, tx.id, {
+            status: mempoolTx ? 'mempool_seen' : tx.status,
+            mempoolSeenAt,
+            lastMempoolCheckAt: now,
+          });
+        } catch (error) {
+          console.warn('[Vault] Mempool check failed:', error);
+        }
+      }
+
+      const confirmDelayMs = mempoolSeenAt ? 15 * 1000 : 60 * 1000;
+      const shouldCheckConfirmation =
+        ageMs >= confirmDelayMs &&
+        (!tx.lastConfirmationCheckAt || now - tx.lastConfirmationCheckAt >= 30 * 1000);
+
+      if (!shouldCheckConfirmation) {
+        continue;
+      }
+
+      try {
+        const confirmedTx = await client.getTransactionByTxid(trackingId);
+        if (!confirmedTx) {
+          await this.updateWalletTransaction(accountAddress, tx.id, {
+            lastConfirmationCheckAt: now,
+          });
+          continue;
+        }
+
+        const chainTx = this.buildWalletTransactionFromChainTransaction(
+          accountAddress,
+          confirmedTx,
+          ownFirstNames
+        );
+
+        await this.updateWalletTransaction(accountAddress, tx.id, {
+          ...(chainTx || {}),
+          status: 'confirmed',
+          txHash: confirmedTx.txId || confirmedTx.id || trackingId,
+          trackingTxId: confirmedTx.txId || confirmedTx.id || trackingId,
+          blockId: confirmedTx.blockId,
+          confirmedAtBlock: confirmedTx.blockHeight,
+          confirmedAtTimestamp: confirmedTx.timestamp,
+          confirmationSource: 'api',
+          confirmations: confirmedTx.blockHeight ? 1 : tx.confirmations,
+          lastConfirmationCheckAt: now,
+        });
+        confirmedCount++;
+      } catch (error) {
+        console.warn('[Vault] Confirmation check failed:', error);
+      }
+    }
+
+    return confirmedCount;
+  }
+
+  private finalizeBulkWalletTxIngest(accountAddress: string): void {
+    this.sortWalletTransactions(accountAddress);
+    this.capWalletTransactions(accountAddress);
+  }
+
+  private enqueueNockblocksHistoryRefresh(accountAddress: string, fn: () => Promise<void>): void {
+    const prev = this.nockblocksHistoryRefreshChains.get(accountAddress) ?? Promise.resolve();
+    const next = prev
+      .catch(() => {
+        /* keep chain alive even if prior refresh failed */
+      })
+      .then(fn);
+    this.nockblocksHistoryRefreshChains.set(accountAddress, next);
+  }
+
+  private async syncConfirmedHistory(accountAddress: string): Promise<number> {
+    if (!isNockblocksConfigured()) {
+      return 0;
+    }
+
+    const client = createNockblocksClient();
+    const syncState = this.getAccountSyncState(accountAddress);
+    const ownFirstNames = await this.getOwnFirstNameSet(accountAddress);
+    const tip = await client.getTip();
+    const maxIncrementalHistoryBlocks = 500;
+    const lastHistorySyncedTip = syncState.lastHistorySyncedTip ?? 0;
+    const historyTipGap = Math.max(tip.height - lastHistorySyncedTip, 0);
+    let syncedCount = 0;
+
+    if (!syncState.historyInitialized || historyTipGap > maxIncrementalHistoryBlocks) {
+      const limit = 1000;
+      let offset = 0;
+
+      while (true) {
+        const historyTransactions = await client.getTransactionsByAddress(accountAddress, {
+          limit,
+          offset,
+        });
+        if (historyTransactions.length === 0) {
+          break;
+        }
+
+        for (const transaction of historyTransactions) {
+          const walletTx = this.buildWalletTransactionFromChainTransaction(
+            accountAddress,
+            transaction,
+            ownFirstNames
+          );
+          if (!walletTx) continue;
+          this.upsertWalletTransactionInMemory(walletTx, { skipSort: true });
+          syncedCount++;
+        }
+        this.finalizeBulkWalletTxIngest(accountAddress);
+
+        if (historyTransactions.length < limit) {
+          break;
+        }
+
+        offset += historyTransactions.length;
+      }
+
+      this.setAccountSyncState(accountAddress, {
+        historyInitialized: true,
+        lastHistoryBackfillAt: Date.now(),
+        lastHistorySyncedTip: tip.height,
+        lastSyncedHeight: Math.max(syncState.lastSyncedHeight, tip.height),
+      });
+      await this.saveAccountData();
+
+      return syncedCount;
+    }
+
+    const startBlock = lastHistorySyncedTip + 1;
+    const heights: number[] = [];
+    for (let height = startBlock; height <= tip.height; height++) {
+      heights.push(height);
+    }
+
+    for (let i = 0; i < heights.length; i += 25) {
+      const blocks = await client.getBlocksByHeight(heights.slice(i, i + 25));
+      for (const block of blocks) {
+        for (const transaction of block.transactions) {
+          const walletTx = this.buildWalletTransactionFromChainTransaction(
+            accountAddress,
+            {
+              ...transaction,
+              blockId: transaction.blockId || block.blockId,
+              blockHeight: transaction.blockHeight || block.height,
+              timestamp: transaction.timestamp || block.timestamp,
+            },
+            ownFirstNames
+          );
+
+          if (!walletTx) continue;
+          this.upsertWalletTransactionInMemory(walletTx, { skipSort: true });
+          syncedCount++;
+        }
+      }
+      this.finalizeBulkWalletTxIngest(accountAddress);
+    }
+
+    this.setAccountSyncState(accountAddress, {
+      historyInitialized: true,
+      lastHistorySyncedTip: tip.height,
+      lastSyncedHeight: Math.max(syncState.lastSyncedHeight, tip.height),
+    });
+    await this.saveAccountData();
+
+    return syncedCount;
+  }
+
+  private refreshNockblocksHistoryInBackground(accountAddress: string): void {
+    if (!isNockblocksConfigured()) {
+      return;
+    }
+
+    this.enqueueNockblocksHistoryRefresh(accountAddress, async () => {
+      try {
+        await this.refreshPendingTransactionStatuses(accountAddress);
+        await this.syncConfirmedHistory(accountAddress);
+      } catch (error) {
+        console.warn('[Vault] Nockblocks history refresh failed:', error);
+      }
+    });
+  }
+
   /**
    * Sync UTXOs for a single account with chain state
    * This uses the encrypted in-memory UTXO store
@@ -1133,7 +2113,7 @@ export class Vault {
     const endpoint = await getEffectiveRpcEndpoint();
     const rpcClient = createBrowserClient(endpoint);
 
-    return withAccountLock(accountAddress, async () => {
+    const syncResult = await withAccountLock(accountAddress, async () => {
       // 1. Fetch current UTXOs from chain
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
       const blockHeight = balanceResult.blockHeight;
@@ -1162,6 +2142,7 @@ export class Vault {
             await this.updateWalletTransaction(accountAddress, tx.id, {
               status: 'confirmed',
               expectedChangeNoteIds: changeNoteIds,
+              confirmationSource: tx.confirmationSource || 'utxo_fallback',
             });
           }
         }
@@ -1215,6 +2196,7 @@ export class Vault {
           if (allInputsSpent) {
             await this.updateWalletTransaction(accountAddress, tx.id, {
               status: 'confirmed',
+              confirmationSource: tx.confirmationSource || 'utxo_fallback',
             });
             confirmedFromPreviousSpent++;
           }
@@ -1263,6 +2245,9 @@ export class Vault {
         expired: expiredTxs.length,
       };
     });
+
+    this.refreshNockblocksHistoryInBackground(accountAddress);
+    return syncResult;
   }
 
   /**
@@ -1400,92 +2385,235 @@ export class Vault {
   }
 
   /**
-   * Creates a new account by deriving the next index
+   * For one mnemonic seed: scan slip10 indices 1..MAX_SUBWALLET_DISCOVERY_SCAN for on-chain
+   * balance, then ensure an account exists for every index from 1 through the highest index that
+   * has funds (fills gaps).
    */
-  async createAccount(
-    name?: string
-  ): Promise<{ ok: boolean; account: Account } | { error: string }> {
+  async discoverAndEnsureSubwalletsForSeed(
+    seedAccountId: string
+  ): Promise<{ ok: true; added: number } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (!this.mnemonic) {
+    const seedAccount = this.seedAccounts.find(s => s.id === seedAccountId);
+    if (!seedAccount || seedAccount.type !== 'mnemonic' || !seedAccount.mnemonic) {
+      return { ok: true, added: 0 };
+    }
+    const mnemonic = seedAccount.mnemonic;
+
+    const masterForSeed = seedAccount.accounts.find(a => a.index === 0);
+    if (!masterForSeed || masterForSeed.hidden) {
+      return { ok: true, added: 0 };
+    }
+
+    await initWasmModules();
+    const endpoint = await getEffectiveRpcEndpoint();
+    const rpcClient = createBrowserClient(endpoint);
+
+    const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
+    // Keep balances found during the scan so we can seed cachedBalances for
+    // freshly-added sub-wallets.
+    const discoveredAddressByIndex = new Map<number, string>();
+    const discoveredBalanceByIndex = new Map<number, number>();
+
+    let lastWithBalance = 0;
+    let nextIndexToScan = 1;
+    let scanThroughIndex = MAX_SUBWALLET_DISCOVERY_SCAN;
+    const maxScanIndex = 35;
+
+    while (nextIndexToScan <= scanThroughIndex && nextIndexToScan <= maxScanIndex) {
+      const startIndex = nextIndexToScan;
+      const endIndex = Math.min(scanThroughIndex, maxScanIndex);
+      nextIndexToScan = endIndex + 1;
+
+      const discoveryResults = await Promise.allSettled(
+        Array.from({ length: endIndex - startIndex + 1 }, async (_, offset) => {
+          const index = startIndex + offset;
+          const address = await deriveAddress(mnemonic, index);
+          const balanceResult = await queryV1Balance(address, rpcClient);
+          return { index, address, balance: balanceResult.totalNock };
+        })
+      );
+
+      for (const result of discoveryResults) {
+        if (result.status !== 'fulfilled') {
+          continue;
+        }
+
+        const { index, address, balance } = result.value;
+        discoveredAddressByIndex.set(index, address);
+        if (balance > 0) {
+          lastWithBalance = Math.max(lastWithBalance, index);
+          scanThroughIndex = Math.max(
+            scanThroughIndex,
+            Math.min(lastWithBalance + MAX_SUBWALLET_DISCOVERY_SCAN, maxScanIndex)
+          );
+          discoveredBalanceByIndex.set(index, balance);
+        }
+      }
+    }
+
+    const existingIndices = new Set(seedAccount.accounts.map(a => a.index));
+    let added = 0;
+
+    for (let j = 1; j <= lastWithBalance; j++) {
+      if (existingIndices.has(j)) continue;
+
+      const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
+      const address = discoveredAddressByIndex.get(j) ?? (await deriveAddress(mnemonic, j));
+      const newAccount: SubAccount = {
+        name: this.getDefaultChildWalletName(seedOrdinal, j),
+        address,
+        index: j,
+        iconStyleId,
+        iconColor,
+        createdAt: Date.now(),
+      };
+      seedAccount.accounts.push(newAccount);
+      existingIndices.add(j);
+      added++;
+    }
+
+    if (added > 0) {
+      seedAccount.accounts.sort((a, b) => a.index - b.index);
+      this.rebuildFlatAccounts();
+
+      // Seed cachedBalances for the newly added accounts so the dropdown shows
+      // the right number immediately
+      const merged = { ...this.cachedBalances };
+      for (const [idx, balance] of discoveredBalanceByIndex) {
+        const addr = discoveredAddressByIndex.get(idx);
+        if (addr) merged[addr] = balance;
+      }
+      this.cachedBalances = merged;
+
+      await this.saveAccountsToVault();
+      await this.saveAccountData();
+    }
+
+    return { ok: true, added };
+  }
+
+  /**
+   * Creates a child sub-account under the specified seed source.
+   */
+  async createChildAccount(
+    seedAccountId?: string,
+    name?: string
+  ): Promise<{ account: SubAccount } | { error: string }> {
+    if (this.state.locked) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    const seedAccount = seedAccountId
+      ? this.seedAccounts.find(seed => seed.id === seedAccountId) || null
+      : this.getSeedAccountForWallet(currentAccount);
+    if (!seedAccount || seedAccount.type !== 'mnemonic' || !seedAccount.mnemonic) {
       return { error: ERROR_CODES.NO_VAULT };
     }
 
-    const nextIndex = this.state.accounts.length;
-    const accountName = name || `Wallet ${nextIndex + 1}`;
-
-    // Use preset style if available, otherwise random
-    let iconStyleId: number;
-    let iconColor: string;
-
-    if (nextIndex < PRESET_WALLET_STYLES.length) {
-      // Use predetermined style for first 21 wallets
-      const preset = PRESET_WALLET_STYLES[nextIndex];
-      iconStyleId = preset.iconStyleId;
-      iconColor = preset.iconColor;
-    } else {
-      // After presets exhausted, use random selection
-      iconColor = ACCOUNT_COLORS[Math.floor(Math.random() * ACCOUNT_COLORS.length)];
-      iconStyleId = Math.floor(Math.random() * 15) + 1;
+    const masterForSeed = seedAccount.accounts.find(a => a.index === 0);
+    if (!masterForSeed || masterForSeed.hidden) {
+      return { error: ERROR_CODES.MASTER_WALLET_HIDDEN };
     }
 
-    const newAccount: Account = {
+    const hiddenSubs = seedAccount.accounts
+      .filter(a => a.index > 0 && a.hidden)
+      .sort((a, b) => a.index - b.index);
+    if (hiddenSubs.length > 0) {
+      const toRestore = hiddenSubs[0];
+      toRestore.hidden = false;
+      this.rebuildFlatAccounts();
+      await this.saveAccountsToVault();
+      return { account: toRestore };
+    }
+
+    const indices = seedAccount.accounts.map(a => a.index);
+    const nextIndex = Math.max(0, ...indices) + 1;
+
+    const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
+    const trimmedName = name?.trim();
+    const accountName = trimmedName || this.getDefaultChildWalletName(seedOrdinal, nextIndex);
+
+    const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
+
+    const newAccount: SubAccount = {
       name: accountName,
-      address: await deriveAddress(this.mnemonic, nextIndex),
+      address: await deriveAddress(seedAccount.mnemonic, nextIndex),
       index: nextIndex,
       iconStyleId,
       iconColor,
       createdAt: Date.now(),
-      derivation: 'slip10', // Additional accounts use child derivation
     };
 
-    const updatedAccounts = [...this.state.accounts, newAccount];
-    this.state.accounts = updatedAccounts;
+    seedAccount.accounts.push(newAccount);
+    seedAccount.accounts.sort((a, b) => a.index - b.index);
+    this.rebuildFlatAccounts();
 
-    // Save accounts to encrypted vault
     await this.saveAccountsToVault();
 
-    return { ok: true, account: newAccount };
+    return { account: newAccount };
   }
 
   /**
-   * Switches to a different account
+   * Switch current account by address
    */
   async switchAccount(
-    index: number
-  ): Promise<{ ok: boolean; account: Account } | { error: string }> {
+    address: string
+  ): Promise<
+    { ok: boolean; account: SubAccount; activeSeedSourceId: string | null } | { error: string }
+  > {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
+    }
+
+    if (this.state.accounts[index].hidden) {
+      return { error: ERROR_CODES.ACCOUNT_HIDDEN };
     }
 
     this.state.currentAccountIndex = index;
+    this.mnemonic = this.getSigningMnemonicForCurrentAccount();
 
     await chrome.storage.local.set({
       [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: index,
     });
 
-    return { ok: true, account: this.state.accounts[index] };
+    return {
+      ok: true,
+      account: this.state.accounts[index],
+      activeSeedSourceId: this.getActiveSeedSourceId(),
+    };
   }
 
   /**
    * Renames an account
    */
-  async renameAccount(index: number, name: string): Promise<{ ok: boolean } | { error: string }> {
+  async renameAccount(address: string, name: string): Promise<{ ok: boolean } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
-    this.state.accounts[index].name = name;
+    const account = this.state.accounts[index];
+    account.name = name;
+
+    if (account.index === 0) {
+      const seedAccount = this.getSeedAccountForWallet(account);
+      if (seedAccount) {
+        seedAccount.name = name;
+      }
+    }
 
     // Save accounts to encrypted vault
     await this.saveAccountsToVault();
@@ -1497,7 +2625,7 @@ export class Vault {
    * Updates account styling (icon and color)
    */
   async updateAccountStyling(
-    index: number,
+    address: string,
     iconStyleId: number,
     iconColor: string
   ): Promise<{ ok: boolean } | { error: string }> {
@@ -1505,8 +2633,9 @@ export class Vault {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
     this.state.accounts[index].iconStyleId = iconStyleId;
@@ -1524,33 +2653,54 @@ export class Vault {
    * - Prevents hiding if it's the last visible account
    */
   async hideAccount(
-    index: number
-  ): Promise<{ ok: boolean; switchedTo?: number } | { error: string }> {
+    address: string
+  ): Promise<{ ok: boolean; switchedTo?: string } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    if (index < 0 || index >= this.state.accounts.length) {
-      return { error: ERROR_CODES.INVALID_ACCOUNT_INDEX };
+    const index = this.state.accounts.findIndex(acc => acc.address === address);
+    if (index < 0) {
+      return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
-    // Check if this is the last visible account
+    const accountToHide = this.state.accounts[index];
+
+    // When hiding a master account (index 0), collect all sibling sub-accounts
+    // from the same seed source so they are hidden together.
+    const seedForAccount = this.getSeedAccountForWallet(accountToHide);
+    const siblingAddresses =
+      accountToHide.index === 0 && seedForAccount
+        ? new Set(seedForAccount.accounts.map(a => a.address))
+        : new Set<string>();
+
+    // All accounts that will become hidden (the target + any siblings)
+    const addressesToHide = new Set([address, ...siblingAddresses]);
+
+    // Check that hiding all of them won't leave zero visible accounts
     const visibleAccounts = this.state.accounts.filter(acc => !acc.hidden);
-    if (visibleAccounts.length <= 1) {
+    const remainingVisible = visibleAccounts.filter(acc => !addressesToHide.has(acc.address));
+    if (remainingVisible.length === 0) {
       return { error: ERROR_CODES.CANNOT_HIDE_LAST_ACCOUNT };
     }
 
-    // Mark account as hidden
-    this.state.accounts[index].hidden = true;
+    // Mark the target and all siblings as hidden
+    for (const acc of this.state.accounts) {
+      if (addressesToHide.has(acc.address)) {
+        acc.hidden = true;
+      }
+    }
 
-    let switchedTo: number | undefined;
+    let switchedTo: string | undefined;
 
-    // If hiding the current account, switch to first visible account
-    if (this.state.currentAccountIndex === index) {
+    // If the current account was among those hidden, switch to first still-visible account
+    const currentAddress = this.state.accounts[this.state.currentAccountIndex]?.address;
+    if (currentAddress && addressesToHide.has(currentAddress)) {
       const firstVisibleIndex = this.state.accounts.findIndex(acc => !acc.hidden);
       if (firstVisibleIndex !== -1) {
         this.state.currentAccountIndex = firstVisibleIndex;
-        switchedTo = firstVisibleIndex;
+        this.mnemonic = this.getSigningMnemonicForCurrentAccount();
+        switchedTo = this.state.accounts[firstVisibleIndex].address;
         await chrome.storage.local.set({
           [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: firstVisibleIndex,
         });
@@ -1597,9 +2747,20 @@ export class Vault {
         return { error: ERROR_CODES.BAD_PASSWORD };
       }
 
-      // Parse the vault payload and return only the mnemonic
-      const payload = JSON.parse(pt) as VaultPayload;
-      return { ok: true, mnemonic: payload.mnemonic };
+      // Parse payload and return the mnemonic for the currently selected seed source
+      const decoded = this.decodeVaultPayload(pt);
+      const currentAccount = this.getCurrentAccount();
+      const selectedSeed = currentAccount
+        ? decoded.seedAccounts.find(seed =>
+            seed.accounts.some(a => a.address === currentAccount.address)
+          )
+        : decoded.seedAccounts.find(seed => seed.type === 'mnemonic');
+
+      if (!selectedSeed || selectedSeed.type !== 'mnemonic' || !selectedSeed.mnemonic) {
+        return { error: 'Selected account has no mnemonic (external account source).' };
+      }
+
+      return { ok: true, mnemonic: selectedSeed.mnemonic };
     } catch (err) {
       return { error: ERROR_CODES.BAD_PASSWORD };
     }
@@ -1608,10 +2769,10 @@ export class Vault {
   /**
    * Signs a message using Nockchain WASM cryptography
    * Derives the account's private key and signs the message digest
-   * @returns Object containing signature JSON and public key (hex-encoded)
+   * @returns Canonical API v1 signature response
    */
-  async signMessage(params: unknown): Promise<{ signature: string; publicKeyHex: string }> {
-    if (this.state.locked || !this.mnemonic) {
+  async signMessage(params: unknown): Promise<SignMessageResponse> {
+    if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
@@ -1621,18 +2782,22 @@ export class Vault {
     const msg = (Array.isArray(params) ? params[0] : params) ?? '';
     const msgString = String(msg);
 
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      throw new Error('Current account is external and cannot sign locally');
+    }
+
     // Derive the account's private key based on derivation method
-    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
     const currentAccount = this.getCurrentAccount();
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-    const accountKey =
-      currentAccount?.derivation === 'master'
-        ? masterKey // Use master key directly for master-derived accounts
-        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
+    const accountKey = this.isMasterAccount(currentAccount)
+      ? masterKey // Use master key directly for master-derived accounts
+      : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
     if (!accountKey.privateKey || !accountKey.publicKey) {
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -1642,7 +2807,7 @@ export class Vault {
     // Sign: WASM expects 32-byte private key; copy to avoid view-into-WASM-memory issues
     const pk = accountKey.privateKey;
     if (pk.byteLength !== 32) {
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -1650,23 +2815,6 @@ export class Vault {
     }
     const signingKeyBytes = new Uint8Array(pk.slice(0, 32));
     const signature = wasm.signMessage(signingKeyBytes, msgString);
-
-    // Keep legacy payload format: old WASM exposed c/s as little-endian bytes.
-    // New WASM exposes hex strings, so reverse byte order to preserve legacy compatibility.
-    const toLegacyHex = (v: string | Uint8Array): number[] => {
-      if (typeof v === 'string') {
-        let bytes = [];
-        for (let i = 0; i < v.length; i += 2) {
-          bytes.push(parseInt(v.substr(i, 2), 16));
-        }
-        return bytes.reverse();
-      }
-      return [...v];
-    };
-    const signatureJson = JSON.stringify({
-      c: toLegacyHex(signature.c),
-      s: toLegacyHex(signature.s),
-    });
 
     // Log whether the signature verifies (helps detect old SDK / old WASM API mismatch)
     try {
@@ -1684,21 +2832,27 @@ export class Vault {
       console.warn('[vault] sign_message verification failed:', e);
     }
 
-    // Convert public key to hex string for easy transport
     const publicKeyHex = Array.from(accountKey.publicKey as Uint8Array)
       .map(b => b.toString(16).padStart(2, '0'))
       .join('');
+    const publicKey = wasm.publicKeyFromHex(publicKeyHex);
+    if (!publicKey) {
+      if (!this.isMasterAccount(currentAccount)) {
+        accountKey.free();
+      }
+      masterKey.free();
+      throw new Error('Invalid public key');
+    }
 
     // Signature is plain data in new API; no explicit free needed.
-    if (currentAccount?.derivation !== 'master') {
+    if (!this.isMasterAccount(currentAccount)) {
       accountKey.free();
     }
     masterKey.free();
 
-    // Return the signature JSON and public key
     return {
-      signature: signatureJson,
-      publicKeyHex,
+      signature,
+      publicKey,
     };
   }
 
@@ -1712,7 +2866,7 @@ export class Vault {
    * @returns Transaction ID as digest string
    */
   async signTransaction(to: string, amount: Nicks, fee?: Nicks): Promise<string> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
@@ -1721,20 +2875,24 @@ export class Vault {
       throw new Error('No account selected');
     }
 
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      throw new Error('Current account is external and cannot sign locally');
+    }
+
     // Initialize WASM modules
     await initWasmModules();
 
     // Derive the account's private and public keys based on derivation method
-    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-    const accountKey =
-      currentAccount.derivation === 'master'
-        ? masterKey // Use master key directly for master-derived accounts
-        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
+    const accountKey = this.isMasterAccount(currentAccount)
+      ? masterKey // Use master key directly for master-derived accounts
+      : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
     if (!accountKey.privateKey || !accountKey.publicKey) {
-      if (currentAccount.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -1780,7 +2938,7 @@ export class Vault {
     } finally {
       privateKey.free();
       // Clean up WASM memory (don't double-free master key)
-      if (currentAccount.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -1799,7 +2957,7 @@ export class Vault {
     to: string,
     amount: Nicks
   ): Promise<{ fee: number } | { error: string }> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
@@ -1807,19 +2965,24 @@ export class Vault {
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
     }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
+    }
 
     try {
       // Initialize WASM modules (same as sign/send)
       await initWasmModules();
 
       // Derive keys
-      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
       const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
-      const accountKey =
-        currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+      const accountKey = this.isMasterAccount(currentAccount)
+        ? masterKey
+        : masterKey.deriveChild(childIndex);
 
       if (!accountKey.privateKey || !accountKey.publicKey) {
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -1866,7 +3029,7 @@ export class Vault {
         return { fee: constructedTx.feeUsed };
       } finally {
         privateKey.free();
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -1897,7 +3060,7 @@ export class Vault {
     | { maxAmount: number; fee: number; totalAvailable: number; utxoCount: number }
     | { error: string }
   > {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
@@ -1905,19 +3068,24 @@ export class Vault {
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
     }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
+    }
 
     try {
       // Initialize WASM modules
       await initWasmModules();
 
       // Derive keys
-      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
       const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
-      const accountKey =
-        currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+      const accountKey = this.isMasterAccount(currentAccount)
+        ? masterKey
+        : masterKey.deriveChild(childIndex);
 
       if (!accountKey.privateKey || !accountKey.publicKey) {
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -1958,7 +3126,7 @@ export class Vault {
         const constructedTx = await buildMultiNotePayment(
           txBuilderNotes,
           to,
-          String(estimationAmount),
+          String(estimationAmount) as Nicks,
           accountKey.publicKey,
           privateKey,
           undefined, // let WASM auto-calc fee
@@ -1981,7 +3149,7 @@ export class Vault {
         };
       } finally {
         privateKey.free();
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2009,7 +3177,7 @@ export class Vault {
     amount: Nicks,
     fee?: Nicks
   ): Promise<{ txId: string; broadcasted: boolean; protobufTx?: any } | { error: string }> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
@@ -2017,22 +3185,25 @@ export class Vault {
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
     }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
+    }
 
     try {
       // Initialize WASM modules
       await initWasmModules();
 
       // Derive the account's private and public keys based on derivation method
-      const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+      const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
       // Use the account's own index, not currentAccountIndex (accounts may be reordered)
       const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-      const accountKey =
-        currentAccount.derivation === 'master'
-          ? masterKey // Use master key directly for master-derived accounts
-          : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
+      const accountKey = this.isMasterAccount(currentAccount)
+        ? masterKey // Use master key directly for master-derived accounts
+        : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
 
       if (!accountKey.privateKey || !accountKey.publicKey) {
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2086,7 +3257,7 @@ export class Vault {
       } finally {
         privateKey.free();
         // Clean up WASM memory
-        if (currentAccount.derivation !== 'master') {
+        if (!this.isMasterAccount(currentAccount)) {
           accountKey.free();
         }
         masterKey.free();
@@ -2118,17 +3289,22 @@ export class Vault {
     amount: Nicks,
     fee?: Nicks,
     sendMax?: boolean,
-    priceUsdAtTime?: number
+    priceUsdAtTime?: number,
+    origin: WalletTransaction['origin'] = 'popup_send'
   ): Promise<
     { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
   > {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
     const currentAccount = this.getCurrentAccount();
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
     }
 
     // Use account lock to prevent race conditions
@@ -2142,13 +3318,14 @@ export class Vault {
         await initWasmModules();
 
         // Derive keys
-        const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic!, '');
+        const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
         const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
-        const accountKey =
-          currentAccount.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+        const accountKey = this.isMasterAccount(currentAccount)
+          ? masterKey
+          : masterKey.deriveChild(childIndex);
 
         if (!accountKey.privateKey || !accountKey.publicKey) {
-          if (currentAccount.derivation !== 'master') {
+          if (!this.isMasterAccount(currentAccount)) {
             accountKey.free();
           }
           masterKey.free();
@@ -2209,6 +3386,7 @@ export class Vault {
             updatedAt: Date.now(),
             priceUsdAtTime,
             status: 'created',
+            origin,
             inputNoteIds: selectedNoteIds,
             recipient: to,
             amount: Number(amount),
@@ -2239,17 +3417,24 @@ export class Vault {
           );
 
           // 7. Broadcast transaction
+          await this.updateWalletTransaction(currentAccount.address, walletTxId, {
+            status: 'broadcast_pending',
+          });
           const protobufTx = nockchainTxToProtobuf(constructedTx.nockchainTx);
           await rpcClient.sendTransaction(protobufTx);
 
           // 8. Update tx status to broadcasted
           walletTx.fee = constructedTx.feeUsed;
           walletTx.txHash = constructedTx.txId;
+          walletTx.trackingTxId = constructedTx.txId;
           walletTx.status = 'broadcasted_unconfirmed';
           await this.updateWalletTransaction(currentAccount.address, walletTxId, {
             fee: constructedTx.feeUsed,
             txHash: constructedTx.txId,
+            trackingTxId: constructedTx.txId,
             status: 'broadcasted_unconfirmed',
+            lastMempoolCheckAt: Date.now(),
+            lastConfirmationCheckAt: 0,
           });
 
           return {
@@ -2260,7 +3445,7 @@ export class Vault {
         } finally {
           privateKey.free();
           // Clean up WASM memory
-          if (currentAccount.derivation !== 'master') {
+          if (!this.isMasterAccount(currentAccount)) {
             accountKey.free();
           }
           masterKey.free();
@@ -2289,38 +3474,315 @@ export class Vault {
   }
 
   /**
+   * Build bridge transaction context shared by estimate and send flows.
+   */
+  private async buildBridgeTransactionContext(
+    currentAccount: SubAccount,
+    destinationAddress: string,
+    amountNicks: Nicks
+  ): Promise<{
+    bridgeResult: Awaited<ReturnType<typeof buildBridgeTransaction>>;
+    destinationAddress: string;
+    refundPkh: string;
+    wasmNotes: wasm.Note[];
+    spendConditions: wasm.SpendCondition[];
+    selectedNoteIds: string[];
+    estimatedFeeNum: number;
+    expectedChangeNicks: bigint;
+    txEngineSettings: Awaited<ReturnType<typeof getTxEngineSettingsForHeight>>;
+  }> {
+    await initWasmModules();
+
+    const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
+    if (availableStoredNotes.length === 0) {
+      throw new Error('No available UTXOs.');
+    }
+
+    // Greedy selection headroom for chain fee only (nicks). Keep small: WASM computes the
+    // real fee below; an oversized slack blocks near-max bridges (e.g. 105 NOCK → bridge 100).
+    const selectionSlackNicks = 10 * NOCK_TO_NICKS;
+    const targetAmount = Number(amountNicks) + selectionSlackNicks;
+    const selectedStoredNotes = selectNotesForAmount(availableStoredNotes, targetAmount);
+    if (!selectedStoredNotes) {
+      throw new Error('Insufficient available funds');
+    }
+
+    const selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
+    const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
+
+    const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
+    const senderPKH = currentAccount.address;
+
+    const wasmNotes = sortedStoredNotes.map(n => {
+      if (!n.protoNote) {
+        throw new Error('Note missing protoNote - cannot build bridge transaction');
+      }
+      return wasm.noteFromProtobuf(n.protoNote);
+    });
+
+    const spendConditions = await Promise.all(
+      sortedStoredNotes.map(async n => {
+        try {
+          return await discoverSpendConditionForNote(senderPKH, {
+            nameFirst: n.nameFirst,
+            originPage: n.originPage,
+          });
+        } catch {
+          throw new Error(
+            `Spend condition discovery failed for note ${n.noteId} (${n.nameFirst.slice(0, 16)}...)`
+          );
+        }
+      })
+    );
+
+    const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+    const txEngineSettings = await getTxEngineSettingsForHeight(blockHeight);
+
+    let bridgeResult: Awaited<ReturnType<typeof buildBridgeTransaction>>;
+    try {
+      bridgeResult = await buildBridgeTransaction(
+        {
+          inputNotes: wasmNotes,
+          spendConditions,
+          amountInNicks: amountNicks as Nicks,
+          destinationAddress,
+          refundPkh: senderPKH,
+        },
+        BRIDGE_CONFIG,
+        { txEngineSettings }
+      );
+    } catch (error) {
+      throw error;
+    }
+
+    const builtFeeNum = Number(bridgeResult.fee);
+    const expectedChangeNicks = BigInt(selectedTotal) - BigInt(amountNicks) - BigInt(builtFeeNum);
+
+    return {
+      bridgeResult,
+      destinationAddress,
+      refundPkh: senderPKH,
+      wasmNotes,
+      spendConditions,
+      selectedNoteIds,
+      estimatedFeeNum: builtFeeNum,
+      expectedChangeNicks,
+      txEngineSettings,
+    };
+  }
+
+  private async logBridgeReviewTransactionForInspection(
+    buildCtx: Awaited<ReturnType<Vault['buildBridgeTransactionContext']>>
+  ): Promise<void> {
+    const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
+    const signedTx = await this.signRawTx({ rawTx });
+    const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+    const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
+
+    const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
+      txEngineSettings: buildCtx.txEngineSettings,
+    });
+    if (!validation.valid) {
+      throw new Error(validation.error ?? 'Bridge transaction validation failed');
+    }
+  }
+
+  /**
+   * Mark notes in-flight, sign tx, validate, broadcast, and release on error.
+   */
+  private async sendBuiltBridgeTransaction(
+    currentAccount: SubAccount,
+    walletTxId: string,
+    buildCtx: Awaited<ReturnType<Vault['buildBridgeTransactionContext']>>,
+    walletTx: WalletTransaction
+  ): Promise<{ txId: string; walletTx: WalletTransaction; broadcasted: boolean }> {
+    await this.markNotesInFlight(currentAccount.address, buildCtx.selectedNoteIds, walletTxId);
+    await this.addWalletTransaction(walletTx);
+
+    try {
+      const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
+      const signedTx = await this.signRawTx({ rawTx });
+      const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+      const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
+      const signedTxId = signedRawTx.id;
+      const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
+        txEngineSettings: buildCtx.txEngineSettings,
+      });
+      if (!validation.valid) {
+        throw new Error(validation.error ?? 'Bridge transaction validation failed');
+      }
+      const rpcEndpoint = await getEffectiveRpcEndpoint();
+      const rpcClient = createBrowserClient(rpcEndpoint);
+      await rpcClient.sendTransaction(signedProtobufTx);
+
+      walletTx.fee = Number(buildCtx.bridgeResult.fee);
+      walletTx.txHash = signedTxId;
+      walletTx.status = 'broadcasted_unconfirmed';
+      await this.updateWalletTransaction(currentAccount.address, walletTxId, {
+        fee: walletTx.fee,
+        txHash: signedTxId,
+        status: 'broadcasted_unconfirmed',
+      });
+
+      return {
+        txId: signedTxId,
+        walletTx,
+        broadcasted: true,
+      };
+    } catch (error) {
+      if (buildCtx.selectedNoteIds.length > 0) {
+        try {
+          await this.releaseInFlightNotes(currentAccount.address, buildCtx.selectedNoteIds);
+          await this.updateWalletTransaction(currentAccount.address, walletTxId, {
+            status: 'failed',
+          });
+        } catch (releaseError) {
+          console.error('[Vault] Error releasing notes:', releaseError);
+        }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Estimate the chain fee for a bridge transaction (builds tx, returns fee).
+   * Does not lock notes or broadcast.
+   */
+  async estimateBridgeFee(
+    destinationAddress: string,
+    amountNicks: Nicks
+  ): Promise<{ fee: number } | { error: string }> {
+    if (this.state.locked) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    try {
+      const buildCtx = await this.buildBridgeTransactionContext(
+        currentAccount,
+        destinationAddress,
+        amountNicks
+      );
+      await this.logBridgeReviewTransactionForInspection(buildCtx);
+      return { fee: Number(buildCtx.bridgeResult.fee) };
+    } catch (error) {
+      console.error('[Vault] Bridge fee estimation failed:', error);
+      return {
+        error: 'Fee estimation failed: ' + (error instanceof Error ? error.message : String(error)),
+      };
+    }
+  }
+
+  /**
+   * Build, sign, and broadcast a bridge transaction (Nockchain → Base)
+   * Uses UTXO store for spendable balance consistency.
+   *
+   * @param destinationAddress - EVM address on Base to receive NOCK
+   * @param amountNicks - Amount to bridge in nicks
+   * @param priceUsdAtTime - Optional USD price for display
+   */
+  async sendBridgeTransaction(
+    destinationAddress: string,
+    amountNicks: Nicks,
+    priceUsdAtTime?: number
+  ): Promise<
+    { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
+  > {
+    if (this.state.locked) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    return withAccountLock(currentAccount.address, async () => {
+      const walletTxId = crypto.randomUUID();
+
+      try {
+        const buildCtx = await this.buildBridgeTransactionContext(
+          currentAccount,
+          destinationAddress,
+          amountNicks
+        );
+
+        const walletTx: WalletTransaction = {
+          id: walletTxId,
+          accountAddress: currentAccount.address,
+          direction: 'outgoing',
+          kind: 'bridge',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          priceUsdAtTime,
+          status: 'created',
+          inputNoteIds: buildCtx.selectedNoteIds,
+          recipient: destinationAddress,
+          amount: Number(amountNicks),
+          fee: buildCtx.estimatedFeeNum,
+          expectedChange:
+            buildCtx.expectedChangeNicks > 0n ? Number(buildCtx.expectedChangeNicks) : 0,
+        };
+
+        return await this.sendBuiltBridgeTransaction(
+          currentAccount,
+          walletTxId,
+          buildCtx,
+          walletTx
+        );
+      } catch (error) {
+        console.error('[Vault] Bridge transaction failed:', error);
+        return {
+          error: `Bridge failed: ${error instanceof Error ? error.message : String(error)}`,
+        };
+      }
+    });
+  }
+
+  /**
    * Sign a raw transaction using iris-wasm
    *
-   * @param params - Transaction parameters with raw tx jam and notes/spend conditions
-   * @returns Hex-encoded signed transaction jam
+   * @param params - Transaction parameters with raw tx
+   * @returns Signed transaction in canonical NockchainTx form
    */
-  async signRawTx(params: {
-    rawTx: wasm.RawTx;
-    notes: wasm.Note[];
-    spendConditions: wasm.SpendCondition[];
-  }): Promise<any> {
-    // Returns protobuf wasm.RawTx
-    if (this.state.locked || !this.mnemonic) {
+  async signRawTx(params: { rawTx: wasm.RawTx }): Promise<wasm.NockchainTx> {
+    if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
     // Initialize WASM modules
     await initWasmModules();
 
-    const { rawTx, notes, spendConditions } = params;
+    const { rawTx } = params;
     assertNativeRawTx(rawTx);
-    notes.forEach(assertNativeNote);
-    spendConditions.forEach(assertNativeSpendCondition);
+
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      throw new Error('Current account is external and cannot sign locally');
+    }
 
     // Derive the account's private key
-    const masterKey = wasm.deriveMasterKeyFromMnemonic(this.mnemonic, '');
+    const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
     const currentAccount = this.getCurrentAccount();
     const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
-    const accountKey =
-      currentAccount?.derivation === 'master' ? masterKey : masterKey.deriveChild(childIndex);
+    const accountKey = this.isMasterAccount(currentAccount)
+      ? masterKey
+      : masterKey.deriveChild(childIndex);
 
     if (!accountKey.privateKey) {
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -2334,30 +3796,31 @@ export class Vault {
 
     try {
       // Use block height from latest balance (max originPage of current account's notes)
-      const accountNotes = currentAccount ? this.getAccountNotes(currentAccount.address) : [];
       const blockHeight = currentAccount
         ? this.getAccountBlockHeight(currentAccount.address)
         : await rpcClient.getCurrentBlockHeight();
 
       const settings = await txEngineSettings(blockHeight);
-      const builder = wasm.TxBuilder.fromTx(rawTx, notes, null, settings);
+      if (!guard.isRawTxV1(rawTx)) {
+        throw new Error('Only v1 raw transactions are supported');
+      }
+      const builder = wasm.TxBuilder.fromRawTx(rawTx, settings);
+      try {
+        await builder.sign(privateKey);
 
-      await builder.sign(privateKey);
+        // Validate before build (surfaces missing unlocks, fee, balanced spends)
+        builder.validate();
 
-      // Validate before build (surfaces missing unlocks, fee, balanced spends)
-      builder.validate();
-
-      // Build signed tx (returns NockchainTx)
-      const signedTx = builder.build();
-
-      // Convert to protobuf for return
-      const protobuf = nockchainTxToProtobuf(signedTx);
-
-      return protobuf;
+        // Build signed tx (returns plain NockchainTx data)
+        const signedTx = builder.build();
+        return signedTx;
+      } finally {
+        builder.free();
+      }
     } finally {
       privateKey.free();
 
-      if (currentAccount?.derivation !== 'master') {
+      if (!this.isMasterAccount(currentAccount)) {
         accountKey.free();
       }
       masterKey.free();
@@ -2365,7 +3828,7 @@ export class Vault {
   }
 
   async computeOutputs(rawTx: wasm.RawTx): Promise<any[]> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
@@ -2374,7 +3837,13 @@ export class Vault {
 
     try {
       assertNativeRawTx(rawTx);
-      const outputs = wasm.rawTxOutputs(rawTx);
+      const currentAccount = this.getCurrentAccount();
+      const cachedBlockHeight = currentAccount
+        ? this.getCachedAccountBlockHeight(currentAccount.address)
+        : 0;
+      const blockHeight = cachedBlockHeight || (await latestConfiguredTxEngineHeight());
+      const settings = await txEngineSettings(blockHeight);
+      const outputs = wasm.rawTxOutputs(rawTx, blockHeight, settings);
       return outputs.map(output => wasm.noteToProtobuf(output));
     } catch (err) {
       console.error('Failed to compute outputs:', err);

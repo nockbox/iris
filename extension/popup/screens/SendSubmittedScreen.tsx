@@ -1,10 +1,70 @@
+import { useEffect, useState } from 'react';
 import { useStore } from '../store';
 import { formatNock } from '../../shared/currency';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
+import { CheckIcon } from '../components/icons/CheckIcon';
 import { SendPaperPlaneIcon } from '../components/icons/SendPaperPlaneIcon';
+import { truncateAddress } from '../utils/format';
+import { createNockblocksClient, isNockblocksConfigured } from '../../shared/nockblocks-client';
+import { isV0MigrationSubmittedTx } from '../../shared/v0-migration';
+
+type SubmittedStatus = 'pending' | 'mempool' | 'confirmed';
+
+const MEMPOOL_POLL_INTERVAL_MS = 5000;
+const MEMPOOL_POLL_TIMEOUT_MS = 2 * 60 * 1000;
 
 export function SendSubmittedScreen() {
-  const { navigate, lastTransaction, priceUsd } = useStore();
+  const { navigate, lastTransaction, priceUsd, blockExplorerUrl } = useStore();
+  const [copiedTxId, setCopiedTxId] = useState(false);
+  const [status, setStatus] = useState<SubmittedStatus>('pending');
+
+  const txIdForPoll = lastTransaction?.txid ?? '';
+  const isMigrationSubmission = isV0MigrationSubmittedTx(lastTransaction);
+
+  useEffect(() => {
+    if (!txIdForPoll) return;
+    if (isMigrationSubmission) return;
+    if (!isNockblocksConfigured()) return;
+
+    const client = createNockblocksClient();
+    const startedAt = Date.now();
+    let cancelled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    async function pollOnce(): Promise<void> {
+      if (cancelled) return;
+      try {
+        const confirmed = await client.getTransactionByTxid(txIdForPoll);
+        if (cancelled) return;
+        if (confirmed) {
+          setStatus('confirmed');
+          return;
+        }
+
+        const mempoolTx = await client.getMempoolTransactionByTxid(txIdForPoll);
+        if (cancelled) return;
+        if (mempoolTx) {
+          setStatus(prev => (prev === 'confirmed' ? prev : 'mempool'));
+        }
+      } catch {
+        // Transient errors (including the node's peek/indexer being late on
+        // freshly-broadcast v0→v1 migration txs) are silently ignored — we
+        // simply retry until the timeout. Confirmation is ultimately driven
+        // by the wallet's history-sync loop.
+      }
+
+      if (cancelled) return;
+      if (Date.now() - startedAt >= MEMPOOL_POLL_TIMEOUT_MS) return;
+      timeoutId = setTimeout(pollOnce, MEMPOOL_POLL_INTERVAL_MS);
+    }
+
+    void pollOnce();
+
+    return () => {
+      cancelled = true;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, [txIdForPoll, isMigrationSubmission]);
 
   function handleBack() {
     navigate('home');
@@ -23,6 +83,25 @@ export function SendSubmittedScreen() {
           maximumFractionDigits: 2,
         })}`
       : '—';
+
+  const txId = lastTransaction.txid;
+
+  function handleViewExplorer() {
+    if (!txId) return;
+    const base = blockExplorerUrl.replace(/\/$/, '');
+    window.open(`${base}/tx/${txId}`, '_blank');
+  }
+
+  async function handleCopyTxId() {
+    if (!txId) return;
+    try {
+      await navigator.clipboard.writeText(txId);
+      setCopiedTxId(true);
+      setTimeout(() => setCopiedTxId(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy transaction ID:', err);
+    }
+  }
 
   return (
     <div
@@ -70,13 +149,13 @@ export function SendSubmittedScreen() {
               >
                 Your transaction
                 <br />
-                was submitted
+                is pending
               </h2>
               <p
                 className="m-0 text-[13px] leading-[18px] tracking-[0.26px]"
                 style={{ color: 'var(--color-text-muted)' }}
               >
-                Check the transaction activity below
+                Check the transaction activity below for confirmation updates
               </p>
             </div>
           </div>
@@ -108,6 +187,97 @@ export function SendSubmittedScreen() {
                 </div>
               </div>
             </div>
+
+            {txId && (
+              <>
+                {!isMigrationSubmission && (
+                  <div
+                    className="rounded-lg p-3 flex items-center justify-between gap-2.5"
+                    style={{ backgroundColor: 'var(--color-surface-900)' }}
+                  >
+                    <div
+                      className="text-sm font-medium leading-[18px] tracking-[0.14px]"
+                      style={{ color: 'var(--color-text-primary)' }}
+                    >
+                      Status
+                    </div>
+                    <div
+                      className="text-sm font-medium leading-[18px] tracking-[0.14px] whitespace-nowrap"
+                      style={{
+                        color:
+                          status === 'confirmed'
+                            ? 'var(--color-green)'
+                            : status === 'mempool'
+                              ? 'var(--color-primary)'
+                              : 'var(--color-text-muted)',
+                      }}
+                    >
+                      {status === 'confirmed'
+                        ? 'Confirmed'
+                        : status === 'mempool'
+                          ? 'Accepted'
+                          : 'Pending'}
+                    </div>
+                  </div>
+                )}
+
+                <div
+                  className="rounded-lg p-3 flex items-center justify-between gap-2.5"
+                  style={{ backgroundColor: 'var(--color-surface-900)' }}
+                >
+                  <div
+                    className="text-sm font-medium leading-[18px] tracking-[0.14px]"
+                    style={{ color: 'var(--color-text-primary)' }}
+                  >
+                    Transaction ID
+                  </div>
+                  <div
+                    className="text-sm font-medium leading-[18px] tracking-[0.14px] truncate"
+                    style={{ color: 'var(--color-text-muted)' }}
+                    title={txId}
+                  >
+                    {truncateAddress(txId)}
+                  </div>
+                </div>
+
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleViewExplorer}
+                    className="flex-1 py-[7px] px-3 bg-transparent rounded-full text-sm font-medium leading-[18px] tracking-[0.14px] transition-colors focus:outline-none focus-visible:ring-2 whitespace-nowrap"
+                    style={{
+                      border: '1px solid var(--color-surface-700)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                    onMouseEnter={e =>
+                      (e.currentTarget.style.backgroundColor = 'var(--color-surface-900)')
+                    }
+                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                  >
+                    View on explorer
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleCopyTxId}
+                    disabled={copiedTxId}
+                    className="flex-1 py-[7px] px-3 bg-transparent rounded-full text-sm font-medium leading-[18px] tracking-[0.14px] transition-colors focus:outline-none focus-visible:ring-2 whitespace-nowrap disabled:opacity-100 flex items-center justify-center gap-1.5"
+                    style={{
+                      border: '1px solid var(--color-surface-700)',
+                      color: 'var(--color-text-primary)',
+                    }}
+                    onMouseEnter={e => {
+                      if (!copiedTxId) {
+                        e.currentTarget.style.backgroundColor = 'var(--color-surface-900)';
+                      }
+                    }}
+                    onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+                  >
+                    {copiedTxId && <CheckIcon className="w-3.5 h-3.5" />}
+                    {copiedTxId ? 'Copied!' : 'Copy transaction ID'}
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
 

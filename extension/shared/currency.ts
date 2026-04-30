@@ -8,10 +8,22 @@
  * 1 NICK = 0.0000152587890625 NOCK
  */
 
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
 import { NOCK_TO_NICKS } from './constants';
 
-/** WASM Nicks type: decimal string for whole-number amounts (matches iris-wasm Nicks). */
-export type Nicks = string;
+/**
+ * Parse a Nicks string to bigint (whole non-negative decimal digits only).
+ */
+export function nicksToBigInt(value: Nicks): bigint {
+  const trimmed = value.trim();
+  if (trimmed === '' || trimmed[0] === '-') {
+    throw new Error(`Invalid Nicks string: ${value}`);
+  }
+  if (!/^\d+$/.test(trimmed)) {
+    throw new Error(`Invalid Nicks string (expect non-negative integer digits): ${value}`);
+  }
+  return BigInt(trimmed);
+}
 
 /**
  * Convert NOCK to whole NICK with proper rounding
@@ -84,21 +96,22 @@ export function isDustAmount(nockAmount: number): boolean {
 /**
  * Format NOCK for display with smart decimal precision and thousands separators
  *
- * Shows minimum decimals needed (up to 5 max) with commas for readability:
- * - 2.5 → "2.5" (not "2.50000")
- * - 1000.12345 → "1,000.12345"
- * - 100.1234567 → "100.12346" (rounded to 5)
+ * Shows minimum decimals needed (up to maxDecimals) with commas for readability:
+ * - 2.5 → "2.5" (not "2.50")
+ * - 1000.126 → "1,000.13" (default max 2)
+ * - 100.00 → "100"
  *
  * @param nockAmount - Amount in NOCK
- * @param maxDecimals - Maximum decimal places (default: 5)
+ * @param maxDecimals - Maximum decimal places (default: 2)
  * @returns Formatted NOCK string with minimal decimals and thousands separators
  *
  * @example
  * formatNock(2.5) // "2.5"
- * formatNock(1000.12345) // "1,000.12345"
+ * formatNock(1000.126) // "1,000.13"
  * formatNock(100.00) // "100"
+ * formatNock(1000.12345, 5) // "1,000.12345" — pass higher max where precision matters
  */
-export function formatNock(nockAmount: number, maxDecimals: number = 5): string {
+export function formatNock(nockAmount: number, maxDecimals: number = 2): string {
   // Round to max decimals first
   const rounded = Number(nockAmount.toFixed(maxDecimals));
 

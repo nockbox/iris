@@ -9,20 +9,20 @@ import { truncateAddress } from '../utils/format';
 import { useAutoFocus } from '../hooks/useAutoFocus';
 import { useClickOutside } from '../hooks/useClickOutside';
 import { INTERNAL_METHODS } from '../../shared/constants';
-import { Account } from '../../shared/types';
+import { SubAccount } from '../../shared/types';
 import { ChevronDownIcon } from './icons/ChevronDownIcon';
 import { PlusIcon } from './icons/PlusIcon';
 import { UploadIcon } from './icons/UploadIcon';
 import { EditIcon } from './icons/EditIcon';
 
 export function AccountSelector() {
-  const { wallet, syncWallet, navigate } = useStore();
+  const { wallet, syncWallet, navigate, refreshWalletAccounts } = useStore();
   const [isOpen, setIsOpen] = useState(false);
-  const [editingIndex, setEditingIndex] = useState<number | null>(null);
+  const [editingAddress, setEditingAddress] = useState<string | null>(null);
   const [editingName, setEditingName] = useState('');
   const dropdownRef = useRef<HTMLDivElement>(null);
   const editInputRef = useAutoFocus<HTMLInputElement>({
-    when: editingIndex !== null,
+    when: editingAddress !== null,
     select: true,
   });
 
@@ -31,22 +31,25 @@ export function AccountSelector() {
     dropdownRef,
     () => {
       setIsOpen(false);
-      setEditingIndex(null);
+      setEditingAddress(null);
     },
     isOpen
   );
 
-  async function handleSwitchAccount(index: number) {
-    const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
-      INTERNAL_METHODS.SWITCH_ACCOUNT,
-      [index]
-    );
+  async function handleSwitchAccount(accountAddress: string) {
+    const result = await send<{
+      ok?: boolean;
+      account?: SubAccount;
+      activeSeedSourceId?: string | null;
+      error?: string;
+    }>(INTERNAL_METHODS.SWITCH_ACCOUNT, [accountAddress]);
 
     if (result?.ok && result.account) {
       const updatedWallet = {
         ...wallet,
         currentAccount: result.account,
         address: result.account.address,
+        activeSeedSourceId: result.activeSeedSourceId ?? wallet.activeSeedSourceId,
       };
       syncWallet(updatedWallet);
     }
@@ -55,20 +58,13 @@ export function AccountSelector() {
   }
 
   async function handleCreateAccount() {
-    const result = await send<{ ok?: boolean; account?: Account; error?: string }>(
-      INTERNAL_METHODS.CREATE_ACCOUNT,
+    const result = await send<{ account?: SubAccount; error?: string }>(
+      INTERNAL_METHODS.CREATE_CHILD_ACCOUNT,
       []
     );
 
-    if (result?.ok && result.account) {
-      // Add new account to wallet state and switch to it
-      const updatedWallet = {
-        ...wallet,
-        accounts: [...wallet.accounts, result.account],
-        currentAccount: result.account,
-        address: result.account.address,
-      };
-      syncWallet(updatedWallet);
+    if (!result?.error) {
+      await refreshWalletAccounts();
     } else if (result?.error) {
       alert(`Failed to create account: ${result.error}`);
     }
@@ -77,51 +73,76 @@ export function AccountSelector() {
   }
 
   function handleImportWallet() {
-    // Show warning - importing will replace current wallet
+    // Add a new seed source to the existing vault.
     const confirmed = confirm(
-      'WARNING: Importing a wallet will replace your current wallet. Make sure you have backed up your current secret phrase. Continue?'
+      'Import another wallet into your current vault? This will add a new seed phrase without replacing your existing wallets.'
     );
     if (confirmed) {
-      navigate('onboarding-import');
+      navigate('wallet-add-import');
     }
     setIsOpen(false);
   }
 
-  function startEditing(account: Account, event: React.MouseEvent) {
+  function startEditing(account: SubAccount, event: React.MouseEvent) {
     event.stopPropagation(); // Prevent switching accounts
-    setEditingIndex(account.index);
+    setEditingAddress(account.address);
     setEditingName(account.name);
   }
 
   function cancelEditing() {
-    setEditingIndex(null);
+    setEditingAddress(null);
     setEditingName('');
   }
 
   async function saveRename() {
-    if (editingIndex === null || !editingName.trim()) {
+    if (editingAddress === null || !editingName.trim()) {
+      cancelEditing();
+      return;
+    }
+
+    const account = wallet.accounts.find(acc => acc.address === editingAddress);
+    if (!account) {
       cancelEditing();
       return;
     }
 
     const result = await send<{ ok?: boolean; error?: string }>(INTERNAL_METHODS.RENAME_ACCOUNT, [
-      editingIndex,
+      account.address,
       editingName.trim(),
     ]);
 
     if (result?.ok) {
+      const renamedAccount = { ...account, name: editingName.trim() };
+
       // Update wallet state with new name
       const updatedAccounts = wallet.accounts.map(acc =>
-        acc.index === editingIndex ? { ...acc, name: editingName.trim() } : acc
+        acc.address === editingAddress ? renamedAccount : acc
       );
       const updatedCurrentAccount =
-        wallet.currentAccount?.index === editingIndex
-          ? { ...wallet.currentAccount, name: editingName.trim() }
+        wallet.currentAccount?.address === editingAddress
+          ? wallet.currentAccount
+            ? { ...wallet.currentAccount, name: editingName.trim() }
+            : null
           : wallet.currentAccount;
+      const updatedSeedSources = wallet.seedSources.map(seed => {
+        const updatedSeedAccounts = seed.accounts.map(seedAccount =>
+          seedAccount.address === account.address ? renamedAccount : seedAccount
+        );
+
+        return {
+          ...seed,
+          ...(account.index === 0 &&
+          seed.accounts.some(seedAccount => seedAccount.address === account.address)
+            ? { name: editingName.trim() }
+            : {}),
+          accounts: updatedSeedAccounts,
+        };
+      });
 
       syncWallet({
         ...wallet,
         accounts: updatedAccounts,
+        seedSources: updatedSeedSources,
         currentAccount: updatedCurrentAccount,
       });
     } else if (result?.error) {
@@ -172,19 +193,19 @@ export function AccountSelector() {
               .filter(acc => !acc.hidden)
               .map(account => (
                 <div
-                  key={account.index}
+                  key={account.address}
                   className={`w-full flex items-center gap-2 p-3 ${
-                    editingIndex !== account.index ? 'hover:bg-gray-700 cursor-pointer' : ''
+                    editingAddress !== account.address ? 'hover:bg-gray-700 cursor-pointer' : ''
                   } transition-colors ${
-                    currentAccount?.index === account.index ? 'bg-gray-700' : ''
+                    currentAccount?.address === account.address ? 'bg-gray-700' : ''
                   }`}
                   onClick={() =>
-                    editingIndex !== account.index && handleSwitchAccount(account.index)
+                    editingAddress !== account.address && handleSwitchAccount(account.address)
                   }
                 >
                   <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex-shrink-0" />
                   <div className="text-left flex-1 min-w-0">
-                    {editingIndex === account.index ? (
+                    {editingAddress === account.address ? (
                       <input
                         ref={editInputRef}
                         type="text"
@@ -212,9 +233,10 @@ export function AccountSelector() {
                       </>
                     )}
                   </div>
-                  {currentAccount?.index === account.index && editingIndex !== account.index && (
-                    <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0" />
-                  )}
+                  {currentAccount?.address === account.address &&
+                    editingAddress !== account.address && (
+                      <div className="w-2 h-2 bg-green-500 rounded-full flex-shrink-0" />
+                    )}
                 </div>
               ))}
           </div>

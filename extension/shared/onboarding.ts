@@ -1,7 +1,12 @@
 /**
  * Onboarding State Management
- * Handles persisting and retrieving onboarding progress to ensure users
- * complete their secret phrase backup even if they close the popup mid-flow.
+ * Persists whether the user finished secret-phrase backup (see ONBOARDING_STATE).
+ *
+ * Main onboarding before vault SETUP keeps the mnemonic and password only in popup memory.
+ * Closing the popup abandons that attempt—nothing is written to disk for the phrase. If stale
+ * "incomplete onboarding" flags exist with no
+ * vault (e.g. after closing mid-flow), `initialize` clears them so the app behaves as if
+ * setup never started.
  */
 
 import { STORAGE_KEYS } from './constants';

@@ -3,18 +3,19 @@
  */
 
 import { PROVIDER_METHODS, INTERNAL_METHODS, RPC_METHODS, ERROR_CODES } from './constants';
-import type { Nicks } from './currency';
+import type { Nicks } from '@nockbox/iris-sdk/wasm';
 
 /**
- * Account information for multi-account wallet
- * Each account is derived from the same mnemonic using BIP-44 derivation paths
+ * Child wallet account, always nested under a SeedAccount.
+ * Key source, external metadata, and seed identity are
+ * inherited from the parent SeedAccount — never duplicated here.
  */
-export interface Account {
+export interface SubAccount {
   /** User-defined account name (editable) */
   name: string;
   /** Nockchain V1 PKH address (40 bytes base58-encoded, ~54-55 chars) */
   address: string;
-  /** BIP-44 derivation index (0, 1, 2, ...) */
+  /** BIP-44 derivation index (0 = master/underived, 1+ = slip10 children) */
   index: number;
   /** Icon style ID (1-15, defaults to index % 3 + 1 for variety) */
   iconStyleId?: number;
@@ -24,8 +25,24 @@ export interface Account {
   hidden?: boolean;
   /** Timestamp when the account was created (milliseconds since epoch) */
   createdAt?: number;
-  /** Derivation path: 'master' (master key) or 'derived' (child key at index) */
-  derivation?: 'master' | 'slip10';
+}
+
+/**
+ * Top-level account source (seed phrase, hardware wallet, etc.)
+ * Each source can contain one or more child wallet accounts.
+ * Vault-internal — the UI receives a mnemonic-stripped projection via getSeedSources().
+ */
+export interface SeedAccount {
+  id: string;
+  name: string;
+  type: 'mnemonic' | 'external';
+  mnemonic?: string;
+  createdAt: number;
+  accounts: SubAccount[];
+  external?: {
+    provider: 'ledger' | 'unknown';
+    sourceRef?: string;
+  };
 }
 
 /**
@@ -147,7 +164,7 @@ export interface TransactionRequest {
   timestamp: number;
 }
 
-/** Pending signRawTx request. Native format (converted from protobuf at RPC boundary). */
+/** Pending signTx approval request stored in native wasm form. */
 export interface SignRawTxRequest {
   rawTx: unknown; // wasm.RawTx (native)
   notes: unknown[]; // wasm.Note[] (native); popup receives protobuf for display
@@ -280,10 +297,15 @@ export interface UTXOStore {
 export type WalletTxStatus =
   | 'created'
   | 'broadcast_pending'
+  | 'mempool_seen'
   | 'broadcasted_unconfirmed'
   | 'confirmed'
   | 'failed'
   | 'expired';
+
+export type WalletTxOrigin = 'popup_send' | 'provider_send' | 'history_sync';
+
+export type WalletTxConfirmationSource = 'api' | 'utxo_fallback' | 'history_sync';
 
 /**
  * Wallet transaction record
@@ -313,6 +335,10 @@ export interface WalletTransaction {
 
   /** Current status */
   status: WalletTxStatus;
+  /** Where this record originated from */
+  origin?: WalletTxOrigin;
+  /** Tx id used for Nockblocks tracking when available */
+  trackingTxId?: string;
 
   // For outgoing transactions
   /** Note IDs used as inputs (spent) */
@@ -334,9 +360,27 @@ export interface WalletTransaction {
   /** Sender address (if known) */
   sender?: string;
 
+  /** v0→v1 migration (set when sync detects long legacy sender + short v1 recipient) */
+  migrationFromV0?: boolean;
+
+  /** Nockchain → Base (EVM) bridge; set in sendBridgeTransaction */
+  kind?: 'bridge';
+
   // Confirmation tracking
+  /** When the tx was first observed in mempool (ms since epoch) */
+  mempoolSeenAt?: number;
+  /** Last time mempool status was checked (ms since epoch) */
+  lastMempoolCheckAt?: number;
+  /** Last time confirmed status was checked (ms since epoch) */
+  lastConfirmationCheckAt?: number;
+  /** How this transaction was ultimately confirmed */
+  confirmationSource?: WalletTxConfirmationSource;
+  /** Confirmed block id when available */
+  blockId?: string;
   /** Block height when confirmed */
   confirmedAtBlock?: number;
+  /** Confirmed timestamp in seconds from chain API */
+  confirmedAtTimestamp?: number;
   /** Number of confirmations */
   confirmations?: number;
 }
@@ -357,6 +401,12 @@ export interface AccountSyncState {
   lastSyncedHeight: number;
   /** Timestamp of last successful sync */
   lastSyncedAt: number;
+  /** Whether confirmed history has been backfilled at least once */
+  historyInitialized?: boolean;
+  /** Tip height used for the most recent history sync window */
+  lastHistorySyncedTip?: number;
+  /** Timestamp of the last successful history backfill */
+  lastHistoryBackfillAt?: number;
 }
 
 /**

@@ -6,6 +6,7 @@
 
 // Import provider methods from SDK
 import { PROVIDER_METHODS } from '@nockbox/iris-sdk';
+export { PROVIDER_METHODS };
 
 /**
  * Internal Extension Methods - Called by popup UI and other extension components
@@ -30,14 +31,23 @@ export const INTERNAL_METHODS = {
   /** Set auto-lock timeout in minutes */
   SET_AUTO_LOCK: 'wallet:setAutoLock',
 
-  /** Create a new account */
-  CREATE_ACCOUNT: 'wallet:createAccount',
+  /** Create a child sub-account under a specific seed source */
+  CREATE_CHILD_ACCOUNT: 'wallet:createChildAccount',
 
-  /** Switch to a different account */
+  /** Create/import mnemonic-based seed source */
+  CREATE_MNEMONIC_SEED_SOURCE: 'wallet:createMnemonicSeedSource',
+
+  /** Create external seed source (e.g. Ledger) */
+  CREATE_EXTERNAL_SEED_SOURCE: 'wallet:createExternalSeedSource',
+
+  /** Switch to a different account (by address) */
   SWITCH_ACCOUNT: 'wallet:switchAccount',
 
-  /** Get all accounts */
+  /** Get flattened account list */
   GET_ACCOUNTS: 'wallet:getAccounts',
+
+  /** Get all top-level seed/external account sources */
+  GET_SEED_SOURCES: 'wallet:getSeedSources',
 
   /** Rename an account */
   RENAME_ACCOUNT: 'wallet:renameAccount',
@@ -114,6 +124,12 @@ export const INTERNAL_METHODS = {
   /** Send transaction using UTXO store (build, lock, broadcast atomically) */
   SEND_TRANSACTION_V2: 'wallet:sendTransactionV2',
 
+  /** Estimate bridge transaction fee for a given destination and amount */
+  ESTIMATE_BRIDGE_FEE: 'wallet:estimateBridgeFee',
+
+  /** Build, sign, and broadcast a bridge transaction (Nockchain → Base) */
+  SEND_BRIDGE_TRANSACTION: 'wallet:sendBridgeTransaction',
+
   /** Approve pending sign raw transaction request */
   APPROVE_SIGN_RAW_TX: 'wallet:approveSignRawTx',
 
@@ -128,6 +144,9 @@ export const INTERNAL_METHODS = {
 
   /** Get wallet transactions for an account (from encrypted store) */
   GET_WALLET_TRANSACTIONS: 'wallet:getWalletTransactions',
+
+  /** Record a v0 migration transaction after broadcast, before chain confirmation */
+  RECORD_PENDING_V0_MIGRATION: 'wallet:recordPendingV0Migration',
 
   /** Get cached balances for all accounts (from encrypted store) */
   GET_CACHED_BALANCES: 'wallet:getCachedBalances',
@@ -144,9 +163,6 @@ export const INTERNAL_METHODS = {
   /** Force resync an account's UTXOs */
   FORCE_RESYNC_ACCOUNT: 'wallet:forceResyncAccount',
 } as const;
-
-// Re-export PROVIDER_METHODS for other files
-export { PROVIDER_METHODS };
 
 /**
  * All RPC methods (combined)
@@ -184,6 +200,9 @@ export const ERROR_CODES = {
   /** Cannot hide the last visible account */
   CANNOT_HIDE_LAST_ACCOUNT: 'CANNOT_HIDE_LAST_ACCOUNT',
 
+  /** Master wallet for this seed is *deleted* (hidden)*/
+  MASTER_WALLET_HIDDEN: 'MASTER_WALLET_HIDDEN',
+
   /** Unsupported RPC method requested */
   METHOD_NOT_SUPPORTED: 'METHOD_NOT_SUPPORTED',
 
@@ -195,6 +214,12 @@ export const ERROR_CODES = {
 
   /** Invalid parameters provided to method */
   INVALID_PARAMS: 'INVALID_PARAMS',
+
+  /** Seed phrase is already present in the vault */
+  DUPLICATE_SEED: 'DUPLICATE_SEED',
+
+  /** Cannot perform operation on a hidden (deleted) account */
+  ACCOUNT_HIDDEN: 'ACCOUNT_HIDDEN',
 } as const;
 
 /**
@@ -215,6 +240,9 @@ export const STORAGE_KEYS = {
 
   /** Whether balance is hidden (privacy mode) */
   BALANCE_HIDDEN: 'balanceHidden',
+
+  /** UI display order for top-level seed groups */
+  SEED_DISPLAY_ORDER: 'seedDisplayOrder',
 
   /** Onboarding state - tracks whether secret phrase backup is complete */
   ONBOARDING_STATE: 'onboardingState',
@@ -298,6 +326,9 @@ export const CHAIN_ID = 'nockchain-1';
 /** Conversion rate: 1 NOCK = 65,536 nicks (2^16) */
 export const NOCK_TO_NICKS = 65_536;
 
+/** How many slip10 child indices (1..N) to scan on-chain when discovering funded sub-wallets. */
+export const MAX_SUBWALLET_DISCOVERY_SCAN = 10;
+
 /** Default transaction fee in nicks (3,407,872 nicks = 52 NOCK)
  * Used only for UI defaults in send form and approval screens.
  * Actual fees are ALWAYS auto-calculated by WASM based on transaction size.
@@ -315,18 +346,21 @@ export const USER_ACTIVITY_METHODS = new Set([
   PROVIDER_METHODS.CONNECT,
   PROVIDER_METHODS.SIGN_MESSAGE,
   PROVIDER_METHODS.SEND_TRANSACTION,
-  PROVIDER_METHODS.SIGN_RAW_TX,
+  PROVIDER_METHODS.SIGN_TX,
 
   // Internal methods (user actions in the UI)
   INTERNAL_METHODS.UNLOCK,
   INTERNAL_METHODS.SWITCH_ACCOUNT,
-  INTERNAL_METHODS.CREATE_ACCOUNT,
+  INTERNAL_METHODS.CREATE_CHILD_ACCOUNT,
+  INTERNAL_METHODS.CREATE_MNEMONIC_SEED_SOURCE,
+  INTERNAL_METHODS.CREATE_EXTERNAL_SEED_SOURCE,
   INTERNAL_METHODS.RENAME_ACCOUNT,
   INTERNAL_METHODS.UPDATE_ACCOUNT_STYLING,
   INTERNAL_METHODS.HIDE_ACCOUNT,
   INTERNAL_METHODS.SET_AUTO_LOCK,
   INTERNAL_METHODS.GET_MNEMONIC, // Viewing secret phrase is user activity
   INTERNAL_METHODS.SEND_TRANSACTION_V2,
+  INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION,
   INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE,
   INTERNAL_METHODS.ESTIMATE_MAX_SEND,
   INTERNAL_METHODS.REPORT_ACTIVITY,

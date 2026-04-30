@@ -4,6 +4,7 @@
  */
 
 import { base58 } from '@scure/base';
+import type { Digest } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
 
 /**
@@ -48,6 +49,14 @@ export function digestStringToBytes(digestString: string): Uint8Array {
     throw new Error(`Decoded digest has invalid length: ${bytes.length}, expected 40`);
   }
   return bytes;
+}
+
+/**
+ * Validates a base58-encoded v1 PKH address and returns the wasm {@link Digest} nominal type.
+ */
+export function pkhAddressToDigest(pkhBase58: string): Digest {
+  digestStringToBytes(pkhBase58);
+  return pkhBase58 as Digest;
 }
 
 /**
