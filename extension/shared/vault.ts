@@ -3746,8 +3746,12 @@ export class Vault {
     destinationAddress: string,
     amountNicks: Nicks
   ): Promise<{ fee: number } | { error: string }> {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
+    }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
     }
 
     const currentAccount = this.getCurrentAccount();
@@ -3786,8 +3790,12 @@ export class Vault {
   ): Promise<
     { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
   > {
-    if (this.state.locked || !this.mnemonic) {
+    if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
+    }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
     }
 
     const currentAccount = this.getCurrentAccount();
