@@ -141,7 +141,7 @@ export function SendScreen() {
         const maxAmountNock = Math.floor((result.maxAmount / NOCK_TO_NICKS) * 100000) / 100000;
         const feeNock = result.fee / NOCK_TO_NICKS;
 
-        setAmount(formatNock(maxAmountNock));
+        setAmount(formatNock(maxAmountNock, 5));
         setFee(feeNock.toString());
         setEditedFee(feeNock.toString());
         setMinimumFee(feeNock);
@@ -152,7 +152,7 @@ export function SendScreen() {
     } catch (err) {
       console.error('[SendScreen] Max estimation failed:', err);
       // Fallback: just set balance (will fail validation if fee not covered)
-      setAmount(formatNock(currentBalance));
+      setAmount(formatNock(currentBalance, 5));
       setIsSendingMax(false);
     } finally {
       setIsCalculatingFee(false);

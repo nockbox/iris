@@ -8,6 +8,7 @@ import {
   logV0MigrationUnsignedTxPayload,
   signAndBroadcastV0Migration,
 } from '../../shared/v0-migration';
+import { formatNock } from '../../shared/currency';
 import { Alert } from '../components/Alert';
 
 export function V0MigrationReviewScreen() {
@@ -217,7 +218,7 @@ export function V0MigrationReviewScreen() {
         >
           <span className="text-[14px] font-medium">Network fee</span>
           <span className="text-[14px] font-medium">
-            {v0MigrationDraft.feeNock != null ? `${v0MigrationDraft.feeNock} NOCK` : ''}
+            {v0MigrationDraft.feeNock != null ? `${formatNock(v0MigrationDraft.feeNock)} NOCK` : ''}
           </span>
         </div>
 

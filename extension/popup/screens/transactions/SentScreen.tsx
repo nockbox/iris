@@ -8,6 +8,7 @@ import { ChevronLeftIcon } from '../../components/icons/ChevronLeftIcon';
 import { CheckIcon } from '../../components/icons/CheckIcon';
 import { ArrowUpRightIcon } from '../../components/icons/ArrowUpRightIcon';
 import { useCopyToClipboard } from '../../hooks/useCopyToClipboard';
+import { formatNock } from '../../../shared/currency';
 
 export function SentScreen() {
   const { navigate, lastTransaction } = useStore();
@@ -75,7 +76,7 @@ export function SentScreen() {
             Amount
           </span>
           <span className="font-mono" style={{ color: 'var(--color-text-primary)' }}>
-            {amount} NOCK
+            {formatNock(amount)} NOCK
           </span>
         </div>
         <div className="flex justify-between items-center">
@@ -83,7 +84,7 @@ export function SentScreen() {
             Fee
           </span>
           <span className="font-mono" style={{ color: 'var(--color-text-primary)' }}>
-            {fee} NOCK
+            {formatNock(fee)} NOCK
           </span>
         </div>
         <div
@@ -94,7 +95,7 @@ export function SentScreen() {
             Total
           </span>
           <span className="font-mono font-semibold" style={{ color: 'var(--color-text-primary)' }}>
-            {total.toFixed(2)} NOCK
+            {formatNock(total)} NOCK
           </span>
         </div>
       </div>

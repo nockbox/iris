@@ -8,6 +8,7 @@ import IrisLogo40 from '../assets/iris-logo-40.svg';
 import IrisLogoBlue from '../assets/iris-logo-blue.svg';
 import { truncateAddress } from '../utils/format';
 import { NOCK_TO_NICKS } from '../../shared/constants';
+import { formatNock } from '../../shared/currency';
 import { resolveCounterpartyAccount } from '../../shared/account-lock-roots';
 import { isMigrationWalletTx } from '../../shared/v0-migration';
 import { isBridgeWalletTx } from '../../shared/bridge-config';
@@ -194,11 +195,9 @@ export function TransactionDetailsScreen() {
     selectedTransaction.direction === 'outgoing' || selectedTransaction.direction === 'self';
 
   // For incoming transactions, we don't have fee info
-  const networkFee = paysNetworkFee
-    ? `${feeNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`
-    : '-';
+  const networkFee = paysNetworkFee ? `${formatNock(feeNock)} NOCK` : '-';
   const totalNock = paysNetworkFee ? amountNock + feeNock : amountNock;
-  const total = `${totalNock.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} NOCK`;
+  const total = `${formatNock(totalNock)} NOCK`;
 
   const totalUsd =
     historicalPrice && historicalPrice > 0

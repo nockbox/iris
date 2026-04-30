@@ -9,7 +9,7 @@ import JustNText from '../assets/JustNText.svg';
 import DownArrow from '../assets/downArrow.svg';
 import { BRIDGE_PROTOCOL_FEE_RATE } from '@nockbox/iris-sdk';
 import { INTERNAL_METHODS } from '../../shared/constants';
-import { nockToNick, nickToNock } from '../../shared/currency';
+import { formatNock, nockToNick, nickToNock } from '../../shared/currency';
 
 function truncate(addr: string): string {
   if (!addr) return '';
@@ -52,7 +52,7 @@ export function SwapReviewScreen() {
     return null;
   }
 
-  const formatNock = (value: number, digits = 2) =>
+  const formatAmountNock = (value: number, digits = 2) =>
     value.toLocaleString('en-US', {
       minimumFractionDigits: digits,
       maximumFractionDigits: digits,
@@ -68,13 +68,14 @@ export function SwapReviewScreen() {
   // what lands on the destination chain.
   const receiveAmountNock = Math.max(sendAmountNock - bridgeProtocolFeeNock, 0);
 
-  const sendAmountDisplay = formatNock(sendAmountNock);
-  const receiveAmountDisplay = formatNock(receiveAmountNock);
+  const sendAmountDisplay = formatAmountNock(sendAmountNock);
+  const receiveAmountDisplay = formatAmountNock(receiveAmountNock);
 
   const sendUsdValue = priceUsd > 0 ? formatUsd(sendAmountNock * priceUsd) : null;
   const receiveUsdValue = priceUsd > 0 ? formatUsd(receiveAmountNock * priceUsd) : null;
 
-  const networkFeeDisplay = networkFeeNicks != null ? formatNock(nickToNock(networkFeeNicks)) : '—';
+  const networkFeeDisplay =
+    networkFeeNicks != null ? formatNock(nickToNock(networkFeeNicks)) : '—';
 
   const bridgeProtocolFeeAmountDisplay = bridgeProtocolFeeNock.toLocaleString('en-US', {
     minimumFractionDigits: 0,
