@@ -2,9 +2,9 @@
  * Onboarding State Management
  * Persists whether the user finished secret-phrase backup (see ONBOARDING_STATE).
  *
- * Main onboarding before vault SETUP keeps the mnemonic only in memory (`onboardingMnemonic`
- * and `onboardingPassword` in the store). Closing the popup abandons that attempt—nothing
- * is written to disk for the phrase. If stale "incomplete onboarding" flags exist with no
+ * Main onboarding before vault SETUP keeps the mnemonic and password only in popup memory.
+ * Closing the popup abandons that attempt—nothing is written to disk for the phrase. If stale
+ * "incomplete onboarding" flags exist with no
  * vault (e.g. after closing mid-flow), `initialize` clears them so the app behaves as if
  * setup never started.
  */

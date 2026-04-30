@@ -21,6 +21,7 @@ import type { V0MigrationTxSignPayload } from '@nockbox/iris-sdk';
 
 // will live here until we stop supporting v0 migration down the line
 let v0MigrationMnemonic: string | undefined;
+let onboardingPassword: string | undefined;
 let walletTransactionsFetchInFlight:
   | { address: string; promise: Promise<void> }
   | null = null;
@@ -35,6 +36,18 @@ export function getV0MigrationMnemonic() {
 
 export function clearV0MigrationMnemonic() {
   v0MigrationMnemonic = undefined;
+}
+
+export function setOnboardingPassword(password: string | undefined) {
+  onboardingPassword = password;
+}
+
+export function getOnboardingPassword() {
+  return onboardingPassword;
+}
+
+export function clearOnboardingPassword() {
+  onboardingPassword = undefined;
 }
 
 /**
@@ -146,9 +159,6 @@ interface AppStore {
   // Temporary onboarding state (cleared after completion)
   onboardingMnemonic: string | null;
   setOnboardingMnemonic: (mnemonic: string | null) => void;
-  /** Password held only until main onboarding SETUP runs after verify (never persisted). */
-  onboardingPassword: string | null;
-  setOnboardingPassword: (password: string | null) => void;
 
   // Last transaction details (for showing confirmation screen)
   lastTransaction: TransactionDetails | null;
@@ -277,7 +287,6 @@ export const useStore = create<AppStore>((set, get) => ({
   },
 
   onboardingMnemonic: null,
-  onboardingPassword: null,
   lastTransaction: null,
   v0MigrationDraft: {
     v0BalanceNock: 0,
@@ -433,10 +442,6 @@ export const useStore = create<AppStore>((set, get) => ({
   // Set temporary mnemonic during onboarding
   setOnboardingMnemonic: (mnemonic: string | null) => {
     set({ onboardingMnemonic: mnemonic });
-  },
-
-  setOnboardingPassword: (password: string | null) => {
-    set({ onboardingPassword: password });
   },
 
   // Set last transaction details

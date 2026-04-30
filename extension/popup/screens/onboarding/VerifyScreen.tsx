@@ -4,7 +4,7 @@
 
 import { useState, useMemo } from 'react';
 import { INTERNAL_METHODS, ERROR_CODES } from '../../../shared/constants';
-import { useStore } from '../../store';
+import { clearOnboardingPassword, getOnboardingPassword, useStore } from '../../store';
 import { send } from '../../utils/messaging';
 import { Alert } from '../../components/Alert';
 import lockIcon from '../../assets/lock-icon.svg';
@@ -32,7 +32,6 @@ export function VerifyScreen() {
     onboardingMnemonic,
     navigate,
     setOnboardingMnemonic,
-    setOnboardingPassword,
     currentScreen,
     createMnemonicSeedSource,
     syncWallet,
@@ -89,7 +88,7 @@ export function VerifyScreen() {
           return;
         }
         navigate('home');
-        setOnboardingPassword(null);
+        clearOnboardingPassword();
         setOnboardingMnemonic(null);
         return;
       }
@@ -98,12 +97,12 @@ export function VerifyScreen() {
       if (vaultSnap?.hasVault) {
         await refreshWalletAccounts();
         navigate('onboarding-success');
-        setOnboardingPassword(null);
+        clearOnboardingPassword();
         setOnboardingMnemonic(null);
         return;
       }
 
-      const password = useStore.getState().onboardingPassword;
+      const password = getOnboardingPassword();
       if (!password) {
         setError('Session expired. Please restart wallet setup from the beginning.');
         return;
@@ -122,7 +121,7 @@ export function VerifyScreen() {
             ? 'Invalid secret phrase. Please go back and try again.'
             : `Error: ${result.error}`
         );
-        setOnboardingPassword(null);
+        clearOnboardingPassword();
         return;
       }
 
@@ -147,7 +146,7 @@ export function VerifyScreen() {
       });
       await refreshWalletAccounts();
       navigate('onboarding-success');
-      setOnboardingPassword(null);
+      clearOnboardingPassword();
       setOnboardingMnemonic(null);
     } finally {
       setIsSubmitting(false);

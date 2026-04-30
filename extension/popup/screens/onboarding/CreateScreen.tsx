@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { UI_CONSTANTS } from '../../../shared/constants';
 import { setOnboardingInProgress } from '../../../shared/onboarding';
 import { generateMnemonic } from '../../../shared/wallet-crypto';
-import { useStore } from '../../store';
+import { setOnboardingPassword, useStore } from '../../store';
 import { Alert } from '../../components/Alert';
 import lockIcon from '../../assets/lock-icon.svg';
 import { EyeIcon } from '../../components/icons/EyeIcon';
@@ -18,7 +18,7 @@ export function CreateScreen() {
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [error, setError] = useState('');
-  const { navigate, setOnboardingMnemonic, setOnboardingPassword, currentScreen } = useStore();
+  const { navigate, setOnboardingMnemonic, currentScreen } = useStore();
   const isAddSeedFlow = currentScreen === 'wallet-add-create';
 
   async function handleCreate() {

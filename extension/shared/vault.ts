@@ -3802,15 +3802,18 @@ export class Vault {
         throw new Error('Only v1 raw transactions are supported');
       }
       const builder = wasm.TxBuilder.fromRawTx(rawTx, settings);
+      try {
+        await builder.sign(privateKey);
 
-      await builder.sign(privateKey);
+        // Validate before build (surfaces missing unlocks, fee, balanced spends)
+        builder.validate();
 
-      // Validate before build (surfaces missing unlocks, fee, balanced spends)
-      builder.validate();
-
-      // Build signed tx (returns NockchainTx)
-      const signedTx = builder.build();
-      return signedTx;
+        // Build signed tx (returns plain NockchainTx data)
+        const signedTx = builder.build();
+        return signedTx;
+      } finally {
+        builder.free();
+      }
     } finally {
       privateKey.free();
 
