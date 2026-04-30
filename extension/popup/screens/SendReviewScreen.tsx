@@ -100,7 +100,7 @@ export function SendReviewScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col"
+      className="relative w-[357px] h-[600px] flex flex-col"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}
@@ -308,6 +308,36 @@ export function SendReviewScreen() {
           </button>
         </div>
       </div>
+      {isSending && (
+        <div
+          className="absolute inset-0 z-[60] flex items-center justify-center p-5"
+          style={{ backgroundColor: 'rgba(0,0,0,0.55)' }}
+        >
+          <div
+            className="w-full rounded-[20px] border p-5 flex flex-col items-center gap-3 text-center"
+            style={{
+              backgroundColor: 'var(--color-bg)',
+              borderColor: 'var(--color-surface-700)',
+              color: 'var(--color-text-primary)',
+            }}
+          >
+            <div
+              className="w-8 h-8 border-2 rounded-full animate-spin"
+              style={{
+                borderColor: 'var(--color-text-muted)',
+                borderTopColor: 'var(--color-primary)',
+              }}
+            />
+            <div className="text-[16px] font-medium">Signing and submitting transaction</div>
+            <div
+              className="text-[13px] leading-[18px]"
+              style={{ color: 'var(--color-text-muted)' }}
+            >
+              Signing and submitting your transaction. This could take a while.
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
