@@ -16,6 +16,7 @@ import type { Digest } from '@nockbox/iris-sdk/wasm';
 import wasm from './sdk-wasm.js';
 import { NOCK_TO_NICKS } from './constants';
 import { createBrowserClient } from './rpc-client-browser';
+import { assertNativeRawTxV1 } from './sign-raw-tx-compat';
 import type { TransactionDetails, WalletTransaction } from './types';
 
 export type { V0BalanceResult };
@@ -153,6 +154,9 @@ export async function buildV0MigrationTx(
         );
         try {
           const feeNicks = await feeNicksAfterSign(builder, privateKey);
+          const postFeeTx = builder.build();
+          const postFeeRaw = wasm.nockchainTxToRawTx(postFeeTx) as wasm.RawTxV1;
+          assertNativeRawTxV1(postFeeRaw);
           result = {
             ...result,
             fee: feeNicks as BuildV0MigrationTxResult['fee'],
@@ -208,10 +212,19 @@ export async function signAndBroadcastV0Migration(
     }
 
     const signedTx = builder.build();
-    const signedRawTx = wasm.nockchainTxToRawTx(signedTx) as wasm.RawTxV1;
+    const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+    assertNativeRawTxV1(signedRawTx);
     const protobuf = wasm.rawTxToProtobuf(signedRawTx);
     const txId = signedTx.id;
 
+    const dbgSigned = signedRawTx as { id?: string; version?: number; spends?: unknown[] };
+    console.log('[V0 Migration] Raw signed transaction (after sign):', {
+      txId,
+      rawTx: { id: dbgSigned.id, version: dbgSigned.version, spendsCount: dbgSigned.spends?.length ?? 0 },
+      protobufTx: protobuf,
+      fullSignedRawTx: signedRawTx,
+    });
+    return {txId, confirmed: false};
     const rpcClient = createBrowserClient(grpcEndpoint);
     // Note: the node's WalletSendTransaction ACK is an empty Acknowledged
     await rpcClient.sendTransaction(protobuf);

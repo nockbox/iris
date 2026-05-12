@@ -17,6 +17,13 @@ export function assertNativeRawTx(rawTx: unknown): asserts rawTx is wasm.RawTx {
   }
 }
 
+/** Assert value is native RawTxV1; throw if not. */
+export function assertNativeRawTxV1(rawTx: unknown): asserts rawTx is wasm.RawTxV1 {
+  if (!guard.isRawTxV1(rawTx)) {
+    throw new Error('Expected native RawTxV1');
+  }
+}
+
 /** Assert value is native Note; throw if not. */
 export function assertNativeNote(note: unknown): asserts note is wasm.Note {
   if (!guard.isNote(note)) {
