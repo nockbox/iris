@@ -7,7 +7,7 @@ import NockTextCircleContainer from '../assets/NockTextCircleContainer.svg';
 import NockText from '../assets/NockText.svg';
 import JustNText from '../assets/JustNText.svg';
 import UpDownVec from '../assets/upDownvec.svg';
-import { MIN_BRIDGE_AMOUNT_NOCK, isEvmAddress } from '@nockbox/iris-sdk';
+import { BRIDGE_PROTOCOL_FEE_RATE, MIN_BRIDGE_AMOUNT_NOCK, isEvmAddress } from '@nockbox/iris-sdk';
 import { formatWithCommas, parseAmount } from '../utils/format';
 
 export function SwapScreen() {
@@ -22,6 +22,16 @@ export function SwapScreen() {
 
   const spendableNock = wallet.spendableBalance;
   const amountNum = parseAmount(amount);
+
+  const bridgeProtocolFeeNock =
+    amountNum > 0 && !Number.isNaN(amountNum) ? amountNum * BRIDGE_PROTOCOL_FEE_RATE : 0;
+  const receiveAmountNock =
+    amountNum > 0 && !Number.isNaN(amountNum) ? Math.max(amountNum - bridgeProtocolFeeNock, 0) : 0;
+  const bridgeProtocolFeeAmountDisplay = bridgeProtocolFeeNock.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 4,
+  });
+  const bridgeProtocolFeePercentLabel = `${(BRIDGE_PROTOCOL_FEE_RATE * 100).toFixed(1)}%`;
 
   // Single consolidated message: never show two at once. Uses same wallet.spendableBalance as Home.
   // Don't show spendable-below-min while balance is loading (same pattern as HomeScreen skeleton).
@@ -68,12 +78,13 @@ export function SwapScreen() {
   }
 
   const hasDecimalPart = /\.\d/.test(amount.replace(/,/g, ''));
-  const displayAmount = amount
-    ? amountNum.toLocaleString('en-US', {
-        minimumFractionDigits: hasDecimalPart ? 2 : 0,
-        maximumFractionDigits: hasDecimalPart ? 2 : 0,
-      })
-    : '0.00';
+  const receiveDisplayAmount =
+    amountNum > 0 && !Number.isNaN(amountNum)
+      ? receiveAmountNock.toLocaleString('en-US', {
+          minimumFractionDigits: hasDecimalPart ? 2 : 0,
+          maximumFractionDigits: hasDecimalPart ? 2 : 0,
+        })
+      : '0.00';
 
   const usdValue =
     amountNum > 0 && priceUsd > 0
@@ -82,6 +93,23 @@ export function SwapScreen() {
           maximumFractionDigits: 2,
         })
       : null;
+
+  const receiveUsdValue =
+    receiveAmountNock > 0 && priceUsd > 0
+      ? (receiveAmountNock * priceUsd).toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
+      : null;
+
+  const showReceiveEstimate = amountNum > 0 && !Number.isNaN(amountNum);
+  const receiveAmountDisplayText = showReceiveEstimate ? `~${receiveDisplayAmount}` : receiveDisplayAmount;
+  const receiveUsdDisplayText =
+    receiveUsdValue !== null
+      ? `~$${receiveUsdValue} USD`
+      : showReceiveEstimate
+        ? '— USD'
+        : '0 USD';
 
   const amountLineHeightPx = amountFontSizePx + 4;
 
@@ -269,13 +297,13 @@ export function SwapScreen() {
                   color: amount ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
                 }}
               >
-                {displayAmount}
+                {receiveAmountDisplayText}
               </div>
               <div
                 className="text-[12px] leading-4 font-medium flex items-center gap-1.5"
                 style={{ color: 'var(--color-text-muted)', letterSpacing: '0.24px' }}
               >
-                {usdValue !== null ? `$${usdValue} USD` : '0 USD'}
+                {receiveUsdDisplayText}
                 <img src={UpDownVec} alt="" className="h-3.5 w-3.5 shrink-0" />
               </div>
             </div>
@@ -358,6 +386,21 @@ export function SwapScreen() {
               className="w-full bg-transparent border-0 outline-none text-[14px] font-medium leading-[18px]"
               style={{ letterSpacing: '0.14px' }}
             />
+          </div>
+
+          <div className="flex flex-col gap-3 pt-2">
+            <div className="h-px" style={{ backgroundColor: 'var(--color-divider)' }} />
+            <div className="flex items-center justify-between text-[14px] font-medium">
+              <span style={{ letterSpacing: '0.14px', lineHeight: '18px' }}>
+                Bridge fee {bridgeProtocolFeePercentLabel}
+              </span>
+              <span
+                className="text-right"
+                style={{ color: 'var(--color-text-muted)', letterSpacing: '0.14px' }}
+              >
+                {bridgeProtocolFeeAmountDisplay} NOCK
+              </span>
+            </div>
           </div>
 
           {(error || consolidatedAmountError) && (
