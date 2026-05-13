@@ -142,6 +142,7 @@ html.light {
  * Default (no .light) = dark UI — show `.theme-icon-dark`. Light UI — show `.theme-icon-light`.
  */
 .theme-icon-pair {
+  display: inline-block;
   position: relative;
   flex-shrink: 0;
 }
