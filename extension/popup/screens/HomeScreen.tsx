@@ -1,6 +1,5 @@
 import { useState, useLayoutEffect, useEffect, useRef, useMemo } from 'react';
 import { useStore } from '../store';
-import { useTheme } from '../contexts/ThemeContext';
 import { truncateAddress } from '../utils/format';
 import { send } from '../utils/messaging';
 import { ERROR_CODES, INTERNAL_METHODS, NOCK_TO_NICKS, STORAGE_KEYS } from '../../shared/constants';
@@ -33,7 +32,8 @@ import { resolveCounterpartyAccount } from '../../shared/account-lock-roots';
 import { isMigrationWalletTx } from '../../shared/v0-migration';
 import { isBridgeWalletTx } from '../../shared/bridge-config';
 import { useLockRootAccountMap } from '../hooks/useLockRootAccountMap';
-import SwapIconAsset from '../assets/swap_icon.svg';
+import { SwapIcon } from '../components/icons/SwapIcon';
+import SwapIconAssetDark from '../assets/SwapIconAsset-dark.svg';
 import BaseIconAsset from '../assets/base_icon.svg';
 import { SwapSubmittedToast } from '../components/SwapSubmittedToast';
 
@@ -60,7 +60,6 @@ export function HomeScreen() {
     refreshWalletAccounts,
     setSettingsAccountAddress,
   } = useStore();
-  const { theme } = useTheme();
   const lockRootToAccount = useLockRootAccountMap(wallet.accounts);
 
   const [balanceHidden, setBalanceHidden] = useState(false);
@@ -874,9 +873,14 @@ export function HomeScreen() {
               }}
               onClick={() => navigate('swap')}
             >
-              <div className="relative h-5 w-5">
-                <img src={SwapIconAsset} alt="Swap" className="h-5 w-5" />
-              </div>
+              <span className="theme-icon-pair h-5 w-5">
+                <SwapIcon className="theme-icon-light h-full w-full" />
+                <img
+                  src={SwapIconAssetDark}
+                  alt=""
+                  className="theme-icon-dark h-full w-full object-contain"
+                />
+              </span>
               Swap
             </button>
             <button

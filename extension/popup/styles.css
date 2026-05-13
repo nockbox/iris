@@ -137,6 +137,39 @@ html.light {
   --color-popover: #ffffff66;
 }
 
+/**
+ * Theme-paired icons/images: toggles off `html.light` (same as ThemeProvider).
+ * Default (no .light) = dark UI — show `.theme-icon-dark`. Light UI — show `.theme-icon-light`.
+ */
+.theme-icon-pair {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.theme-icon-pair .theme-icon-light,
+.theme-icon-pair .theme-icon-dark {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.theme-icon-pair .theme-icon-light {
+  display: none;
+}
+
+html.light .theme-icon-pair .theme-icon-light {
+  display: block;
+}
+
+.theme-icon-pair .theme-icon-dark {
+  display: block;
+}
+
+html.light .theme-icon-pair .theme-icon-dark {
+  display: none;
+}
+
 /* Custom base styles */
 body {
   background-color: var(--color-bg);
