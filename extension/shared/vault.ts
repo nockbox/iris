@@ -1971,7 +1971,7 @@ export class Vault {
     this.capWalletTransactions(accountAddress);
   }
 
-  private enqueueNockblocksHistoryRefresh(accountAddress: string, fn: () => Promise<void>): void {
+  private enqueueNockblocksHistoryRefresh(accountAddress: string, fn: () => Promise<void>): Promise<void> {
     const prev = this.nockblocksHistoryRefreshChains.get(accountAddress) ?? Promise.resolve();
     const next = prev
       .catch(() => {
@@ -1979,9 +1979,64 @@ export class Vault {
       })
       .then(fn);
     this.nockblocksHistoryRefreshChains.set(accountAddress, next);
+    return next;
   }
 
-  private async syncConfirmedHistory(accountAddress: string): Promise<number> {
+  /**
+   * Pull confirmed txs from Nockblocks `getTransactionsByAddress` and merge into `walletTxStore`.
+   *
+   * @param opts.maxPages — cap pages per call (incremental reconcile); omit for full backfill pagination.
+   * @returns `abortedEmptyFirstPage` when offset 0 returned no txs yet (indexer lag / new address).
+   *          Caller must NOT set `historyInitialized` in that case, or incremental mode will never
+   *          re-query old history by address.
+   */
+  private async ingestNockblocksTransactionsByAddress(
+    accountAddress: string,
+    ownFirstNames: Set<string>,
+    client: ReturnType<typeof createNockblocksClient>,
+    opts?: { maxPages?: number }
+  ): Promise<{ ingested: number; abortedEmptyFirstPage: boolean }> {
+    const limit = 1000;
+    let offset = 0;
+    let ingested = 0;
+    let seenNonemptyPage = false;
+    const maxPages = opts?.maxPages ?? Number.POSITIVE_INFINITY;
+
+    for (let page = 0; page < maxPages; page++) {
+      const historyTransactions = await client.getTransactionsByAddress(accountAddress, {
+        limit,
+        offset,
+      });
+      if (historyTransactions.length === 0) {
+        return { ingested, abortedEmptyFirstPage: offset === 0 && !seenNonemptyPage };
+      }
+      seenNonemptyPage = true;
+
+      for (const transaction of historyTransactions) {
+        const walletTx = this.buildWalletTransactionFromChainTransaction(
+          accountAddress,
+          transaction,
+          ownFirstNames
+        );
+        if (!walletTx) continue;
+        this.upsertWalletTransactionInMemory(walletTx, { skipSort: true });
+        ingested++;
+      }
+      this.finalizeBulkWalletTxIngest(accountAddress);
+
+      if (historyTransactions.length < limit) {
+        return { ingested, abortedEmptyFirstPage: false };
+      }
+      offset += historyTransactions.length;
+    }
+
+    return { ingested, abortedEmptyFirstPage: false };
+  }
+
+  private async syncConfirmedHistory(
+    accountAddress: string,
+    opts?: { retryAddressIndexOnEmptyPage?: boolean }
+  ): Promise<number> {
     if (!isNockblocksConfigured()) {
       return 0;
     }
@@ -1996,35 +2051,28 @@ export class Vault {
     let syncedCount = 0;
 
     if (!syncState.historyInitialized || historyTipGap > maxIncrementalHistoryBlocks) {
-      const limit = 1000;
-      let offset = 0;
+      let ingestResult = await this.ingestNockblocksTransactionsByAddress(
+        accountAddress,
+        ownFirstNames,
+        client
+      );
 
-      while (true) {
-        const historyTransactions = await client.getTransactionsByAddress(accountAddress, {
-          limit,
-          offset,
-        });
-        if (historyTransactions.length === 0) {
-          break;
-        }
+      if (
+        ingestResult.abortedEmptyFirstPage &&
+        opts?.retryAddressIndexOnEmptyPage
+      ) {
+        await new Promise<void>(resolve => setTimeout(resolve, 1500));
+        ingestResult = await this.ingestNockblocksTransactionsByAddress(
+          accountAddress,
+          ownFirstNames,
+          client
+        );
+      }
 
-        for (const transaction of historyTransactions) {
-          const walletTx = this.buildWalletTransactionFromChainTransaction(
-            accountAddress,
-            transaction,
-            ownFirstNames
-          );
-          if (!walletTx) continue;
-          this.upsertWalletTransactionInMemory(walletTx, { skipSort: true });
-          syncedCount++;
-        }
-        this.finalizeBulkWalletTxIngest(accountAddress);
+      syncedCount = ingestResult.ingested;
 
-        if (historyTransactions.length < limit) {
-          break;
-        }
-
-        offset += historyTransactions.length;
+      if (ingestResult.abortedEmptyFirstPage) {
+        return syncedCount;
       }
 
       this.setAccountSyncState(accountAddress, {
@@ -2067,6 +2115,18 @@ export class Vault {
       this.finalizeBulkWalletTxIngest(accountAddress);
     }
 
+    // When the chain tip hasn't moved, incremental block scan does nothing. Still reconcile via
+    // address index so we recover txs that appeared after an empty first-page backfill or indexer lag.
+    if (heights.length === 0) {
+      const reconcile = await this.ingestNockblocksTransactionsByAddress(
+        accountAddress,
+        ownFirstNames,
+        client,
+        { maxPages: 50 }
+      );
+      syncedCount += reconcile.ingested;
+    }
+
     this.setAccountSyncState(accountAddress, {
       historyInitialized: true,
       lastHistorySyncedTip: tip.height,
@@ -2077,15 +2137,23 @@ export class Vault {
     return syncedCount;
   }
 
-  private refreshNockblocksHistoryInBackground(accountAddress: string): void {
+  /**
+   * Run Nockblocks mempool + confirmed-history ingest for this account.
+   * Must be awaited after UTXO sync: MV3 service workers can terminate as soon as the
+   * SYNC_UTXOS handler returns; fire-and-forget left history stuck after `getTip` only.
+   */
+  private async refreshNockblocksHistoryAfterUtxoSync(
+    accountAddress: string,
+    opts?: { retryAddressIndexOnEmptyPage?: boolean }
+  ): Promise<void> {
     if (!isNockblocksConfigured()) {
       return;
     }
 
-    this.enqueueNockblocksHistoryRefresh(accountAddress, async () => {
+    await this.enqueueNockblocksHistoryRefresh(accountAddress, async () => {
       try {
         await this.refreshPendingTransactionStatuses(accountAddress);
-        await this.syncConfirmedHistory(accountAddress);
+        await this.syncConfirmedHistory(accountAddress, opts);
       } catch (error) {
         console.warn('[Vault] Nockblocks history refresh failed:', error);
       }
@@ -2246,7 +2314,12 @@ export class Vault {
       };
     });
 
-    this.refreshNockblocksHistoryInBackground(accountAddress);
+    // Await outside account lock (slow Nockblocks I/O). Must complete before returning
+    // from sync so the MV3 service worker stays alive until history is ingested.
+    const hasLocalNotes = this.getAccountNotes(accountAddress).length > 0;
+    await this.refreshNockblocksHistoryAfterUtxoSync(accountAddress, {
+      retryAddressIndexOnEmptyPage: hasLocalNotes,
+    });
     return syncResult;
   }
 

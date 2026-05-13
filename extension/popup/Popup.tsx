@@ -66,6 +66,7 @@ export function Popup() {
           await refreshWalletAccounts();
           void fetchBalance();
         })();
+        return;
       }
     };
 

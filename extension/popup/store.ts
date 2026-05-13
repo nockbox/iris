@@ -656,6 +656,9 @@ export const useStore = create<AppStore>((set, get) => ({
       } catch (syncErr) {
         console.warn('[Store] UTXO sync error:', syncErr);
       }
+      // Vault may have updated walletTxStore during sync (incl. Nockblocks history). Reload list
+      // so UI matches chain state without relying only on storage.onChanged debounce.
+      await get().fetchWalletTransactions();
 
       // Start from existing cached balances so non-current accounts keep their
       // last-known values in the UI.

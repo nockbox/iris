@@ -276,13 +276,13 @@ export function HomeScreen() {
         availableBalance: cachedBalance,
       };
       syncWallet(updatedWallet);
+      setWalletDropdownOpen(false);
 
-      // Fetch balance and transactions for the switched account
-      fetchBalance();
-      fetchWalletTransactions();
+      // SYNC_UTXOS (incl. Nockblocks) must finish before tx list is reliable; fetchBalance awaits post-sync tx reload.
+      await fetchBalance();
+    } else {
+      setWalletDropdownOpen(false);
     }
-
-    setWalletDropdownOpen(false);
   }
 
   // Account creation handler
@@ -306,11 +306,8 @@ export function HomeScreen() {
   async function handleRefreshBalance() {
     setIsRefreshing(true);
     try {
-      // Fetch balance (which syncs UTXOs from chain)
+      // Fetch balance (syncs UTXOs + Nockblocks); fetchBalance already reloads transactions.
       await fetchBalance();
-
-      // Fetch latest wallet transactions
-      await fetchWalletTransactions();
     } finally {
       setIsRefreshing(false);
       // Connection status is automatically re-checked by useEffect when isBalanceFetching changes
