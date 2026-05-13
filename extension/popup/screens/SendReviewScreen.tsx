@@ -303,7 +303,12 @@ export function SendReviewScreen() {
             onClick={handleSend}
             disabled={isSending}
             className="flex-1 h-12 inline-flex items-center justify-center rounded-lg text-sm font-medium leading-[18px] tracking-[0.14px] transition-opacity focus:outline-none focus-visible:ring-2"
-            style={{ backgroundColor: 'var(--color-primary)', color: '#000' }}
+            style={{
+              backgroundColor: isSending
+                ? 'color-mix(in srgb, var(--color-primary) 70%, white)'
+                : 'var(--color-primary)',
+              color: '#000',
+            }}
             onMouseEnter={e => (e.currentTarget.style.opacity = '0.9')}
             onMouseLeave={e => (e.currentTarget.style.opacity = '1')}
           >

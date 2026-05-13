@@ -7,7 +7,13 @@ import NockTextCircleContainer from '../assets/NockTextCircleContainer.svg';
 import NockText from '../assets/NockText.svg';
 import JustNText from '../assets/JustNText.svg';
 import UpDownVec from '../assets/upDownvec.svg';
-import { BRIDGE_PROTOCOL_FEE_RATE, MIN_BRIDGE_AMOUNT_NOCK, isEvmAddress } from '@nockbox/iris-sdk';
+import { MIN_BRIDGE_AMOUNT_NOCK, isEvmAddress } from '@nockbox/iris-sdk';
+import {
+  BRIDGE_PROTOCOL_FEE_RATE,
+  bridgeProtocolFeeNock,
+  bridgeReceiveAmountAfterProtocolFeeNock,
+} from '../../shared/bridge-protocol-fee';
+import { formatNock } from '../../shared/currency';
 import { formatWithCommas, parseAmount } from '../utils/format';
 
 export function SwapScreen() {
@@ -23,13 +29,14 @@ export function SwapScreen() {
   const spendableNock = wallet.spendableBalance;
   const amountNum = parseAmount(amount);
 
-  const bridgeProtocolFeeNock =
-    amountNum > 0 && !Number.isNaN(amountNum) ? amountNum * BRIDGE_PROTOCOL_FEE_RATE : 0;
+  const bridgeProtocolFeeNockValue =
+    amountNum > 0 && !Number.isNaN(amountNum) ? bridgeProtocolFeeNock(amountNum) : 0;
   const receiveAmountNock =
-    amountNum > 0 && !Number.isNaN(amountNum) ? Math.max(amountNum - bridgeProtocolFeeNock, 0) : 0;
-  const bridgeProtocolFeeAmountDisplay = bridgeProtocolFeeNock.toLocaleString('en-US', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 4,
+    amountNum > 0 && !Number.isNaN(amountNum)
+      ? bridgeReceiveAmountAfterProtocolFeeNock(amountNum)
+      : 0;
+  const bridgeProtocolFeeAmountDisplay = formatNock(bridgeProtocolFeeNockValue, 2, {
+    mode: 'truncate',
   });
   const bridgeProtocolFeePercentLabel = `${(BRIDGE_PROTOCOL_FEE_RATE * 100).toFixed(1)}%`;
 
@@ -103,11 +110,9 @@ export function SwapScreen() {
       : null;
 
   const showReceiveEstimate = amountNum > 0 && !Number.isNaN(amountNum);
-  const receiveAmountDisplayText = showReceiveEstimate
-    ? `~${receiveDisplayAmount}`
-    : receiveDisplayAmount;
+  const receiveAmountDisplayText = receiveDisplayAmount;
   const receiveUsdDisplayText =
-    receiveUsdValue !== null ? `~$${receiveUsdValue} USD` : showReceiveEstimate ? '— USD' : '0 USD';
+    receiveUsdValue !== null ? `$${receiveUsdValue} USD` : showReceiveEstimate ? '— USD' : '0 USD';
 
   const amountLineHeightPx = amountFontSizePx + 4;
 

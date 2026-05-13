@@ -7,7 +7,11 @@ import NockTextCircleContainer from '../assets/NockTextCircleContainer.svg';
 import NockText from '../assets/NockText.svg';
 import JustNText from '../assets/JustNText.svg';
 import DownArrow from '../assets/downArrow.svg';
-import { BRIDGE_PROTOCOL_FEE_RATE } from '@nockbox/iris-sdk';
+import {
+  BRIDGE_PROTOCOL_FEE_RATE,
+  bridgeProtocolFeeNock,
+  bridgeReceiveAmountAfterProtocolFeeNock,
+} from '../../shared/bridge-protocol-fee';
 import { INTERNAL_METHODS } from '../../shared/constants';
 import { formatNock, nockToNick, nickToNock } from '../../shared/currency';
 
@@ -62,11 +66,11 @@ export function SwapReviewScreen() {
     value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   const sendAmountNock = prepared.amountNock;
-  const bridgeProtocolFeeNock = sendAmountNock * BRIDGE_PROTOCOL_FEE_RATE;
+  const bridgeProtocolFeeNockValue = bridgeProtocolFeeNock(sendAmountNock);
   // Only the bridge protocol fee is deducted from the bridged amount.
   // Network fee is paid separately in NOCK on Nockchain and does not reduce
   // what lands on the destination chain.
-  const receiveAmountNock = Math.max(sendAmountNock - bridgeProtocolFeeNock, 0);
+  const receiveAmountNock = bridgeReceiveAmountAfterProtocolFeeNock(sendAmountNock);
 
   const sendAmountDisplay = formatAmountNock(sendAmountNock);
   const receiveAmountDisplay = formatAmountNock(receiveAmountNock);
@@ -76,9 +80,8 @@ export function SwapReviewScreen() {
 
   const networkFeeDisplay = networkFeeNicks != null ? formatNock(nickToNock(networkFeeNicks)) : '—';
 
-  const bridgeProtocolFeeAmountDisplay = bridgeProtocolFeeNock.toLocaleString('en-US', {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 4,
+  const bridgeProtocolFeeAmountDisplay = formatNock(bridgeProtocolFeeNockValue, 2, {
+    mode: 'truncate',
   });
   const bridgeProtocolFeePercentLabel = `${(BRIDGE_PROTOCOL_FEE_RATE * 100).toFixed(1)}%`;
 
