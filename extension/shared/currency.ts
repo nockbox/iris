@@ -94,35 +94,104 @@ export function isDustAmount(nockAmount: number): boolean {
 }
 
 /**
+ * Options for {@link formatNock}. Defaults preserve historical rounding + thousands separators.
+ */
+export type FormatNockOptions = {
+  /** `round` (default): `toFixed`-style rounding. `truncate`: floor toward zero at `maxDecimals`. */
+  mode?: 'round' | 'truncate';
+  /** When false, omit thousands separators (e.g. plain numeric inputs). Default true. */
+  useGrouping?: boolean;
+};
+
+/**
+ * Truncate nonnegative NOCK toward zero to at most `decimalPlaces` fractional digits.
+ */
+export function truncateNockToDecimals(nockAmount: number, decimalPlaces: number): number {
+  if (!Number.isFinite(nockAmount) || nockAmount < 0) {
+    return 0;
+  }
+  const scale = 10 ** decimalPlaces;
+  return Math.floor(nockAmount * scale + 1e-9) / scale;
+}
+
+/**
  * Format NOCK for display with smart decimal precision and thousands separators
  *
  * Shows minimum decimals needed (up to maxDecimals) with commas for readability:
  * - 2.5 → "2.5" (not "2.50")
- * - 1000.126 → "1,000.13" (default max 2)
+ * - 1000.126 → "1,000.13" (default max 2, round)
  * - 100.00 → "100"
  *
  * @param nockAmount - Amount in NOCK
  * @param maxDecimals - Maximum decimal places (default: 2)
- * @returns Formatted NOCK string with minimal decimals and thousands separators
+ * @param options - Optional rounding mode and grouping (defaults: round, grouped)
+ * @returns Formatted NOCK string with minimal decimals and optional thousands separators
  *
  * @example
  * formatNock(2.5) // "2.5"
  * formatNock(1000.126) // "1,000.13"
  * formatNock(100.00) // "100"
  * formatNock(1000.12345, 5) // "1,000.12345" — pass higher max where precision matters
+ * formatNock(1.239, 2, { mode: 'truncate', useGrouping: false }) // "1.23"
  */
-export function formatNock(nockAmount: number, maxDecimals: number = 2): string {
-  // Round to max decimals first
-  const rounded = Number(nockAmount.toFixed(maxDecimals));
+export function formatNock(
+  nockAmount: number,
+  maxDecimals: number = 2,
+  options?: FormatNockOptions
+): string {
+  const mode = options?.mode ?? 'round';
+  const useGrouping = options?.useGrouping ?? true;
 
-  // Split into integer and decimal parts
-  const [integerPart, decimalPart] = rounded.toString().split('.');
+  if (!Number.isFinite(nockAmount)) {
+    return String(nockAmount);
+  }
 
-  // Add thousands separators to integer part
-  const formattedInteger = parseInt(integerPart).toLocaleString('en-US');
+  const scale = 10 ** maxDecimals;
+  const adjusted =
+    mode === 'truncate'
+      ? truncateNockToDecimals(Math.max(nockAmount, 0), maxDecimals)
+      : Number(nockAmount.toFixed(maxDecimals));
 
-  // Recombine with decimal part (if exists)
+  const [integerPart, decimalPart] = adjusted.toString().split('.');
+  const formattedInteger = useGrouping
+    ? parseInt(integerPart, 10).toLocaleString('en-US')
+    : integerPart;
+
   return decimalPart ? `${formattedInteger}.${decimalPart}` : formattedInteger;
+}
+
+const TX_ENGINE_INSUFFICIENT_FEE_RE =
+  /Insufficient fee for transaction \(needed: ([\d.]+), got: ([\d.]+)\)/;
+
+/**
+ * Parses tx-engine `Nicks` display form `whole.remainder` where `remainder` is
+ * `total_nicks % 65536` (not a decimal fraction of a NOCK).
+ */
+function parseCompoundNicksDisplayToTotalNicks(token: string): number | null {
+  const t = token.trim();
+  const m = /^(\d+)\.(\d+)$/.exec(t);
+  if (!m) return null;
+  const whole = BigInt(m[1]);
+  const rem = BigInt(m[2]);
+  if (rem < 0n || rem >= 65536n) return null;
+  const total = whole * 65536n + rem;
+  if (total > BigInt(Number.MAX_SAFE_INTEGER)) return null;
+  return Number(total);
+}
+
+/**
+ * Rewrites tx-engine insufficient-fee messages to decimal NOCK (not compound `Nicks` text).
+ */
+export function rewriteInsufficientFeeErrorToDecimalNock(message: string): string {
+  return message.replace(TX_ENGINE_INSUFFICIENT_FEE_RE, (full, needRaw: string, gotRaw: string) => {
+    const needN = parseCompoundNicksDisplayToTotalNicks(needRaw);
+    const gotN = parseCompoundNicksDisplayToTotalNicks(gotRaw);
+    if (needN === null || gotN === null) return full;
+    const opts = { mode: 'round' as const, useGrouping: false };
+    const needStr = formatNock(nickToNock(needN), 8, opts);
+    const gotStr = formatNock(nickToNock(gotN), 8, opts);
+    return `Insufficient fee for transaction (needed: ${needStr} NOCK, got: ${gotStr} NOCK)`;
+  });
 }
 
 /**

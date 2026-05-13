@@ -24,6 +24,9 @@ let v0MigrationMnemonic: string | undefined;
 let onboardingPassword: string | undefined;
 let walletTransactionsFetchInFlight: { address: string; promise: Promise<void> } | null = null;
 
+/** Suppresses stale `isBalanceFetching: false` when multiple `fetchBalance` calls overlap (rapid account switch). Resets when the popup unloads. */
+let balanceFetchGeneration = 0;
+
 export function setV0MigrationMnemonic(mnemonic: string | undefined) {
   v0MigrationMnemonic = mnemonic;
 }
@@ -622,12 +625,19 @@ export const useStore = create<AppStore>((set, get) => ({
   // Fetch balance from UTXO store for all accounts
   // Also syncs UTXOs from chain (runs in popup context where WASM works)
   fetchBalance: async () => {
+    const generation = ++balanceFetchGeneration;
+    const clearFetchingIfLatest = () => {
+      if (generation === balanceFetchGeneration) {
+        set({ isBalanceFetching: false });
+      }
+    };
+
     try {
       // Don't attempt to sync UTXOs while the vault is locked. SYNC_UTXOS
       // requires the encryption key to persist results; calling it while locked
       // yields cascading "Cannot save account data" / "Vault is locked" errors.
       if (get().wallet.locked) {
-        set({ isBalanceFetching: false });
+        clearFetchingIfLatest();
         return;
       }
 
@@ -637,7 +647,7 @@ export const useStore = create<AppStore>((set, get) => ({
       const currentAccount = get().wallet.currentAccount;
 
       if (!currentAccount || accounts.length === 0) {
-        set({ isBalanceFetching: false });
+        clearFetchingIfLatest();
         return;
       }
 
@@ -656,6 +666,9 @@ export const useStore = create<AppStore>((set, get) => ({
       } catch (syncErr) {
         console.warn('[Store] UTXO sync error:', syncErr);
       }
+      // Vault may have updated walletTxStore during sync (incl. Nockblocks history). Reload list
+      // so UI matches chain state without relying only on storage.onChanged debounce.
+      await get().fetchWalletTransactions();
 
       // Start from existing cached balances so non-current accounts keep their
       // last-known values in the UI.
@@ -741,11 +754,11 @@ export const useStore = create<AppStore>((set, get) => ({
           accountSpendableBalances,
           accountBalanceDetails,
         },
-        isBalanceFetching: false,
       });
+      clearFetchingIfLatest();
     } catch (error) {
       console.error('[Store] Failed to fetch balance:', error);
-      set({ isBalanceFetching: false });
+      clearFetchingIfLatest();
     }
   },
 

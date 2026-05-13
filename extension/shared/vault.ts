@@ -62,11 +62,13 @@ import {
   createNockblocksClient,
   isNockblocksConfigured,
   type NockblocksOutput,
+  type NockblocksSeed,
   type NockblocksSpend,
   type NockblocksTransaction,
 } from './nockblocks-client.js';
 import { buildBridgeTransaction, validateBridgeTransaction } from '@nockbox/iris-sdk';
 import { BRIDGE_CONFIG } from './bridge-config';
+import { rewriteInsufficientFeeErrorToDecimalNock } from './currency';
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
   return await getTxEngineSettingsForHeight(blockHeight);
@@ -246,6 +248,44 @@ interface VaultState {
   accounts: SubAccount[];
   currentAccountIndex: number;
   enc: EncryptedVault | null;
+}
+
+function feeEstimateUserFacingError(error: unknown, kind: 'fee' | 'max'): string {
+  const raw = error instanceof Error ? error.message : String(error);
+  if (/digest|canonical|base58|iris-wasm|Digest guard/i.test(raw)) {
+    return kind === 'max'
+      ? 'Could not estimate the maximum send for that recipient. Use a valid Nockchain address.'
+      : 'Could not estimate the network fee for that recipient. Use a valid Nockchain address.';
+  }
+  const readable = rewriteInsufficientFeeErrorToDecimalNock(raw);
+  return (kind === 'max' ? 'Max send estimation failed: ' : 'Fee estimation failed: ') + readable;
+}
+
+/**
+ * Collect `id` / `txHash` / `trackingTxId` for matching a Nockblocks row to an existing
+ * {@link WalletTransaction} (e.g. bridge uses UUID `id` + on-chain `txHash` only until we align).
+ */
+function walletTxIdentityStrings(tx: Partial<WalletTransaction>): string[] {
+  const out = new Set<string>();
+  for (const key of ['id', 'txHash', 'trackingTxId'] as const) {
+    const v = tx[key];
+    if (typeof v === 'string') {
+      const t = v.trim();
+      if (t.length > 0) out.add(t);
+    }
+  }
+  return [...out];
+}
+
+function walletTxSharesAnyIdentifier(
+  a: Partial<WalletTransaction>,
+  b: Partial<WalletTransaction>
+): boolean {
+  const sa = new Set(walletTxIdentityStrings(a));
+  for (const x of walletTxIdentityStrings(b)) {
+    if (sa.has(x)) return true;
+  }
+  return false;
 }
 
 export class Vault {
@@ -1490,18 +1530,10 @@ export class Vault {
     tx: Partial<WalletTransaction>
   ): number {
     const transactions = this.walletTxStore[accountAddress] || [];
-    const trackingTxId = tx.trackingTxId || tx.txHash;
-
-    return transactions.findIndex(existing => {
-      if (tx.id && existing.id === tx.id) return true;
-      if (
-        trackingTxId &&
-        (existing.trackingTxId === trackingTxId || existing.txHash === trackingTxId)
-      ) {
-        return true;
-      }
-      return false;
-    });
+    if (walletTxIdentityStrings(tx).length === 0) {
+      return -1;
+    }
+    return transactions.findIndex(existing => walletTxSharesAnyIdentifier(tx, existing));
   }
 
   getAccountSyncState(accountAddress: string): AccountSyncState {
@@ -1765,6 +1797,34 @@ export class Vault {
     return seedLockRoots.size === 1 ? [...seedLockRoots][0] : undefined;
   }
 
+  private nockblocksNoteDataHasBridgePayload(noteData: NockblocksSeed['noteData']): boolean {
+    if (!noteData || typeof noteData !== 'object') {
+      return false;
+    }
+    return Object.prototype.hasOwnProperty.call(noteData, BRIDGE_CONFIG.noteDataKey);
+  }
+
+  private nockblocksTxHasBridgeInNoteData(
+    spends: NockblocksSpend[],
+    outputs: NockblocksOutput[]
+  ): boolean {
+    for (const spend of spends) {
+      for (const seed of spend.seeds || []) {
+        if (this.nockblocksNoteDataHasBridgePayload(seed.noteData)) {
+          return true;
+        }
+      }
+    }
+    for (const output of outputs) {
+      for (const seed of output.seeds || []) {
+        if (this.nockblocksNoteDataHasBridgePayload(seed.noteData)) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   private getTransactionTrackingId(tx: WalletTransaction): string | undefined {
     return tx.trackingTxId || tx.txHash;
   }
@@ -1835,13 +1895,20 @@ export class Vault {
           ? accountAddress
           : this.getUniqueLockRootFromOutputs(externalOutputs);
 
-    // v0→v1 migration spends carry `version: "v0_to_v1"` and a `signaturesV0[]`
-    const migrationSpend = externalSpends.find(
-      (spend: NockblocksSpend) => spend.version === 'v0_to_v1'
-    );
-    const migrationV0Pubkey = migrationSpend?.signaturesV0?.find(
-      sig => typeof sig?.pubkey === 'string' && sig.pubkey.length > 0
-    )?.pubkey;
+    // v0→v1 migration: spends normally include `version: "v0_to_v1"` + `signaturesV0[].pubkey`.
+    // Indexers sometimes omit `version` while still returning signatures — still treat as v0.
+    const migrationV0Pubkey = externalSpends
+      .flatMap((spend: NockblocksSpend) => spend.signaturesV0 || [])
+      .find(sig => typeof sig?.pubkey === 'string' && sig.pubkey.trim().length > 0)
+      ?.pubkey?.trim();
+
+    const migrationSpend = externalSpends.find((spend: NockblocksSpend) => {
+      const v = spend.version;
+      return v === 'v0_to_v1' || (typeof v === 'string' && v.toLowerCase() === 'v0_to_v1');
+    });
+
+    const hasV0MigrationSpendEvidence =
+      Boolean(migrationSpend) || (direction === 'incoming' && Boolean(migrationV0Pubkey));
 
     const sender =
       direction === 'incoming'
@@ -1850,12 +1917,16 @@ export class Vault {
 
     const migrationFromV0 =
       direction === 'incoming' &&
-      (Boolean(migrationSpend) ||
+      (hasV0MigrationSpendEvidence ||
         (typeof sender === 'string' &&
           sender.length >= 60 &&
           typeof recipient === 'string' &&
           recipient.length > 0 &&
           recipient.length < 60));
+
+    const isBridgeFromNockblocksData =
+      (direction === 'outgoing' || direction === 'self') &&
+      this.nockblocksTxHasBridgeInNoteData(spends, outputs);
 
     return {
       id: txId,
@@ -1872,6 +1943,7 @@ export class Vault {
       recipient,
       sender,
       ...(migrationFromV0 ? { migrationFromV0: true as const } : {}),
+      ...(isBridgeFromNockblocksData ? { kind: 'bridge' as const } : {}),
       blockId: tx.blockId,
       confirmedAtBlock: tx.blockHeight,
       confirmedAtTimestamp: tx.timestamp,
@@ -1971,7 +2043,10 @@ export class Vault {
     this.capWalletTransactions(accountAddress);
   }
 
-  private enqueueNockblocksHistoryRefresh(accountAddress: string, fn: () => Promise<void>): void {
+  private enqueueNockblocksHistoryRefresh(
+    accountAddress: string,
+    fn: () => Promise<void>
+  ): Promise<void> {
     const prev = this.nockblocksHistoryRefreshChains.get(accountAddress) ?? Promise.resolve();
     const next = prev
       .catch(() => {
@@ -1979,9 +2054,64 @@ export class Vault {
       })
       .then(fn);
     this.nockblocksHistoryRefreshChains.set(accountAddress, next);
+    return next;
   }
 
-  private async syncConfirmedHistory(accountAddress: string): Promise<number> {
+  /**
+   * Pull confirmed txs from Nockblocks `getTransactionsByAddress` and merge into `walletTxStore`.
+   *
+   * @param opts.maxPages — cap pages per call (incremental reconcile); omit for full backfill pagination.
+   * @returns `abortedEmptyFirstPage` when offset 0 returned no txs yet (indexer lag / new address).
+   *          Caller must NOT set `historyInitialized` in that case, or incremental mode will never
+   *          re-query old history by address.
+   */
+  private async ingestNockblocksTransactionsByAddress(
+    accountAddress: string,
+    ownFirstNames: Set<string>,
+    client: ReturnType<typeof createNockblocksClient>,
+    opts?: { maxPages?: number }
+  ): Promise<{ ingested: number; abortedEmptyFirstPage: boolean }> {
+    const limit = 1000;
+    let offset = 0;
+    let ingested = 0;
+    let seenNonemptyPage = false;
+    const maxPages = opts?.maxPages ?? Number.POSITIVE_INFINITY;
+
+    for (let page = 0; page < maxPages; page++) {
+      const historyTransactions = await client.getTransactionsByAddress(accountAddress, {
+        limit,
+        offset,
+      });
+      if (historyTransactions.length === 0) {
+        return { ingested, abortedEmptyFirstPage: offset === 0 && !seenNonemptyPage };
+      }
+      seenNonemptyPage = true;
+
+      for (const transaction of historyTransactions) {
+        const walletTx = this.buildWalletTransactionFromChainTransaction(
+          accountAddress,
+          transaction,
+          ownFirstNames
+        );
+        if (!walletTx) continue;
+        this.upsertWalletTransactionInMemory(walletTx, { skipSort: true });
+        ingested++;
+      }
+      this.finalizeBulkWalletTxIngest(accountAddress);
+
+      if (historyTransactions.length < limit) {
+        return { ingested, abortedEmptyFirstPage: false };
+      }
+      offset += historyTransactions.length;
+    }
+
+    return { ingested, abortedEmptyFirstPage: false };
+  }
+
+  private async syncConfirmedHistory(
+    accountAddress: string,
+    opts?: { retryAddressIndexOnEmptyPage?: boolean }
+  ): Promise<number> {
     if (!isNockblocksConfigured()) {
       return 0;
     }
@@ -1996,35 +2126,25 @@ export class Vault {
     let syncedCount = 0;
 
     if (!syncState.historyInitialized || historyTipGap > maxIncrementalHistoryBlocks) {
-      const limit = 1000;
-      let offset = 0;
+      let ingestResult = await this.ingestNockblocksTransactionsByAddress(
+        accountAddress,
+        ownFirstNames,
+        client
+      );
 
-      while (true) {
-        const historyTransactions = await client.getTransactionsByAddress(accountAddress, {
-          limit,
-          offset,
-        });
-        if (historyTransactions.length === 0) {
-          break;
-        }
+      if (ingestResult.abortedEmptyFirstPage && opts?.retryAddressIndexOnEmptyPage) {
+        await new Promise<void>(resolve => setTimeout(resolve, 1500));
+        ingestResult = await this.ingestNockblocksTransactionsByAddress(
+          accountAddress,
+          ownFirstNames,
+          client
+        );
+      }
 
-        for (const transaction of historyTransactions) {
-          const walletTx = this.buildWalletTransactionFromChainTransaction(
-            accountAddress,
-            transaction,
-            ownFirstNames
-          );
-          if (!walletTx) continue;
-          this.upsertWalletTransactionInMemory(walletTx, { skipSort: true });
-          syncedCount++;
-        }
-        this.finalizeBulkWalletTxIngest(accountAddress);
+      syncedCount = ingestResult.ingested;
 
-        if (historyTransactions.length < limit) {
-          break;
-        }
-
-        offset += historyTransactions.length;
+      if (ingestResult.abortedEmptyFirstPage) {
+        return syncedCount;
       }
 
       this.setAccountSyncState(accountAddress, {
@@ -2067,6 +2187,18 @@ export class Vault {
       this.finalizeBulkWalletTxIngest(accountAddress);
     }
 
+    // When the chain tip hasn't moved, incremental block scan does nothing. Still reconcile via
+    // address index so we recover txs that appeared after an empty first-page backfill or indexer lag.
+    if (heights.length === 0) {
+      const reconcile = await this.ingestNockblocksTransactionsByAddress(
+        accountAddress,
+        ownFirstNames,
+        client,
+        { maxPages: 50 }
+      );
+      syncedCount += reconcile.ingested;
+    }
+
     this.setAccountSyncState(accountAddress, {
       historyInitialized: true,
       lastHistorySyncedTip: tip.height,
@@ -2077,15 +2209,23 @@ export class Vault {
     return syncedCount;
   }
 
-  private refreshNockblocksHistoryInBackground(accountAddress: string): void {
+  /**
+   * Run Nockblocks mempool + confirmed-history ingest for this account.
+   * Must be awaited after UTXO sync: MV3 service workers can terminate as soon as the
+   * SYNC_UTXOS handler returns; fire-and-forget left history stuck after `getTip` only.
+   */
+  private async refreshNockblocksHistoryAfterUtxoSync(
+    accountAddress: string,
+    opts?: { retryAddressIndexOnEmptyPage?: boolean }
+  ): Promise<void> {
     if (!isNockblocksConfigured()) {
       return;
     }
 
-    this.enqueueNockblocksHistoryRefresh(accountAddress, async () => {
+    await this.enqueueNockblocksHistoryRefresh(accountAddress, async () => {
       try {
         await this.refreshPendingTransactionStatuses(accountAddress);
-        await this.syncConfirmedHistory(accountAddress);
+        await this.syncConfirmedHistory(accountAddress, opts);
       } catch (error) {
         console.warn('[Vault] Nockblocks history refresh failed:', error);
       }
@@ -2246,7 +2386,12 @@ export class Vault {
       };
     });
 
-    this.refreshNockblocksHistoryInBackground(accountAddress);
+    // Await outside account lock (slow Nockblocks I/O). Must complete before returning
+    // from sync so the MV3 service worker stays alive until history is ingested.
+    const hasLocalNotes = this.getAccountNotes(accountAddress).length > 0;
+    await this.refreshNockblocksHistoryAfterUtxoSync(accountAddress, {
+      retryAddressIndexOnEmptyPage: hasLocalNotes,
+    });
     return syncResult;
   }
 
@@ -3036,9 +3181,7 @@ export class Vault {
       }
     } catch (error) {
       console.error('[Vault] Fee estimation failed:', error);
-      return {
-        error: 'Fee estimation failed: ' + (error instanceof Error ? error.message : String(error)),
-      };
+      return { error: feeEstimateUserFacingError(error, 'fee') };
     }
   }
 
@@ -3156,10 +3299,7 @@ export class Vault {
       }
     } catch (error) {
       console.error('[Vault] Max send estimation failed:', error);
-      return {
-        error:
-          'Max send estimation failed: ' + (error instanceof Error ? error.message : String(error)),
-      };
+      return { error: feeEstimateUserFacingError(error, 'max') };
     }
   }
 
@@ -3264,8 +3404,9 @@ export class Vault {
       }
     } catch (error) {
       console.error('[Vault] Error sending transaction:', error);
+      const rawMsg = error instanceof Error ? error.message : String(error);
       return {
-        error: `Failed to send transaction: ${error instanceof Error ? error.message : String(error)}`,
+        error: `Failed to send transaction: ${rewriteInsufficientFeeErrorToDecimalNock(rawMsg)}`,
       };
     }
   }
@@ -3466,8 +3607,9 @@ export class Vault {
           }
         }
 
+        const rawMsg = error instanceof Error ? error.message : String(error);
         return {
-          error: `Transaction failed: ${error instanceof Error ? error.message : String(error)}`,
+          error: `Transaction failed: ${rewriteInsufficientFeeErrorToDecimalNock(rawMsg)}`,
         };
       }
     });
@@ -3617,10 +3759,12 @@ export class Vault {
 
       walletTx.fee = Number(buildCtx.bridgeResult.fee);
       walletTx.txHash = signedTxId;
+      walletTx.trackingTxId = signedTxId;
       walletTx.status = 'broadcasted_unconfirmed';
       await this.updateWalletTransaction(currentAccount.address, walletTxId, {
         fee: walletTx.fee,
         txHash: signedTxId,
+        trackingTxId: signedTxId,
         status: 'broadcasted_unconfirmed',
       });
 
@@ -3675,8 +3819,9 @@ export class Vault {
       return { fee: Number(buildCtx.bridgeResult.fee) };
     } catch (error) {
       console.error('[Vault] Bridge fee estimation failed:', error);
+      const rawMsg = error instanceof Error ? error.message : String(error);
       return {
-        error: 'Fee estimation failed: ' + (error instanceof Error ? error.message : String(error)),
+        error: 'Fee estimation failed: ' + rewriteInsufficientFeeErrorToDecimalNock(rawMsg),
       };
     }
   }
@@ -3744,8 +3889,9 @@ export class Vault {
         );
       } catch (error) {
         console.error('[Vault] Bridge transaction failed:', error);
+        const rawMsg = error instanceof Error ? error.message : String(error);
         return {
-          error: `Bridge failed: ${error instanceof Error ? error.message : String(error)}`,
+          error: `Bridge failed: ${rewriteInsufficientFeeErrorToDecimalNock(rawMsg)}`,
         };
       }
     });

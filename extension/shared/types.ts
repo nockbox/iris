@@ -95,6 +95,8 @@ export interface TransactionDetails {
   amount: number;
   /** Transaction fee in NOCK */
   fee: number;
+  /** Fee in whole nicks as used for broadcast (matches WASM feeUsed when set). */
+  feeNicks?: number;
   /** Recipient address */
   to?: string;
   /** Sender address */

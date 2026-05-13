@@ -3,20 +3,15 @@ import { setV0MigrationMnemonic, useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { Alert } from '../components/Alert';
 import lockIcon from '../assets/lock-icon.svg';
-import { importKeyfile, type Keyfile } from '../../shared/keyfile';
-import { UI_CONSTANTS } from '../../shared/constants';
 import { queryV0Balance } from '../../shared/v0-migration';
 
 const WORD_COUNT = 24;
 
 export function V0MigrationSetupScreen() {
   const { navigate, setV0MigrationDraft, resetV0MigrationDraft } = useStore();
-  const [showKeyfileImport, setShowKeyfileImport] = useState(false);
-  const [keyfileError, setKeyfileError] = useState('');
   const [discoverError, setDiscoverError] = useState('');
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [words, setWords] = useState<string[]>(Array(WORD_COUNT).fill(''));
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
 
   const canContinue = words.length === WORD_COUNT && words.every(w => Boolean(w));
@@ -74,40 +69,6 @@ export function V0MigrationSetupScreen() {
         inputRefs.current[nextIndex]?.focus();
       }
     }
-  }
-
-  function handleFileSelect(event: React.ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (!file) return;
-    setKeyfileError('');
-    const reader = new FileReader();
-    reader.onload = e => {
-      try {
-        const keyfile = JSON.parse(e.target?.result as string) as Keyfile;
-        const mnemonic = importKeyfile(keyfile);
-        const importedWords = mnemonic.trim().split(/\s+/);
-        if (importedWords.length !== UI_CONSTANTS.MNEMONIC_WORD_COUNT) {
-          setKeyfileError('Invalid keyfile: expected 24 words');
-          return;
-        }
-        const next = Array(WORD_COUNT).fill('');
-        importedWords.forEach((word, i) => {
-          next[i] = word;
-        });
-        setWords(next);
-        setShowKeyfileImport(false);
-        if (fileInputRef.current) fileInputRef.current.value = '';
-      } catch (err) {
-        setKeyfileError(err instanceof Error ? err.message : 'Invalid keyfile format');
-      }
-    };
-    reader.readAsText(file);
-  }
-
-  function handleCancelKeyfileImport() {
-    setShowKeyfileImport(false);
-    setKeyfileError('');
-    if (fileInputRef.current) fileInputRef.current.value = '';
   }
 
   async function handleContinue() {
@@ -195,20 +156,6 @@ export function V0MigrationSetupScreen() {
                 Paste into first field to auto-fill all words.
               </p>
             </div>
-
-            {/* Or import from keyfile - same as ImportScreen */}
-            <button
-              type="button"
-              onClick={() => setShowKeyfileImport(true)}
-              className="font-sans font-medium text-center text-[var(--color-text-primary)] underline hover:opacity-70 transition-opacity"
-              style={{
-                fontSize: 'var(--font-size-base)',
-                lineHeight: 'var(--line-height-snug)',
-                letterSpacing: '0.01em',
-              }}
-            >
-              Or import from keyfile
-            </button>
 
             {/* 24-word input grid */}
             <div className="flex flex-col gap-2 w-full pb-4">
@@ -308,70 +255,6 @@ export function V0MigrationSetupScreen() {
           </div>
         </div>
       </div>
-
-      {/* Keyfile Import Modal - same as onboarding ImportScreen */}
-      {showKeyfileImport && (
-        <div
-          className="absolute inset-0 flex items-center justify-center p-4"
-          style={{ backgroundColor: 'rgba(0, 0, 0, 0.7)', zIndex: 50 }}
-        >
-          <div
-            className="w-full max-w-[325px] rounded-lg p-4 flex flex-col gap-4"
-            style={{
-              backgroundColor: 'var(--color-bg)',
-              border: '1px solid var(--color-surface-800)',
-            }}
-          >
-            <h3 className="font-sans font-medium text-[var(--color-text-primary)] text-base tracking-[0.16px] leading-[22px]">
-              Import from keyfile
-            </h3>
-            <p
-              className="font-sans text-sm tracking-[0.14px] leading-[18px]"
-              style={{ color: 'var(--color-text-muted)' }}
-            >
-              Select your keyfile to import your wallet.
-            </p>
-
-            <div className="flex flex-col gap-1.5">
-              <label className="font-sans font-medium text-sm tracking-[0.14px] leading-[18px] text-[var(--color-text-primary)]">
-                Select keyfile
-              </label>
-              <input
-                ref={fileInputRef}
-                id="keyfile-upload-migration"
-                type="file"
-                accept=".json"
-                onChange={handleFileSelect}
-                className="hidden"
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="w-full h-[52px] px-4 rounded-lg font-sans font-medium text-sm tracking-[0.14px] leading-[18px] text-left transition-opacity hover:opacity-90 text-[var(--color-text-primary)]"
-                style={{
-                  backgroundColor: 'var(--color-surface-700)',
-                  border: '1px solid var(--color-surface-800)',
-                }}
-              >
-                Choose File
-              </button>
-            </div>
-
-            {keyfileError && <Alert type="error">{keyfileError}</Alert>}
-
-            <button
-              type="button"
-              onClick={handleCancelKeyfileImport}
-              className="w-full h-12 rounded-lg font-sans font-medium text-sm tracking-[0.14px] leading-[18px] transition-opacity hover:opacity-90 text-[var(--color-text-primary)]"
-              style={{
-                backgroundColor: 'var(--color-surface-700)',
-              }}
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
