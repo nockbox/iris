@@ -4,7 +4,13 @@ import { useTheme } from '../contexts/ThemeContext';
 import { truncateAddress } from '../utils/format';
 import { send } from '../utils/messaging';
 import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../shared/constants';
-import { formatNock, isDustAmount, MIN_SENDABLE_NOCK } from '../../shared/currency';
+import {
+  formatNock,
+  isDustAmount,
+  MIN_SENDABLE_NOCK,
+  nickToNock,
+  truncateNockToDecimals,
+} from '../../shared/currency';
 import type { SubAccount } from '../../shared/types';
 import { AccountIcon } from '../components/AccountIcon';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
@@ -13,10 +19,38 @@ import { base58 } from '@scure/base';
 import PencilEditIcon from '../assets/pencil-edit-icon.svg';
 import CheckmarkIcon from '../assets/checkmark-pencil-icon.svg';
 import InfoIcon from '../assets/info-icon.svg';
+import { guard } from '@nockbox/iris-sdk/wasm';
+import { ensureWasmInitialized } from '../../shared/wasm-utils';
 
 function formatInt(n: number) {
   return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
 }
+
+/**
+ * PKH string safe for WASM fee / max-send simulation only. Uses the recipient when it is a
+ * canonical V1 digest; otherwise the current account PKH (fee does not depend on recipient).
+ */
+function recipientPkhForFeeEstimate(recipientTrimmed: string, selfPkh: string | undefined): string {
+  const self = (selfPkh || '').trim();
+  const r = (recipientTrimmed || '').trim();
+  if (!self) return r;
+  if (!r) return self;
+  try {
+    const bytes = base58.decode(r);
+    if (bytes.length !== 40) return self;
+    try {
+      if (!guard.isDigest(r)) return self;
+    } catch {
+      return self;
+    }
+    return r;
+  } catch {
+    return self;
+  }
+}
+
+/** Fee field: truncate to 2 decimals, no commas (matches plain fee input). */
+const FEE_FORMAT_OPTIONS = { mode: 'truncate' as const, useGrouping: false };
 
 export function SendScreen() {
   const { theme } = useTheme();
@@ -35,9 +69,15 @@ export function SendScreen() {
   const [errorType, setErrorType] = useState<'fee_too_low' | 'general' | null>(null);
   const [isFeeManuallyEdited, setIsFeeManuallyEdited] = useState(false);
   const [isCalculatingFee, setIsCalculatingFee] = useState(false);
-  const [minimumFee, setMinimumFee] = useState<number | null>(null); // Minimum fee from WASM calculation
+  /** Whole-nick fee from the last WASM estimate (authoritative minimum / send fee when not overridden). */
+  const [minimumFeeNicks, setMinimumFeeNicks] = useState<number | null>(null);
   const [isSendingMax, setIsSendingMax] = useState(false); // Track if user is sending entire balance
   const [isLoadingBalance, setIsLoadingBalance] = useState(false); // Track balance refresh after account switch
+
+  /** Nicks to pass at broadcast; kept in sync with auto-estimate, max-send, or manual save. */
+  const feeSendNicksRef = useRef<number | null>(null);
+  /** Supersede in-flight debounced fee estimates when amount/recipient changes. */
+  const feeEstimateSeqRef = useRef(0);
 
   // Get real accounts from vault (filter out hidden accounts)
   const accounts = (wallet.accounts || []).filter(acc => !acc.hidden);
@@ -46,10 +86,11 @@ export function SendScreen() {
   // Use spendable balance (only UTXOs that are not in_flight - can be spent NOW)
   const currentBalance = wallet.spendableBalance;
 
-  // Refresh balance when screen mounts to ensure spendable balance is accurate
+  // Refresh when this screen is shown or the selected account changes (avoids stale spendable
+  // after switching wallets on Home then opening Send, or rapid switches on this screen).
   useEffect(() => {
-    fetchBalance();
-  }, [fetchBalance]);
+    void fetchBalance();
+  }, [fetchBalance, wallet.currentAccount?.address]);
 
   // Account switching handler
   async function handleSwitchAccount(accountAddress: string) {
@@ -60,7 +101,9 @@ export function SendScreen() {
     setAmount('');
     setFee('');
     setEditedFee('');
-    setMinimumFee(null);
+    setMinimumFeeNicks(null);
+    feeSendNicksRef.current = null;
+    feeEstimateSeqRef.current += 1;
     setIsFeeManuallyEdited(false);
     setIsSendingMax(false);
     setError('');
@@ -75,13 +118,18 @@ export function SendScreen() {
       }>(INTERNAL_METHODS.SWITCH_ACCOUNT, [accountAddress]);
 
       if (result?.ok && result.account) {
+        const latest = useStore.getState().wallet;
+        const addr = result.account.address;
+        const cachedBal = latest.accountBalances?.[addr] ?? 0;
+        const cachedSpendable = latest.accountSpendableBalances?.[addr] ?? cachedBal;
         const updatedWallet = {
-          ...wallet,
+          ...latest,
           currentAccount: result.account,
-          address: result.account.address,
-          activeSeedSourceId: result.activeSeedSourceId ?? wallet.activeSeedSourceId,
-          balance: wallet.accountBalances?.[result.account.address] ?? 0,
-          spendableBalance: wallet.accountSpendableBalances?.[result.account.address] ?? 0,
+          address: addr,
+          activeSeedSourceId: result.activeSeedSourceId ?? latest.activeSeedSourceId,
+          balance: cachedBal,
+          availableBalance: cachedBal,
+          spendableBalance: cachedSpendable,
         };
         syncWallet(updatedWallet);
         // Refresh balance to ensure spendable balance is accurate for new account
@@ -98,25 +146,9 @@ export function SendScreen() {
     setError('');
 
     try {
-      // Use recipient address if valid, otherwise use a dummy address for estimation
-      let addressToUse = receiverAddress.trim();
-
-      if (addressToUse) {
-        try {
-          const bytes = base58.decode(addressToUse);
-          if (bytes.length !== 40) {
-            addressToUse = ''; // Invalid, will use dummy
-          }
-        } catch {
-          addressToUse = ''; // Invalid base58, will use dummy
-        }
-      }
-
-      // If no valid address, use dummy (fee doesn't depend on recipient)
-      if (!addressToUse) {
-        const dummyBytes = new Uint8Array(40).fill(0);
-        addressToUse = base58.encode(dummyBytes);
-      }
+      await ensureWasmInitialized();
+      const selfPkh = currentAccount?.address || wallet.address || undefined;
+      const addressToUse = recipientPkhForFeeEstimate(receiverAddress, selfPkh);
 
       const result = await send<{
         maxAmount?: number;
@@ -142,9 +174,11 @@ export function SendScreen() {
         const feeNock = result.fee / NOCK_TO_NICKS;
 
         setAmount(formatNock(maxAmountNock, 5));
-        setFee(feeNock.toString());
-        setEditedFee(feeNock.toString());
-        setMinimumFee(feeNock);
+        const feeStr = formatNock(feeNock, 2, FEE_FORMAT_OPTIONS);
+        setFee(feeStr);
+        setEditedFee(feeStr);
+        setMinimumFeeNicks(result.fee);
+        feeSendNicksRef.current = result.fee;
         setIsFeeManuallyEdited(true); // Lock fee for max send
         setError('');
         setErrorType(null);
@@ -165,10 +199,13 @@ export function SendScreen() {
   }
 
   function handleSaveFee() {
-    const feeNum = parseFloat(editedFee);
+    const feeNum = parseFloat(editedFee.replace(/,/g, ''));
     if (!isNaN(feeNum) && feeNum >= 0) {
-      // Validate against minimum fee if we have one
-      if (minimumFee !== null && feeNum < minimumFee) {
+      const feeSavedNum = truncateNockToDecimals(feeNum, 2);
+      const feeSaved = formatNock(feeNum, 2, FEE_FORMAT_OPTIONS);
+      const feeNicksSaved = Math.ceil(feeSavedNum * NOCK_TO_NICKS - 1e-9);
+      feeSendNicksRef.current = feeNicksSaved;
+      if (minimumFeeNicks !== null && feeNicksSaved < minimumFeeNicks) {
         setError('Fee too low.');
         setErrorType('fee_too_low');
         // Still allow saving the fee, but show warning
@@ -176,7 +213,8 @@ export function SendScreen() {
         setError('');
         setErrorType(null);
       }
-      setFee(editedFee);
+      setFee(feeSaved);
+      setEditedFee(feeSaved);
       setIsFeeManuallyEdited(true); // Mark as manually edited - stops auto-updates
     }
     setIsEditingFee(false);
@@ -242,14 +280,20 @@ export function SendScreen() {
       return;
     }
 
-    const feeNum = parseFloat(fee);
+    const feeNum = parseFloat(fee.replace(/,/g, ''));
     if (!fee || isNaN(feeNum) || feeNum < 0) {
       setError('Please enter a valid fee');
       return;
     }
 
+    const feeNicksForSend =
+      feeSendNicksRef.current !== null
+        ? feeSendNicksRef.current
+        : Math.ceil(feeNum * NOCK_TO_NICKS - 1e-9);
+    const feeNockForSend = nickToNock(feeNicksForSend);
+
     // Check if user has sufficient spendable balance for amount + fee
-    const totalNeeded = amountNum + feeNum;
+    const totalNeeded = amountNum + feeNockForSend;
     if (totalNeeded > currentBalance) {
       setError(`Insufficient spendable balance`);
       return;
@@ -259,7 +303,8 @@ export function SendScreen() {
     setLastTransaction({
       txid: '', // Will be generated when actually sent
       amount: amountNum,
-      fee: feeNum,
+      fee: feeNockForSend,
+      feeNicks: feeNicksForSend,
       to: receiverAddress.trim(),
       from: currentAccount?.address,
       sendMax: isSendingMax, // Flag for sweep transaction (all UTXOs to recipient)
@@ -353,47 +398,34 @@ export function SendScreen() {
     const amountNum = parseFloat(amount.replace(/,/g, ''));
     if (isNaN(amountNum) || amountNum <= 0) return;
 
-    // Use recipient address if provided and valid, otherwise use a dummy address
-    // (fee doesn't depend on recipient address, only on amount/UTXOs needed)
-    let addressToUse = receiverAddress.trim();
-
-    // Validate address if provided, otherwise use dummy
-    if (addressToUse) {
-      try {
-        const bytes = base58.decode(addressToUse);
-        if (bytes.length !== 40) {
-          addressToUse = ''; // Invalid, will use dummy
-        }
-      } catch {
-        addressToUse = ''; // Invalid base58, will use dummy
-      }
-    }
-
-    // If no valid address provided, use a dummy address for estimation
-    // The actual recipient doesn't affect fee - only amount/UTXOs matter
-    if (!addressToUse) {
-      // Dummy V1 PKH address (8 byte version + 32 byte PKH digest)
-      const dummyBytes = new Uint8Array(40).fill(0);
-      addressToUse = base58.encode(dummyBytes);
-    }
-
     // Show loading state immediately
     setIsCalculatingFee(true);
 
     // Debounce: wait 500ms before estimating to avoid excessive WASM operations
+    const seq = ++feeEstimateSeqRef.current;
     const timeoutId = setTimeout(async () => {
       try {
+        await ensureWasmInitialized();
+        if (seq !== feeEstimateSeqRef.current) return;
+
+        const selfPkh = currentAccount?.address || wallet.address || undefined;
+        const addressToUse = recipientPkhForFeeEstimate(receiverAddress, selfPkh);
+
         const amountNicks = Math.floor(amountNum * NOCK_TO_NICKS);
         const result = await send<{ fee?: number; error?: string }>(
           INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE,
           [addressToUse, amountNicks]
         );
 
+        if (seq !== feeEstimateSeqRef.current) return;
+
         if (result?.fee) {
           const feeNock = result.fee / NOCK_TO_NICKS;
-          setFee(feeNock.toString());
-          setEditedFee(feeNock.toString());
-          setMinimumFee(feeNock); // Store as minimum required fee
+          const feeStr = formatNock(feeNock, 2, FEE_FORMAT_OPTIONS);
+          setFee(feeStr);
+          setEditedFee(feeStr);
+          setMinimumFeeNicks(result.fee);
+          feeSendNicksRef.current = result.fee;
           setError('');
           setErrorType(null);
         } else if (result?.error) {
@@ -415,7 +447,7 @@ export function SendScreen() {
       clearTimeout(timeoutId);
       setIsCalculatingFee(false);
     };
-  }, [receiverAddress, amount, isFeeManuallyEdited]);
+  }, [receiverAddress, amount, isFeeManuallyEdited, currentAccount?.address, wallet.address]);
 
   // -----------------------------------------------------------------------------
 
@@ -778,13 +810,18 @@ export function SendScreen() {
               }}
             >
               <span>{error}</span>
-              {errorType === 'fee_too_low' && minimumFee !== null && (
+              {errorType === 'fee_too_low' && minimumFeeNicks !== null && (
                 <button
                   type="button"
                   onClick={() => {
-                    const feeStr = minimumFee.toString();
+                    const feeStr = formatNock(
+                      minimumFeeNicks / NOCK_TO_NICKS,
+                      2,
+                      FEE_FORMAT_OPTIONS
+                    );
                     setFee(feeStr);
                     setEditedFee(feeStr);
+                    feeSendNicksRef.current = minimumFeeNicks;
                     setError('');
                     setErrorType(null);
                     setIsFeeManuallyEdited(false); // Allow auto-updates again

@@ -264,16 +264,19 @@ export function HomeScreen() {
     }>(INTERNAL_METHODS.SWITCH_ACCOUNT, [accountAddress]);
 
     if (result?.ok && result.account) {
-      // Get cached balance for the new account (or 0 if not cached)
-      const cachedBalance = wallet.accountBalances[result.account.address] ?? 0;
+      const latest = useStore.getState().wallet;
+      const addr = result.account.address;
+      const cachedBalance = latest.accountBalances[addr] ?? 0;
+      const cachedSpendable = latest.accountSpendableBalances?.[addr] ?? cachedBalance;
 
       const updatedWallet = {
-        ...wallet,
+        ...latest,
         currentAccount: result.account,
-        address: result.account.address,
-        activeSeedSourceId: result.activeSeedSourceId ?? wallet.activeSeedSourceId,
+        address: addr,
+        activeSeedSourceId: result.activeSeedSourceId ?? latest.activeSeedSourceId,
         balance: cachedBalance,
         availableBalance: cachedBalance,
+        spendableBalance: cachedSpendable,
       };
       syncWallet(updatedWallet);
       setWalletDropdownOpen(false);
