@@ -2043,7 +2043,10 @@ export class Vault {
     this.capWalletTransactions(accountAddress);
   }
 
-  private enqueueNockblocksHistoryRefresh(accountAddress: string, fn: () => Promise<void>): Promise<void> {
+  private enqueueNockblocksHistoryRefresh(
+    accountAddress: string,
+    fn: () => Promise<void>
+  ): Promise<void> {
     const prev = this.nockblocksHistoryRefreshChains.get(accountAddress) ?? Promise.resolve();
     const next = prev
       .catch(() => {
@@ -2129,10 +2132,7 @@ export class Vault {
         client
       );
 
-      if (
-        ingestResult.abortedEmptyFirstPage &&
-        opts?.retryAddressIndexOnEmptyPage
-      ) {
+      if (ingestResult.abortedEmptyFirstPage && opts?.retryAddressIndexOnEmptyPage) {
         await new Promise<void>(resolve => setTimeout(resolve, 1500));
         ingestResult = await this.ingestNockblocksTransactionsByAddress(
           accountAddress,

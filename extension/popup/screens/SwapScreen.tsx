@@ -103,13 +103,11 @@ export function SwapScreen() {
       : null;
 
   const showReceiveEstimate = amountNum > 0 && !Number.isNaN(amountNum);
-  const receiveAmountDisplayText = showReceiveEstimate ? `~${receiveDisplayAmount}` : receiveDisplayAmount;
+  const receiveAmountDisplayText = showReceiveEstimate
+    ? `~${receiveDisplayAmount}`
+    : receiveDisplayAmount;
   const receiveUsdDisplayText =
-    receiveUsdValue !== null
-      ? `~$${receiveUsdValue} USD`
-      : showReceiveEstimate
-        ? '— USD'
-        : '0 USD';
+    receiveUsdValue !== null ? `~$${receiveUsdValue} USD` : showReceiveEstimate ? '— USD' : '0 USD';
 
   const amountLineHeightPx = amountFontSizePx + 4;
 

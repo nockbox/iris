@@ -183,18 +183,15 @@ function parseCompoundNicksDisplayToTotalNicks(token: string): number | null {
  * Rewrites tx-engine insufficient-fee messages to decimal NOCK (not compound `Nicks` text).
  */
 export function rewriteInsufficientFeeErrorToDecimalNock(message: string): string {
-  return message.replace(
-    TX_ENGINE_INSUFFICIENT_FEE_RE,
-    (full, needRaw: string, gotRaw: string) => {
-      const needN = parseCompoundNicksDisplayToTotalNicks(needRaw);
-      const gotN = parseCompoundNicksDisplayToTotalNicks(gotRaw);
-      if (needN === null || gotN === null) return full;
-      const opts = { mode: 'round' as const, useGrouping: false };
-      const needStr = formatNock(nickToNock(needN), 8, opts);
-      const gotStr = formatNock(nickToNock(gotN), 8, opts);
-      return `Insufficient fee for transaction (needed: ${needStr} NOCK, got: ${gotStr} NOCK)`;
-    }
-  );
+  return message.replace(TX_ENGINE_INSUFFICIENT_FEE_RE, (full, needRaw: string, gotRaw: string) => {
+    const needN = parseCompoundNicksDisplayToTotalNicks(needRaw);
+    const gotN = parseCompoundNicksDisplayToTotalNicks(gotRaw);
+    if (needN === null || gotN === null) return full;
+    const opts = { mode: 'round' as const, useGrouping: false };
+    const needStr = formatNock(nickToNock(needN), 8, opts);
+    const gotStr = formatNock(nickToNock(gotN), 8, opts);
+    return `Insufficient fee for transaction (needed: ${needStr} NOCK, got: ${gotStr} NOCK)`;
+  });
 }
 
 /**
