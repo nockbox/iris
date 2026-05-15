@@ -15,6 +15,7 @@ import {
   RPC_API_VERSION,
 } from '@nockbox/iris-sdk';
 import type { RpcRequest, RpcResponse, ConnectResponse } from '@nockbox/iris-sdk';
+import {ensureWasmInitialized} from '../shared/wasm-utils';
 import wasm from '../shared/sdk-wasm.js';
 import type { Note } from '@nockbox/iris-sdk/wasm';
 import type { Nicks } from '@nockbox/iris-sdk/wasm';
@@ -870,7 +871,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           await sendBridgedResponse({ error: { code: -32602, message: 'Invalid params' } });
           return;
         }
-
+        await ensureWasmInitialized();
         const nativeRawTx = wasm.nockchainTxToRawTx(signTxParams.tx);
         const nativeNotes = (signTxParams.notes ?? []) as Note[];
         const nativeSpendConditions = wasm.rawTxInputSpendConditions(nativeRawTx);
