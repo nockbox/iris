@@ -209,6 +209,9 @@ export async function signAndBroadcastV0Migration(
 
     const signedTx = builder.build();
     const signedRawTx = wasm.nockchainTxToRawTx(signedTx) as wasm.RawTxV1;
+    if (!wasm.guard.isRawTxV1(signedRawTx)) {
+      throw new Error('Migration transaction not in expected shape');
+    }
     const protobuf = wasm.rawTxToProtobuf(signedRawTx);
     const txId = signedTx.id;
 
