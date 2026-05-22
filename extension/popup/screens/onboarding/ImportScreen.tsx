@@ -21,6 +21,7 @@ export function ImportScreen() {
     navigate,
     syncWallet,
     refreshWalletAccounts,
+    fetchBalance,
     createMnemonicSeedSource,
     onboardingMnemonic,
     setOnboardingMnemonic,
@@ -195,6 +196,7 @@ export function ImportScreen() {
         accountSpendableBalances: {},
         accountBalanceDetails: {},
       });
+      void fetchBalance();
       await refreshWalletAccounts();
       setOnboardingMnemonic(null);
       navigate('onboarding-import-success');
