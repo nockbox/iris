@@ -15,7 +15,7 @@ import {
   RPC_API_VERSION,
 } from '@nockbox/iris-sdk';
 import type { RpcRequest, RpcResponse, ConnectResponse } from '@nockbox/iris-sdk';
-import {ensureWasmInitialized} from '../shared/wasm-utils';
+import { ensureWasmInitialized } from '../shared/wasm-utils';
 import wasm from '../shared/sdk-wasm.js';
 import type { Note } from '@nockbox/iris-sdk/wasm';
 import type { Nicks } from '@nockbox/iris-sdk/wasm';
