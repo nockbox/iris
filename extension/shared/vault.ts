@@ -3625,6 +3625,7 @@ export class Vault {
   ): Promise<{
     bridgeResult: Awaited<ReturnType<typeof buildBridgeTransaction>>;
     destinationAddress: string;
+    amountNicks: Nicks;
     refundPkh: string;
     wasmNotes: wasm.Note[];
     spendConditions: wasm.SpendCondition[];
@@ -3700,9 +3701,26 @@ export class Vault {
     const builtFeeNum = Number(bridgeResult.fee);
     const expectedChangeNicks = BigInt(selectedTotal) - BigInt(amountNicks) - BigInt(builtFeeNum);
 
+    const rawTxProto = wasm.rawTxToProtobuf(wasm.nockchainTxToRawTx(bridgeResult.transaction));
+    const validationParams = {
+      destinationAddress,
+      amountInNicks,
+      refundPkh: senderPKH,
+    };
+    const validation = await validateBridgeTransaction(
+      rawTxProto,
+      validationParams,
+      BRIDGE_CONFIG,
+      { txEngineSettings }
+    );
+    if (!validation.valid) {
+      throw new Error(validation.error ?? 'Bridge transaction validation failed');
+    }
+
     return {
       bridgeResult,
       destinationAddress,
+      amountNicks,
       refundPkh: senderPKH,
       wasmNotes,
       spendConditions,
@@ -3721,9 +3739,16 @@ export class Vault {
     const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
     const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
 
-    const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
-      txEngineSettings: buildCtx.txEngineSettings,
-    });
+    const validation = await validateBridgeTransaction(
+      signedProtobufTx,
+      {
+        destinationAddress: buildCtx.destinationAddress,
+        amountInNicks: buildCtx.amountNicks,
+        refundPkh: buildCtx.refundPkh,
+      },
+      BRIDGE_CONFIG,
+      { txEngineSettings: buildCtx.txEngineSettings }
+    );
     if (!validation.valid) {
       throw new Error(validation.error ?? 'Bridge transaction validation failed');
     }
@@ -3747,9 +3772,16 @@ export class Vault {
       const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
       const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
       const signedTxId = signedRawTx.id;
-      const validation = await validateBridgeTransaction(signedProtobufTx, BRIDGE_CONFIG, {
-        txEngineSettings: buildCtx.txEngineSettings,
-      });
+      const validation = await validateBridgeTransaction(
+        signedProtobufTx,
+        {
+          destinationAddress: buildCtx.destinationAddress,
+          amountInNicks: buildCtx.amountNicks,
+          refundPkh: buildCtx.refundPkh,
+        },
+        BRIDGE_CONFIG,
+        { txEngineSettings: buildCtx.txEngineSettings }
+      );
       if (!validation.valid) {
         throw new Error(validation.error ?? 'Bridge transaction validation failed');
       }
