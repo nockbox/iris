@@ -1233,6 +1233,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           ]);
           if (payload.params?.[2] === true) {
             queueSubwalletDiscoveryAfterInitialSync(createSeedResult.seedSource.id);
+            const curAfterSeed = vault.getCurrentAccount();
+            if (curAfterSeed) {
+              void syncAccountUTXOsWithDedupe(curAfterSeed.address, curAfterSeed.name).catch(err =>
+                console.warn('[Background] Initial seed source sync failed:', err)
+              );
+            }
           }
         }
         return;
