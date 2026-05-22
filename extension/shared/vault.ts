@@ -2566,23 +2566,49 @@ export class Vault {
     let nextIndexToScan = 1;
     let scanThroughIndex = MAX_SUBWALLET_DISCOVERY_SCAN;
     const maxScanIndex = 35;
+    const discoveryQueryConcurrency = 3;
+
+    const queryDiscoveryIndex = async (index: number) => {
+      const address = await deriveAddress(mnemonic, index);
+      let lastError: unknown;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const balanceResult = await queryV1Balance(address, rpcClient);
+          return { index, address, balance: balanceResult.totalNock };
+        } catch (error) {
+          lastError = error;
+          if (attempt === 0) {
+            await new Promise(resolve => setTimeout(resolve, 250));
+          }
+        }
+      }
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    };
 
     while (nextIndexToScan <= scanThroughIndex && nextIndexToScan <= maxScanIndex) {
       const startIndex = nextIndexToScan;
       const endIndex = Math.min(scanThroughIndex, maxScanIndex);
       nextIndexToScan = endIndex + 1;
 
-      const discoveryResults = await Promise.allSettled(
-        Array.from({ length: endIndex - startIndex + 1 }, async (_, offset) => {
-          const index = startIndex + offset;
-          const address = await deriveAddress(mnemonic, index);
-          const balanceResult = await queryV1Balance(address, rpcClient);
-          return { index, address, balance: balanceResult.totalNock };
-        })
-      );
+      const indexes = Array.from({ length: endIndex - startIndex + 1 }, (_, offset) => {
+        return startIndex + offset;
+      });
+      const discoveryResults: PromiseSettledResult<{
+        index: number;
+        address: string;
+        balance: number;
+      }>[] = [];
+      for (let i = 0; i < indexes.length; i += discoveryQueryConcurrency) {
+        discoveryResults.push(
+          ...(await Promise.allSettled(
+            indexes.slice(i, i + discoveryQueryConcurrency).map(queryDiscoveryIndex)
+          ))
+        );
+      }
 
       for (const result of discoveryResults) {
         if (result.status !== 'fulfilled') {
+          console.warn('[Vault] Sub-wallet discovery balance query failed:', result.reason);
           continue;
         }
 
@@ -3704,7 +3730,7 @@ export class Vault {
     const rawTxProto = wasm.rawTxToProtobuf(wasm.nockchainTxToRawTx(bridgeResult.transaction));
     const validationParams = {
       destinationAddress,
-      amountInNicks,
+      amountInNicks: amountNicks,
       refundPkh: senderPKH,
     };
     const validation = await validateBridgeTransaction(

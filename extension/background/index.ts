@@ -93,6 +93,7 @@ const utxoSyncInFlight = new Map<
 
 // Track pending sub-wallet discoveries (fire-and-forget) so we don't double-schedule.
 const subwalletDiscoveryInFlight = new Set<string>();
+const subwalletDiscoveryAfterInitialSync = new Set<string>();
 
 async function clearUnlockSessionCache(): Promise<void> {
   try {
@@ -667,6 +668,66 @@ function scheduleSubwalletDiscovery(seedId: string): void {
   })();
 }
 
+function queueSubwalletDiscoveryAfterInitialSync(seedId: string): void {
+  if (subwalletDiscoveryInFlight.has(seedId)) return;
+  subwalletDiscoveryAfterInitialSync.add(seedId);
+}
+
+function scheduleQueuedSubwalletDiscoveryAfterInitialSync(accountAddress: string): void {
+  const currentAccount = vault.getCurrentAccount();
+  if (currentAccount?.address !== accountAddress || subwalletDiscoveryAfterInitialSync.size === 0) {
+    return;
+  }
+
+  const seedIds = Array.from(subwalletDiscoveryAfterInitialSync);
+  subwalletDiscoveryAfterInitialSync.clear();
+  for (const seedId of seedIds) {
+    scheduleSubwalletDiscovery(seedId);
+  }
+}
+
+async function syncAccountUTXOsWithDedupe(
+  accountAddress: string,
+  accountName = accountAddress
+): Promise<{
+  ok: boolean;
+  results: Record<string, { success: boolean; error?: string }>;
+}> {
+  let inFlight = utxoSyncInFlight.get(accountAddress);
+  if (!inFlight) {
+    inFlight = (async () => {
+      const results: Record<string, { success: boolean; error?: string }> = {};
+
+      if (vault.isLocked()) {
+        results[accountAddress] = {
+          success: false,
+          error: ERROR_CODES.LOCKED,
+        };
+        return { ok: true, results };
+      }
+
+      try {
+        await vault.syncAccountUTXOs(accountAddress);
+        results[accountAddress] = { success: true };
+        scheduleQueuedSubwalletDiscoveryAfterInitialSync(accountAddress);
+      } catch (syncErr) {
+        console.warn(`[Background] UTXO sync failed for ${accountName}:`, syncErr);
+        results[accountAddress] = {
+          success: false,
+          error: syncErr instanceof Error ? syncErr.message : String(syncErr),
+        };
+      }
+
+      return { ok: true, results };
+    })().finally(() => {
+      utxoSyncInFlight.delete(accountAddress);
+    });
+    utxoSyncInFlight.set(accountAddress, inFlight);
+  }
+
+  return inFlight;
+}
+
 // Initialize auto-lock setting, load approved origins, vault state, connection monitoring, and schedule alarms
 const initPromise = (async () => {
   const stored = await chrome.storage.local.get([
@@ -1033,6 +1094,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         // Reset the wallet completely - clears all data
         await vault.reset();
         await clearUnlockSessionCache();
+        subwalletDiscoveryAfterInitialSync.clear();
+        subwalletDiscoveryInFlight.clear();
         manuallyLocked = false;
         sendResponse({ ok: true });
 
@@ -1060,7 +1123,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           if (importedExistingPhrase) {
             const firstSeedId = vault.getSeedSources()[0]?.id;
             if (firstSeedId) {
-              scheduleSubwalletDiscovery(firstSeedId);
+              queueSubwalletDiscoveryAfterInitialSync(firstSeedId);
+            }
+            const currentAccount = vault.getCurrentAccount();
+            if (currentAccount) {
+              void syncAccountUTXOsWithDedupe(currentAccount.address, currentAccount.name).catch(
+                err => console.warn('[Background] Initial imported wallet sync failed:', err)
+              );
             }
           }
         }
@@ -1163,7 +1232,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             cur?.address ?? createSeedResult.account.address,
           ]);
           if (payload.params?.[2] === true) {
-            scheduleSubwalletDiscovery(createSeedResult.seedSource.id);
+            queueSubwalletDiscoveryAfterInitialSync(createSeedResult.seedSource.id);
           }
         }
         return;
@@ -1240,42 +1309,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
 
           // Serialize across concurrent callers for the same account (popup
-          // refreshes, multiple screens): a single in-flight sync is reused
-          // rather than kicking off parallel passes that race on
-          // saveAccountData. Keyed by address so different accounts can sync
-          // in parallel if ever requested concurrently.
-          let inFlight = utxoSyncInFlight.get(requestedAddress);
-          if (!inFlight) {
-            inFlight = (async () => {
-              const results: Record<string, { success: boolean; error?: string }> = {};
-
-              if (vault.isLocked()) {
-                results[account.address] = {
-                  success: false,
-                  error: ERROR_CODES.LOCKED,
-                };
-                return { ok: true, results };
-              }
-
-              try {
-                await vault.syncAccountUTXOs(account.address);
-                results[account.address] = { success: true };
-              } catch (syncErr) {
-                console.warn(`[Background] UTXO sync failed for ${account.name}:`, syncErr);
-                results[account.address] = {
-                  success: false,
-                  error: syncErr instanceof Error ? syncErr.message : String(syncErr),
-                };
-              }
-
-              return { ok: true, results };
-            })().finally(() => {
-              utxoSyncInFlight.delete(requestedAddress);
-            });
-            utxoSyncInFlight.set(requestedAddress, inFlight);
-          }
-
-          const syncOutcome = await inFlight;
+          // refreshes, multiple screens, initial import sync): a single in-flight
+          // sync is reused rather than kicking off parallel passes.
+          const syncOutcome = await syncAccountUTXOsWithDedupe(account.address, account.name);
           sendResponse(syncOutcome);
         } catch (err) {
           console.error('[Background] SYNC_UTXOS error:', err);
