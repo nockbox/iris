@@ -3736,12 +3736,9 @@ export class Vault {
       amountInNicks: amountNicks,
       refundPkh: senderPKH,
     };
-    const validation = await validateBridgeTransaction(
-      rawTx,
-      validationParams,
-      BRIDGE_CONFIG,
-      { txEngineSettings }
-    );
+    const validation = await validateBridgeTransaction(rawTx, validationParams, BRIDGE_CONFIG, {
+      txEngineSettings,
+    });
     if (!validation.valid) {
       throw new Error(validation.error ?? 'Bridge transaction validation failed');
     }
