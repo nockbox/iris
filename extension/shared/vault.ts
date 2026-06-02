@@ -3727,14 +3727,17 @@ export class Vault {
     const builtFeeNum = Number(bridgeResult.fee);
     const expectedChangeNicks = BigInt(selectedTotal) - BigInt(amountNicks) - BigInt(builtFeeNum);
 
-    const rawTxProto = wasm.rawTxToProtobuf(wasm.nockchainTxToRawTx(bridgeResult.transaction));
+    const rawTx = wasm.nockchainTxToRawTx(bridgeResult.transaction);
+    if (!guard.isRawTxV1(rawTx)) {
+      throw new Error('Bridge transaction must be version 1');
+    }
     const validationParams = {
       destinationAddress,
       amountInNicks: amountNicks,
       refundPkh: senderPKH,
     };
     const validation = await validateBridgeTransaction(
-      rawTxProto,
+      rawTx,
       validationParams,
       BRIDGE_CONFIG,
       { txEngineSettings }
@@ -3763,10 +3766,13 @@ export class Vault {
     const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
     const signedTx = await this.signRawTx({ rawTx });
     const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+    if (!guard.isRawTxV1(signedRawTx)) {
+      throw new Error('Bridge transaction must be version 1');
+    }
     const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
 
     const validation = await validateBridgeTransaction(
-      signedProtobufTx,
+      signedRawTx,
       {
         destinationAddress: buildCtx.destinationAddress,
         amountInNicks: buildCtx.amountNicks,
@@ -3796,10 +3802,13 @@ export class Vault {
       const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
       const signedTx = await this.signRawTx({ rawTx });
       const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+      if (!guard.isRawTxV1(signedRawTx)) {
+        throw new Error('Bridge transaction must be version 1');
+      }
       const signedProtobufTx = wasm.rawTxToProtobuf(signedRawTx);
       const signedTxId = signedRawTx.id;
       const validation = await validateBridgeTransaction(
-        signedProtobufTx,
+        signedRawTx,
         {
           destinationAddress: buildCtx.destinationAddress,
           amountInNicks: buildCtx.amountNicks,
