@@ -3647,7 +3647,8 @@ export class Vault {
   private async buildBridgeTransactionContext(
     currentAccount: SubAccount,
     destinationAddress: string,
-    amountNicks: Nicks
+    amountNicks: Nicks,
+    options?: { useAllAvailableNotes?: boolean }
   ): Promise<{
     bridgeResult: Awaited<ReturnType<typeof buildBridgeTransaction>>;
     destinationAddress: string;
@@ -3671,7 +3672,9 @@ export class Vault {
     // real fee below; an oversized slack blocks near-max bridges (e.g. 105 NOCK → bridge 100).
     const selectionSlackNicks = 10 * NOCK_TO_NICKS;
     const targetAmount = Number(amountNicks) + selectionSlackNicks;
-    const selectedStoredNotes = selectNotesForAmount(availableStoredNotes, targetAmount);
+    const selectedStoredNotes = options?.useAllAvailableNotes
+      ? availableStoredNotes
+      : selectNotesForAmount(availableStoredNotes, targetAmount);
     if (!selectedStoredNotes) {
       throw new Error('Insufficient available funds');
     }
@@ -3780,6 +3783,90 @@ export class Vault {
     );
     if (!validation.valid) {
       throw new Error(validation.error ?? 'Bridge transaction validation failed');
+    }
+  }
+
+  /**
+   * Estimate the maximum amount that can be bridged while reserving Nockchain network fee.
+   * The bridge protocol fee is deducted by the bridge from the bridged amount, not reserved here.
+   */
+  async estimateMaxBridgeAmount(
+    destinationAddress: string
+  ): Promise<
+    | { maxAmount: number; fee: number; totalAvailable: number; utxoCount: number }
+    | { error: string }
+  > {
+    if (this.state.locked) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
+    if (!signingMnemonic) {
+      return { error: 'Current account is external and cannot sign locally' };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    try {
+      const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
+      const totalAvailable = availableStoredNotes.reduce((sum, n) => sum + n.assets, 0);
+      const minBridgeAmount = Number(BRIDGE_CONFIG.minAmountNicks);
+
+      if (availableStoredNotes.length === 0) {
+        return { error: 'No available UTXOs.' };
+      }
+      if (totalAvailable <= minBridgeAmount) {
+        return { error: 'Balance is too low to cover the minimum bridge amount and network fee.' };
+      }
+
+      let buildCtx = await this.buildBridgeTransactionContext(
+        currentAccount,
+        destinationAddress,
+        BRIDGE_CONFIG.minAmountNicks,
+        { useAllAvailableNotes: true }
+      );
+      let fee = Number(buildCtx.bridgeResult.fee);
+      let maxAmount = totalAvailable - fee;
+
+      if (maxAmount < minBridgeAmount) {
+        return { error: 'Balance is too low to cover the minimum bridge amount and network fee.' };
+      }
+
+      for (let i = 0; i < 2; i++) {
+        buildCtx = await this.buildBridgeTransactionContext(
+          currentAccount,
+          destinationAddress,
+          String(maxAmount) as Nicks,
+          { useAllAvailableNotes: true }
+        );
+        const nextFee = Number(buildCtx.bridgeResult.fee);
+        const nextMaxAmount = totalAvailable - nextFee;
+        if (nextFee === fee && nextMaxAmount === maxAmount) {
+          break;
+        }
+        fee = nextFee;
+        maxAmount = nextMaxAmount;
+        if (maxAmount < minBridgeAmount) {
+          return {
+            error: 'Balance is too low to cover the minimum bridge amount and network fee.',
+          };
+        }
+      }
+
+      return {
+        maxAmount,
+        fee,
+        totalAvailable,
+        utxoCount: availableStoredNotes.length,
+      };
+    } catch (error) {
+      console.error('[Vault] Max bridge estimation failed:', error);
+      const rawMsg = error instanceof Error ? error.message : String(error);
+      return {
+        error: 'Max bridge estimation failed: ' + rewriteInsufficientFeeErrorToDecimalNock(rawMsg),
+      };
     }
   }
 
