@@ -127,6 +127,9 @@ export const INTERNAL_METHODS = {
   /** Estimate bridge transaction fee for a given destination and amount */
   ESTIMATE_BRIDGE_FEE: 'wallet:estimateBridgeFee',
 
+  /** Estimate max bridgeable amount after reserving network fee */
+  ESTIMATE_MAX_BRIDGE: 'wallet:estimateMaxBridge',
+
   /** Build, sign, and broadcast a bridge transaction (Nockchain → Base) */
   SEND_BRIDGE_TRANSACTION: 'wallet:sendBridgeTransaction',
 

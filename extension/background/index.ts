@@ -1970,6 +1970,41 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
+      case INTERNAL_METHODS.ESTIMATE_MAX_BRIDGE:
+        // params: [destinationAddress] - estimates max bridge amount after reserving network fee
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
+        const [maxBridgeDest] = payload.params || [];
+        if (!maxBridgeDest || !isEvmAddress(maxBridgeDest)) {
+          sendResponse({ error: 'Invalid destination address. Expected EVM address (0x...).' });
+          return;
+        }
+
+        try {
+          const maxBridgeResult = await vault.estimateMaxBridgeAmount(maxBridgeDest);
+
+          if ('error' in maxBridgeResult) {
+            sendResponse({ error: maxBridgeResult.error });
+            return;
+          }
+
+          sendResponse({
+            maxAmount: maxBridgeResult.maxAmount,
+            fee: maxBridgeResult.fee,
+            totalAvailable: maxBridgeResult.totalAvailable,
+            utxoCount: maxBridgeResult.utxoCount,
+          });
+        } catch (error) {
+          console.error('[Background] Max bridge estimation failed:', error);
+          sendResponse({
+            error: error instanceof Error ? error.message : 'Max bridge estimation failed',
+          });
+        }
+        return;
+
       case INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION:
         // params: [destinationAddress, amountNicks, priceUsdAtTime?]
         // EVM address (Base), amount in nicks

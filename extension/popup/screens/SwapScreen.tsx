@@ -14,13 +14,16 @@ import {
   bridgeReceiveAmountAfterProtocolFeeNock,
 } from '../../shared/bridge-protocol-fee';
 import { formatNock } from '../../shared/currency';
+import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../shared/constants';
 import { formatWithCommas, parseAmount } from '../utils/format';
+import { send } from '../utils/messaging';
 
 export function SwapScreen() {
   const { navigate, wallet, setPendingBridgeSwap, priceUsd, isBalanceFetching } = useStore();
   const [amount, setAmount] = useState('');
   const [destinationAddress, setDestinationAddress] = useState('');
   const [isPreparing, setIsPreparing] = useState(false);
+  const [isEstimatingMax, setIsEstimatingMax] = useState(false);
   const [error, setError] = useState('');
   const [amountFontSizePx, setAmountFontSizePx] = useState(36);
   const amountContainerRef = useRef<HTMLDivElement>(null);
@@ -81,6 +84,38 @@ export function SwapScreen() {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setIsPreparing(false);
+    }
+  }
+
+  async function handleMaxAmount() {
+    setError('');
+    if (!isEvmAddress(destinationAddress)) {
+      setError('Enter a valid Base (EVM) address.');
+      return;
+    }
+
+    setIsEstimatingMax(true);
+    try {
+      const result = await send<{
+        maxAmount?: number;
+        fee?: number;
+        totalAvailable?: number;
+        utxoCount?: number;
+        error?: string;
+      }>(INTERNAL_METHODS.ESTIMATE_MAX_BRIDGE, [destinationAddress]);
+
+      if (result?.error) {
+        setError(result.error);
+        return;
+      }
+      if (result?.maxAmount !== undefined) {
+        const maxAmountNock = Math.floor((result.maxAmount / NOCK_TO_NICKS) * 100000) / 100000;
+        setAmount(formatNock(maxAmountNock, 5));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Max bridge estimation failed');
+    } finally {
+      setIsEstimatingMax(false);
     }
   }
 
@@ -185,7 +220,7 @@ export function SwapScreen() {
         <div className="relative flex flex-col gap-2">
           {/* You pay (Nockchain) - white/bg card with border */}
           <div
-            className="rounded-lg p-3 flex items-center justify-between gap-3"
+            className="rounded-lg px-3 pt-3 pb-5 flex items-center justify-between gap-3"
             style={{
               backgroundColor: 'var(--color-bg)',
               border: '1px solid var(--color-divider)',
@@ -227,6 +262,21 @@ export function SwapScreen() {
               >
                 {usdValue !== null ? `$${usdValue} USD` : '0 USD'}
                 <img src={UpDownVec} alt="" className="h-3.5 w-3.5 shrink-0" />
+              </div>
+              <div
+                className="text-[12px] leading-4 font-medium flex items-center gap-2 whitespace-nowrap"
+                style={{ color: 'var(--color-text-muted)', letterSpacing: '0.24px' }}
+              >
+                <span>Spendable: {formatNock(spendableNock, 2)} NOCK</span>
+                <button
+                  type="button"
+                  onClick={handleMaxAmount}
+                  disabled={isEstimatingMax}
+                  className="shrink-0 rounded-full px-[7px] py-[3px] transition disabled:opacity-50"
+                  style={{ backgroundColor: 'var(--color-surface-800)' }}
+                >
+                  {isEstimatingMax ? '...' : 'Max'}
+                </button>
               </div>
             </div>
             <div className="flex items-start gap-2 shrink-0 self-start">
@@ -443,7 +493,7 @@ export function SwapScreen() {
             letterSpacing: '0.14px',
           }}
           onClick={handleReview}
-          disabled={false}
+          disabled={isPreparing || isEstimatingMax}
         >
           {isPreparing ? 'Preparing...' : 'Review'}
         </button>
