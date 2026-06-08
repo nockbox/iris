@@ -9,6 +9,7 @@ release/
 .env
 .env.*
 !.env.example
+!.env.production
 
 # Local development infrastructure
 docker-compose.yml
