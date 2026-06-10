@@ -5,6 +5,7 @@ import { INTERNAL_METHODS, DISPLAY_MODES } from '../../shared/constants';
 import type { DisplayMode } from '../../shared/constants';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { isSidePanel, isSidePanelSupported } from '../utils/displayContext';
+import { SIDE_PANEL_DEFAULT_PATH } from '../../shared/side-panel';
 
 export function DisplayModeScreen() {
   const { navigate } = useStore();
@@ -51,6 +52,11 @@ export function DisplayModeScreen() {
         try {
           const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
           if (activeTab?.id !== undefined) {
+            await chrome.sidePanel.setOptions({
+              tabId: activeTab.id,
+              path: SIDE_PANEL_DEFAULT_PATH,
+              enabled: true,
+            });
             await chrome.sidePanel.open({ tabId: activeTab.id });
           } else {
             const currentWindow = await chrome.windows.getCurrent();

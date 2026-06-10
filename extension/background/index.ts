@@ -44,6 +44,12 @@ import type {
   SignRawTxRequest,
   WalletTransaction,
 } from '../shared/types';
+import { SIDE_PANEL_DEFAULT_PATH } from '../shared/side-panel';
+import {
+  buildPendingApprovalSessionSnapshot,
+  persistPendingApprovalSession,
+  loadPendingApprovalSession,
+} from '../shared/pending-approvals-session';
 
 const vault = new Vault();
 let lastActivity = Date.now();
@@ -245,6 +251,59 @@ function cancelPendingRequest(requestId: string, code?: number, message?: string
   if (currentRequestId == requestId) {
     currentRequestId = null;
     currentRequestType = null;
+  }
+  void syncPendingApprovalsSession();
+}
+
+function orphanedProviderResponse(_response: unknown): void {
+  // The content-script callback is gone after a service worker restart.
+}
+
+async function syncPendingApprovalsSession(): Promise<void> {
+  const snapshot = buildPendingApprovalSessionSnapshot(
+    pendingRequests,
+    currentRequestId,
+    currentRequestType,
+    requestQueue,
+    isRequestExpired
+  );
+  await persistPendingApprovalSession(snapshot);
+}
+
+async function restorePendingApprovalsSession(): Promise<void> {
+  const snapshot = await loadPendingApprovalSession();
+  if (!snapshot) {
+    return;
+  }
+
+  pendingRequests.clear();
+
+  for (const [id, entry] of Object.entries(snapshot.pending)) {
+    if (isRequestExpired(entry.request.timestamp)) {
+      continue;
+    }
+
+    pendingRequests.set(id, {
+      request: entry.request,
+      origin: entry.origin,
+      tabId: entry.tabId,
+      sendResponse: orphanedProviderResponse,
+    });
+  }
+
+  requestQueue = snapshot.queue.filter(item => pendingRequests.has(item.id));
+  currentRequestId =
+    snapshot.currentRequestId && pendingRequests.has(snapshot.currentRequestId)
+      ? snapshot.currentRequestId
+      : null;
+  currentRequestType = currentRequestId ? snapshot.currentRequestType : null;
+
+  if (
+    currentRequestId &&
+    currentRequestType &&
+    (await getDisplayMode()) === DISPLAY_MODES.SIDE_PANEL
+  ) {
+    await notifyApprovalPending(currentRequestId, currentRequestType);
   }
 }
 
@@ -484,7 +543,7 @@ async function applyDisplayMode(mode: DisplayMode): Promise<void> {
   if (effectiveMode === DISPLAY_MODES.SIDE_PANEL) {
     await chrome.action.setPopup({ popup: '' });
     await chrome.sidePanel!.setPanelBehavior({ openPanelOnActionClick: true });
-    await chrome.sidePanel!.setOptions({ path: 'sidepanel/index.html', enabled: true });
+    await chrome.sidePanel!.setOptions({ path: SIDE_PANEL_DEFAULT_PATH, enabled: true });
   } else {
     await chrome.action.setPopup({ popup: 'popup/index.html' });
     if (chrome.sidePanel) {
@@ -514,7 +573,7 @@ async function openSidePanelForApproval(tabId?: number): Promise<void> {
     if (tabId !== undefined) {
       await chrome.sidePanel.setOptions({
         tabId,
-        path: 'sidepanel/index.html',
+        path: SIDE_PANEL_DEFAULT_PATH,
         enabled: true,
       });
       await chrome.sidePanel.open({ tabId });
@@ -569,6 +628,7 @@ async function createApprovalPopup(
     if (!alreadyQueued) {
       requestQueue.push({ id: requestId, type });
     }
+    void syncPendingApprovalsSession();
     return;
   }
 
@@ -579,6 +639,7 @@ async function createApprovalPopup(
   const displayMode = await getDisplayMode();
   if (displayMode === DISPLAY_MODES.SIDE_PANEL) {
     await routeApprovalToSidePanel(requestId, type, tabId);
+    void syncPendingApprovalsSession();
     return;
   }
 
@@ -665,6 +726,8 @@ async function createApprovalPopup(
   } finally {
     isCreatingWindow = false;
   }
+
+  void syncPendingApprovalsSession();
 }
 
 /**
@@ -687,6 +750,8 @@ function processNextRequest() {
       break;
     }
   }
+
+  void syncPendingApprovalsSession();
 }
 
 /**
@@ -773,6 +838,7 @@ const initPromise = (async () => {
 
   await loadApprovedOrigins();
   await vault.init(); // Load encrypted vault header to detect vault existence
+  await restorePendingApprovalsSession();
   await restoreUnlockSession(); // Rehydrate unlock state if still within auto-lock window
 
   await applyDisplayMode(await getDisplayMode());
@@ -885,6 +951,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             tabId: _sender.tab?.id,
           });
 
+          void syncPendingApprovalsSession();
+
           // Create approval popup
           await createApprovalPopup(connectRequestId, 'connect', _sender.tab?.id);
 
@@ -941,6 +1009,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           tabId: _sender.tab?.id,
         });
 
+        void syncPendingApprovalsSession();
+
         // Create approval popup
         await createApprovalPopup(newSignRequestId, 'sign-message', _sender.tab?.id);
 
@@ -994,6 +1064,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           origin: signRawTxRequest.origin,
           tabId: _sender.tab?.id,
         });
+
+        void syncPendingApprovalsSession();
 
         // Create approval popup
         await createApprovalPopup(signRawTxId, 'sign-raw-tx', _sender.tab?.id);
@@ -1050,6 +1122,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           origin: txRequest.origin,
           tabId: _sender.tab?.id,
         });
+
+        void syncPendingApprovalsSession();
 
         // Create approval popup
         await createApprovalPopup(txRequestId, 'transaction', _sender.tab?.id);

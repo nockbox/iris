@@ -299,6 +299,9 @@ export const STORAGE_KEYS = {
 export const SESSION_STORAGE_KEYS = {
   /** Cached encryption key to restore unlock state after SW restarts */
   UNLOCK_CACHE: 'unlockCache',
+
+  /** Pending dApp approval state (survives service worker restarts) */
+  PENDING_APPROVALS: 'pendingApprovals',
 } as const;
 
 /** Current storage schema version - increment when making breaking changes */

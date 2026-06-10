@@ -6,6 +6,19 @@
  */
 
 import { MESSAGE_TARGETS } from '../shared/constants';
+import {
+  APPROVAL_PROVIDER_METHODS,
+  openSidePanelFromUserGesture,
+} from '../shared/side-panel';
+
+function getProviderMethod(payload: unknown): string | undefined {
+  if (!payload || typeof payload !== 'object' || !('method' in payload)) {
+    return undefined;
+  }
+
+  const method = (payload as { method?: unknown }).method;
+  return typeof method === 'string' ? method : undefined;
+}
 
 /**
  * Bridge page <-> Service Worker
@@ -22,6 +35,18 @@ window.addEventListener('message', async (evt: MessageEvent) => {
   // Only forward request messages (with payload), not reply messages
   if (!data.payload || data.reply !== undefined) {
     return;
+  }
+
+  const method = getProviderMethod(data.payload);
+  if (method && APPROVAL_PROVIDER_METHODS.has(method)) {
+    try {
+      const tab = await chrome.tabs.getCurrent();
+      if (tab?.id !== undefined) {
+        await openSidePanelFromUserGesture(tab.id);
+      }
+    } catch (error) {
+      console.warn('[Iris] Failed to open side panel before provider request:', error);
+    }
   }
 
   // Forward to service worker and relay response back to page
