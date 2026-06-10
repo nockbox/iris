@@ -57,7 +57,7 @@ export function CreateScreen() {
   }
 
   return (
-    <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)]">
+    <div className="relative w-full h-full bg-[var(--color-bg)]">
       {/* Header with back button */}
       <div className="flex items-center justify-between h-16 px-4 py-3 border-b border-[var(--color-divider)]">
         <button
@@ -89,7 +89,7 @@ export function CreateScreen() {
       </div>
 
       {/* Main content */}
-      <div className="flex flex-col justify-between h-[536px]">
+      <div className="flex flex-col justify-between flex-1 min-h-0">
         <div className="px-4 py-2 flex flex-col gap-6">
           {/* Icon and heading */}
           <div className="flex flex-col items-center gap-3">

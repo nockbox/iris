@@ -85,7 +85,7 @@ export function LockTimeScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col overflow-y-auto"
+      className="w-full h-full flex flex-col overflow-y-auto"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}

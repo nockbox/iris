@@ -1,6 +1,7 @@
 import { useStore } from '../store';
 import IrisLogo from '../assets/iris-logo.svg';
 import ThemeIcon from '../assets/theme-icon.svg';
+import DisplayModeIcon from '../assets/display-mode-icon.svg';
 import RpcSettingsIcon from '../assets/rpc-settings-icon.svg';
 import KeyIcon from '../assets/key-icon.svg';
 import ClockIcon from '../assets/clock-icon.svg';
@@ -9,6 +10,7 @@ import { CloseIcon } from '../components/icons/CloseIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import AboutIcon from '../assets/settings-gear-icon.svg';
 import { version } from '../../../package-lock.json';
+import { isSidePanelSupported } from '../utils/displayContext';
 
 export function SettingsScreen() {
   const { navigate } = useStore();
@@ -18,6 +20,9 @@ export function SettingsScreen() {
   }
   function handleThemeSettings() {
     navigate('theme-settings');
+  }
+  function handleDisplayMode() {
+    navigate('display-mode');
   }
   function handleKeySettings() {
     navigate('key-settings');
@@ -65,7 +70,7 @@ export function SettingsScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col overflow-y-auto"
+      className="w-full h-full flex flex-col overflow-y-auto"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}
@@ -91,10 +96,13 @@ export function SettingsScreen() {
       </header>
 
       {/* Content */}
-      <div className="flex flex-col justify-between flex-1 h-[536px]">
+      <div className="flex flex-col justify-between flex-1 flex-1 min-h-0">
         {/* Menu */}
         <div className="flex flex-col gap-2 px-3 py-2">
           <Row icon={ThemeIcon} label="Theme settings" onClick={handleThemeSettings} />
+          {isSidePanelSupported() && (
+            <Row icon={DisplayModeIcon} label="Display mode" onClick={handleDisplayMode} />
+          )}
           <Row icon={KeyIcon} label="Key settings" onClick={handleKeySettings} />
           <Row icon={RpcSettingsIcon} label="RPC settings" onClick={handleRPCSettings} />
           <Row icon={ClockIcon} label="Lock time" onClick={handleLockTime} />

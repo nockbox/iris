@@ -7,6 +7,7 @@ import { send } from '../../utils/messaging';
 import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../../shared/constants';
 import { formatNock, formatNick } from '../../../shared/currency';
 import { useAutoRejectOnClose } from '../../hooks/useAutoRejectOnClose';
+import { closeAfterApproval } from '../../utils/displayContext';
 
 export function TransactionApprovalScreen() {
   const { navigate, pendingTransactionRequest, setPendingTransactionRequest, wallet } = useStore();
@@ -28,13 +29,13 @@ export function TransactionApprovalScreen() {
   async function handleReject() {
     await send(INTERNAL_METHODS.REJECT_TRANSACTION, [id]);
     setPendingTransactionRequest(null);
-    window.close();
+    closeAfterApproval(navigate);
   }
 
   async function handleApprove() {
     await send(INTERNAL_METHODS.APPROVE_TRANSACTION, [id]);
     setPendingTransactionRequest(null);
-    window.close();
+    closeAfterApproval(navigate);
   }
 
   const bg = 'var(--color-bg)';
@@ -47,7 +48,7 @@ export function TransactionApprovalScreen() {
     <div className="h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
       <div
         className="w-full h-full flex flex-col"
-        style={{ backgroundColor: bg, maxWidth: '357px', maxHeight: '600px' }}
+        style={{ backgroundColor: bg }}
       >
         {/* Header */}
         <div className="flex items-center justify-center px-4 py-4 shrink-0">

@@ -149,7 +149,7 @@ export function WalletStylingScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col"
+      className="w-full h-full flex flex-col"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}
@@ -173,7 +173,7 @@ export function WalletStylingScreen() {
       </header>
 
       {/* Content */}
-      <div className="flex flex-col gap-[20px] h-[536px] pt-[16px] px-0 pb-0">
+      <div className="flex flex-col gap-[20px] flex-1 min-h-0 pt-[16px] px-0 pb-0">
         {/* Preview */}
         <div className="flex items-center justify-center shrink-0">
           <div className="w-24 h-24 block" dangerouslySetInnerHTML={{ __html: svgContent }} />

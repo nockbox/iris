@@ -4,6 +4,7 @@ import { INTERNAL_METHODS, APPROVAL_CONSTANTS } from '../../../shared/constants'
 import { send } from '../../utils/messaging';
 import { SignRawTxRequest } from '../../../shared/types';
 import { useAutoRejectOnClose } from '../../hooks/useAutoRejectOnClose';
+import { closeAfterApproval } from '../../utils/displayContext';
 import { AccountIcon } from '../../components/AccountIcon';
 import { SiteIcon } from '../../components/SiteIcon';
 import { truncateAddress } from '../../utils/format';
@@ -97,13 +98,13 @@ export function SignRawTxScreen() {
   async function handleDecline() {
     await send(INTERNAL_METHODS.REJECT_SIGN_RAW_TX, [id]);
     setPendingSignRawTxRequest(null);
-    window.close();
+    closeAfterApproval(navigate);
   }
 
   async function handleSign() {
     await send(INTERNAL_METHODS.APPROVE_SIGN_RAW_TX, [id]);
     setPendingSignRawTxRequest(null);
-    window.close();
+    closeAfterApproval(navigate);
   }
 
   // Network fee from native rawTx. RawTxV1.spends is a ZMap<Name, SpendV1>
@@ -139,7 +140,7 @@ export function SignRawTxScreen() {
     <div className="h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
       <div
         className="w-full h-full flex flex-col"
-        style={{ backgroundColor: bg, maxWidth: '357px', maxHeight: '600px' }}
+        style={{ backgroundColor: bg }}
       >
         {/* Header */}
         <div className="flex items-center justify-center px-4 py-4 shrink-0">

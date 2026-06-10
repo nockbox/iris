@@ -5,6 +5,7 @@ import { truncateAddress } from '../../utils/format';
 import { send } from '../../utils/messaging';
 import { INTERNAL_METHODS } from '../../../shared/constants';
 import { useAutoRejectOnClose } from '../../hooks/useAutoRejectOnClose';
+import { closeAfterApproval } from '../../utils/displayContext';
 
 export function ConnectApprovalScreen() {
   const { navigate, pendingConnectRequest, setPendingConnectRequest, wallet } = useStore();
@@ -22,13 +23,13 @@ export function ConnectApprovalScreen() {
   async function handleReject() {
     await send(INTERNAL_METHODS.REJECT_CONNECTION, [id]);
     setPendingConnectRequest(null);
-    window.close();
+    closeAfterApproval(navigate);
   }
 
   async function handleConnect() {
     await send(INTERNAL_METHODS.APPROVE_CONNECTION, [id]);
     setPendingConnectRequest(null);
-    window.close();
+    closeAfterApproval(navigate);
   }
 
   const bg = 'var(--color-bg)';
@@ -42,7 +43,7 @@ export function ConnectApprovalScreen() {
     <div className="h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
       <div
         className="w-full h-full flex flex-col"
-        style={{ backgroundColor: bg, maxWidth: '357px', maxHeight: '600px' }}
+        style={{ backgroundColor: bg }}
       >
         {/* Header */}
         <div className="flex items-center justify-center px-4 py-4 shrink-0">

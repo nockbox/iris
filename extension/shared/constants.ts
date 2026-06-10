@@ -162,6 +162,15 @@ export const INTERNAL_METHODS = {
 
   /** Force resync an account's UTXOs */
   FORCE_RESYNC_ACCOUNT: 'wallet:forceResyncAccount',
+
+  /** Get wallet display mode (popup or side panel) */
+  GET_DISPLAY_MODE: 'wallet:getDisplayMode',
+
+  /** Set wallet display mode (popup or side panel) */
+  SET_DISPLAY_MODE: 'wallet:setDisplayMode',
+
+  /** Get the currently active pending approval (side panel) */
+  GET_PENDING_APPROVAL: 'wallet:getPendingApproval',
 } as const;
 
 /**
@@ -279,6 +288,9 @@ export const STORAGE_KEYS = {
 
   /** User RPC/network config (endpoint, network name, block explorer); falls back to defaults if unset */
   RPC_CONFIG: 'rpcConfig',
+
+  /** Wallet UI display mode: 'popup' | 'sidepanel' */
+  DISPLAY_MODE: 'displayMode',
 } as const;
 
 /**
@@ -441,3 +453,19 @@ export const APPROVAL_CONSTANTS = {
   /** Hash prefix for sign raw transaction approval requests */
   SIGN_RAW_TX_HASH_PREFIX: 'sign-raw-tx-approval-',
 } as const;
+
+/** Wallet display mode options */
+export type DisplayMode = 'popup' | 'sidepanel';
+
+export const DISPLAY_MODES = {
+  POPUP: 'popup',
+  SIDE_PANEL: 'sidepanel',
+} as const satisfies Record<string, DisplayMode>;
+
+/** Runtime message types (chrome.runtime.sendMessage) */
+export const RUNTIME_MESSAGE_TYPES = {
+  /** Side panel should navigate to a pending approval */
+  APPROVAL_PENDING: 'APPROVAL_PENDING',
+} as const;
+
+export type ApprovalType = 'connect' | 'transaction' | 'sign-message' | 'sign-raw-tx';

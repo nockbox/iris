@@ -117,7 +117,7 @@ export function V0MigrationFundsScreen() {
 
   return (
     <div
-      className="relative w-[357px] h-[600px] flex flex-col"
+      className="relative w-full h-full flex flex-col"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       <div className="flex items-center justify-between h-16 px-4 py-3 border-b border-[var(--color-divider)]">

@@ -31,7 +31,10 @@ import {
   UI_CONSTANTS,
   APPROVAL_CONSTANTS,
   CHAIN_ID,
+  DISPLAY_MODES,
+  RUNTIME_MESSAGE_TYPES,
 } from '../shared/constants';
+import type { DisplayMode, ApprovalType } from '../shared/constants';
 import { getEffectiveRpcConfig } from '../shared/rpc-config';
 import type { RpcConfig } from '../shared/rpc-config';
 import type {
@@ -49,6 +52,7 @@ let manuallyLocked = false; // Track if user manually locked (don't auto-unlock)
 let approvalWindowId: number | null = null; // Track the approval popup window for reuse
 let isCreatingWindow = false; // Prevent race condition when creating window
 let currentRequestId: string | null = null; // Currently displayed request
+let currentRequestType: ApprovalType | null = null; // Type of currently displayed request
 let requestQueue: Array<{
   id: string;
   type: 'connect' | 'transaction' | 'sign-message' | 'sign-raw-tx';
@@ -240,6 +244,7 @@ function cancelPendingRequest(requestId: string, code?: number, message?: string
   });
   if (currentRequestId == requestId) {
     currentRequestId = null;
+    currentRequestType = null;
   }
 }
 
@@ -421,6 +426,7 @@ interface PendingRequest {
   sendResponse: (response: any) => void;
   origin: string;
   needsUnlock?: boolean; // Flag indicating request is waiting for wallet unlock
+  tabId?: number;
 }
 
 const pendingRequests = new Map<string, PendingRequest>();
@@ -461,6 +467,65 @@ function isTransactionRequest(
   return 'to' in request;
 }
 
+async function getDisplayMode(): Promise<DisplayMode> {
+  if (!chrome.sidePanel) {
+    return DISPLAY_MODES.POPUP;
+  }
+
+  const stored = await chrome.storage.local.get([STORAGE_KEYS.DISPLAY_MODE]);
+  const mode = stored[STORAGE_KEYS.DISPLAY_MODE];
+  return mode === DISPLAY_MODES.SIDE_PANEL ? DISPLAY_MODES.SIDE_PANEL : DISPLAY_MODES.POPUP;
+}
+
+async function applyDisplayMode(mode: DisplayMode): Promise<void> {
+  const effectiveMode =
+    mode === DISPLAY_MODES.SIDE_PANEL && chrome.sidePanel ? DISPLAY_MODES.SIDE_PANEL : DISPLAY_MODES.POPUP;
+
+  if (effectiveMode === DISPLAY_MODES.SIDE_PANEL) {
+    await chrome.action.setPopup({ popup: '' });
+    await chrome.sidePanel!.setPanelBehavior({ openPanelOnActionClick: true });
+    await chrome.sidePanel!.setOptions({ path: 'sidepanel/index.html', enabled: true });
+  } else {
+    await chrome.action.setPopup({ popup: 'popup/index.html' });
+    if (chrome.sidePanel) {
+      await chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+    }
+  }
+}
+
+async function notifyApprovalPending(requestId: string, type: ApprovalType): Promise<void> {
+  try {
+    await chrome.runtime.sendMessage({
+      type: RUNTIME_MESSAGE_TYPES.APPROVAL_PENDING,
+      requestId,
+      approvalType: type,
+    });
+  } catch {
+    // Side panel may not be open yet; it will query on mount via GET_PENDING_APPROVAL
+  }
+}
+
+async function openSidePanelForApproval(tabId?: number): Promise<boolean> {
+  if (!chrome.sidePanel) {
+    return false;
+  }
+
+  try {
+    if (tabId !== undefined) {
+      await chrome.sidePanel.open({ tabId });
+    } else {
+      const currentWindow = await chrome.windows.getLastFocused({ populate: false });
+      if (currentWindow.id !== undefined) {
+        await chrome.sidePanel.open({ windowId: currentWindow.id });
+      }
+    }
+    return true;
+  } catch (error) {
+    console.warn('[Background] sidePanel.open failed, falling back to popup window:', error);
+    return false;
+  }
+}
+
 async function createPopupWithFallback(opts: any): Promise<any> {
   // First try: with left/top
   try {
@@ -480,7 +545,8 @@ async function createPopupWithFallback(opts: any): Promise<any> {
  */
 async function createApprovalPopup(
   requestId: string,
-  type: 'connect' | 'transaction' | 'sign-message' | 'sign-raw-tx'
+  type: ApprovalType,
+  tabId?: number
 ) {
   // If user is currently viewing a different request, queue this one
   if (currentRequestId !== null && currentRequestId !== requestId) {
@@ -494,6 +560,16 @@ async function createApprovalPopup(
 
   // Mark this request as currently displayed
   currentRequestId = requestId;
+  currentRequestType = type;
+
+  const displayMode = await getDisplayMode();
+  if (displayMode === DISPLAY_MODES.SIDE_PANEL) {
+    const opened = await openSidePanelForApproval(tabId);
+    if (opened) {
+      await notifyApprovalPending(requestId, type);
+      return;
+    }
+  }
 
   let hashPrefix: string;
   if (type === 'connect') {
@@ -530,7 +606,7 @@ async function createApprovalPopup(
   // Prevent race condition: if window is being created, wait and retry
   if (isCreatingWindow) {
     await new Promise(resolve => setTimeout(resolve, 100));
-    return createApprovalPopup(requestId, type);
+    return createApprovalPopup(requestId, type, tabId);
   }
 
   // Create new approval window
@@ -588,6 +664,7 @@ function processNextRequest() {
   if (currentRequestId !== null) {
     cancelPendingRequest(currentRequestId);
   }
+  currentRequestType = null;
 
   if (requestQueue.length > 0) {
     while (true) {
@@ -595,7 +672,7 @@ function processNextRequest() {
       if (!pendingRequests.has(next.id)) {
         continue;
       }
-      createApprovalPopup(next.id, next.type);
+      createApprovalPopup(next.id, next.type, pendingRequests.get(next.id)?.tabId);
       break;
     }
   }
@@ -687,6 +764,8 @@ const initPromise = (async () => {
   await vault.init(); // Load encrypted vault header to detect vault existence
   await restoreUnlockSession(); // Rehydrate unlock state if still within auto-lock window
 
+  await applyDisplayMode(await getDisplayMode());
+
   // Only schedule alarm if auto-lock is enabled, otherwise ensure any stale alarm is cleared
   if (autoLockMinutes > 0) {
     scheduleAlarm();
@@ -694,6 +773,10 @@ const initPromise = (async () => {
     chrome.alarms.clear(ALARM_NAMES.AUTO_LOCK);
   }
 })();
+
+chrome.runtime.onInstalled.addListener(async () => {
+  await applyDisplayMode(await getDisplayMode());
+});
 
 // Clean up approval window ID when window is closed
 chrome.windows.onRemoved.addListener(windowId => {
@@ -788,10 +871,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               void sendBridgedResponse(response);
             },
             origin: connectRequest.origin,
+            tabId: _sender.tab?.id,
           });
 
           // Create approval popup
-          await createApprovalPopup(connectRequestId, 'connect');
+          await createApprovalPopup(connectRequestId, 'connect', _sender.tab?.id);
 
           // Response will be sent when user approves/rejects
           return;
@@ -843,10 +927,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             void sendBridgedResponse(response);
           },
           origin: signRequest.origin,
+          tabId: _sender.tab?.id,
         });
 
         // Create approval popup
-        await createApprovalPopup(newSignRequestId, 'sign-message');
+        await createApprovalPopup(newSignRequestId, 'sign-message', _sender.tab?.id);
 
         // Response will be sent when user approves/rejects
         return;
@@ -896,10 +981,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             void sendBridgedResponse(response);
           },
           origin: signRawTxRequest.origin,
+          tabId: _sender.tab?.id,
         });
 
         // Create approval popup
-        await createApprovalPopup(signRawTxId, 'sign-raw-tx');
+        await createApprovalPopup(signRawTxId, 'sign-raw-tx', _sender.tab?.id);
 
         // Response will be sent when user approves/rejects
         return;
@@ -951,10 +1037,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             void sendBridgedResponse(response);
           },
           origin: txRequest.origin,
+          tabId: _sender.tab?.id,
         });
 
         // Create approval popup
-        await createApprovalPopup(txRequestId, 'transaction');
+        await createApprovalPopup(txRequestId, 'transaction', _sender.tab?.id);
 
         // Response will be sent when user approves/rejects
         return;
@@ -1000,6 +1087,36 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           chrome.alarms.clear(ALARM_NAMES.AUTO_LOCK);
         }
         sendResponse({ ok: true });
+        return;
+
+      case INTERNAL_METHODS.GET_DISPLAY_MODE:
+        sendResponse({ mode: await getDisplayMode() });
+        return;
+
+      case INTERNAL_METHODS.SET_DISPLAY_MODE: {
+        const requestedMode = payload.params?.[0];
+        if (requestedMode !== DISPLAY_MODES.POPUP && requestedMode !== DISPLAY_MODES.SIDE_PANEL) {
+          sendResponse({ error: ERROR_CODES.INVALID_PARAMS });
+          return;
+        }
+
+        const resolvedMode =
+          requestedMode === DISPLAY_MODES.SIDE_PANEL && chrome.sidePanel
+            ? DISPLAY_MODES.SIDE_PANEL
+            : DISPLAY_MODES.POPUP;
+
+        await chrome.storage.local.set({ [STORAGE_KEYS.DISPLAY_MODE]: resolvedMode });
+        await applyDisplayMode(resolvedMode);
+        sendResponse({ success: true, mode: resolvedMode });
+        return;
+      }
+
+      case INTERNAL_METHODS.GET_PENDING_APPROVAL:
+        if (currentRequestId && currentRequestType && pendingRequests.has(currentRequestId)) {
+          sendResponse({ requestId: currentRequestId, approvalType: currentRequestType });
+        } else {
+          sendResponse(null);
+        }
         return;
 
       case INTERNAL_METHODS.UNLOCK:

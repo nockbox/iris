@@ -105,7 +105,7 @@ export function SendSubmittedScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col"
+      className="w-full h-full flex flex-col"
       style={{ backgroundColor: 'var(--color-bg)' }}
     >
       {/* Header */}
@@ -132,7 +132,7 @@ export function SendSubmittedScreen() {
       </header>
 
       {/* Content */}
-      <div className="flex flex-col h-[536px]" style={{ backgroundColor: 'var(--color-bg)' }}>
+      <div className="flex flex-col flex-1 min-h-0" style={{ backgroundColor: 'var(--color-bg)' }}>
         <div className="flex flex-col gap-8 px-4 py-2 flex-1">
           {/* Success Section */}
           <div className="flex flex-col items-center gap-3 w-full">

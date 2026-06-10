@@ -124,7 +124,7 @@ export function LockedScreen() {
   }
 
   return (
-    <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)] overflow-hidden">
+    <div className="relative w-full h-full bg-[var(--color-bg)] overflow-hidden">
       {/* Decorative vector elements - final positioning */}
       {/* Top-left curved wave */}
       <img

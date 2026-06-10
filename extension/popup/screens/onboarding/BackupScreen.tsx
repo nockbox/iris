@@ -30,7 +30,7 @@ export function BackupScreen() {
   if (!onboardingMnemonic) {
     // Should never happen, but handle gracefully
     return (
-      <div className="w-[357px] h-[600px] bg-[var(--color-bg)] flex items-center justify-center p-4">
+      <div className="w-full h-full bg-[var(--color-bg)] flex items-center justify-center p-4">
         <div className="w-full flex flex-col gap-4">
           <Alert type="error">No mnemonic found. Please restart onboarding.</Alert>
           <button
@@ -61,7 +61,7 @@ export function BackupScreen() {
   }
 
   return (
-    <div className="w-[357px] h-[600px] flex flex-col bg-[var(--color-bg)]">
+    <div className="w-full h-full flex flex-col bg-[var(--color-bg)]">
       {/* Header with back button */}
       <div className="flex items-center justify-between h-16 px-4 py-3 border-b border-[var(--color-divider)] shrink-0">
         <button

@@ -10,7 +10,7 @@ interface ScreenContainerProps {
 }
 
 export function ScreenContainer({ children, className = '' }: ScreenContainerProps) {
-  const baseClasses = 'w-[357px] h-[600px] p-4';
+  const baseClasses = 'w-full h-full p-4';
   const combinedClasses = className ? `${baseClasses} ${className}` : baseClasses;
 
   return <div className={combinedClasses}>{children}</div>;
