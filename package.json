@@ -1,11 +1,13 @@
 {
   "name": "iris",
-  "version": "0.1.2",
+  "version": "1.2.4",
   "description": "Iris - Chrome Wallet Extension for Nockchain",
   "type": "module",
   "scripts": {
     "dev": "vite build --watch",
     "build": "tsc && vite build",
+    "release:zip": "bash scripts/zip-release.sh",
+    "release:zip:only": "bash scripts/zip-release.sh --no-build",
     "preview": "vite preview",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
@@ -30,7 +32,7 @@
   },
   "dependencies": {
     "@fontsource/lora": "^5.2.8",
-    "@nockbox/iris-sdk": "github:nockbox/iris-sdk#feat/wasm-module-version-bump",
+    "@nockbox/iris-sdk": "0.2.0",
     "@scure/base": "^2.0.0",
     "@scure/bip39": "^2.0.1",
     "react": "^19.2.0",

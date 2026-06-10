@@ -8,13 +8,22 @@ import NockText from '../assets/NockText.svg';
 import JustNText from '../assets/JustNText.svg';
 import UpDownVec from '../assets/upDownvec.svg';
 import { MIN_BRIDGE_AMOUNT_NOCK, isEvmAddress } from '@nockbox/iris-sdk';
+import {
+  BRIDGE_PROTOCOL_FEE_RATE,
+  bridgeProtocolFeeNock,
+  bridgeReceiveAmountAfterProtocolFeeNock,
+} from '../../shared/bridge-protocol-fee';
+import { formatNock } from '../../shared/currency';
+import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../shared/constants';
 import { formatWithCommas, parseAmount } from '../utils/format';
+import { send } from '../utils/messaging';
 
 export function SwapScreen() {
   const { navigate, wallet, setPendingBridgeSwap, priceUsd, isBalanceFetching } = useStore();
   const [amount, setAmount] = useState('');
   const [destinationAddress, setDestinationAddress] = useState('');
   const [isPreparing, setIsPreparing] = useState(false);
+  const [isEstimatingMax, setIsEstimatingMax] = useState(false);
   const [error, setError] = useState('');
   const [amountFontSizePx, setAmountFontSizePx] = useState(36);
   const amountContainerRef = useRef<HTMLDivElement>(null);
@@ -22,6 +31,17 @@ export function SwapScreen() {
 
   const spendableNock = wallet.spendableBalance;
   const amountNum = parseAmount(amount);
+
+  const bridgeProtocolFeeNockValue =
+    amountNum > 0 && !Number.isNaN(amountNum) ? bridgeProtocolFeeNock(amountNum) : 0;
+  const receiveAmountNock =
+    amountNum > 0 && !Number.isNaN(amountNum)
+      ? bridgeReceiveAmountAfterProtocolFeeNock(amountNum)
+      : 0;
+  const bridgeProtocolFeeAmountDisplay = formatNock(bridgeProtocolFeeNockValue, 2, {
+    mode: 'truncate',
+  });
+  const bridgeProtocolFeePercentLabel = `${(BRIDGE_PROTOCOL_FEE_RATE * 100).toFixed(1)}%`;
 
   // Single consolidated message: never show two at once. Uses same wallet.spendableBalance as Home.
   // Don't show spendable-below-min while balance is loading (same pattern as HomeScreen skeleton).
@@ -67,13 +87,46 @@ export function SwapScreen() {
     }
   }
 
+  async function handleMaxAmount() {
+    setError('');
+    if (!isEvmAddress(destinationAddress)) {
+      setError('Enter a valid Base (EVM) address.');
+      return;
+    }
+
+    setIsEstimatingMax(true);
+    try {
+      const result = await send<{
+        maxAmount?: number;
+        fee?: number;
+        totalAvailable?: number;
+        utxoCount?: number;
+        error?: string;
+      }>(INTERNAL_METHODS.ESTIMATE_MAX_BRIDGE, [destinationAddress]);
+
+      if (result?.error) {
+        setError(result.error);
+        return;
+      }
+      if (result?.maxAmount !== undefined) {
+        const maxAmountNock = Math.floor((result.maxAmount / NOCK_TO_NICKS) * 100000) / 100000;
+        setAmount(formatNock(maxAmountNock, 5));
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Max bridge estimation failed');
+    } finally {
+      setIsEstimatingMax(false);
+    }
+  }
+
   const hasDecimalPart = /\.\d/.test(amount.replace(/,/g, ''));
-  const displayAmount = amount
-    ? amountNum.toLocaleString('en-US', {
-        minimumFractionDigits: hasDecimalPart ? 2 : 0,
-        maximumFractionDigits: hasDecimalPart ? 2 : 0,
-      })
-    : '0.00';
+  const receiveDisplayAmount =
+    amountNum > 0 && !Number.isNaN(amountNum)
+      ? receiveAmountNock.toLocaleString('en-US', {
+          minimumFractionDigits: hasDecimalPart ? 2 : 0,
+          maximumFractionDigits: hasDecimalPart ? 2 : 0,
+        })
+      : '0.00';
 
   const usdValue =
     amountNum > 0 && priceUsd > 0
@@ -82,6 +135,19 @@ export function SwapScreen() {
           maximumFractionDigits: 2,
         })
       : null;
+
+  const receiveUsdValue =
+    receiveAmountNock > 0 && priceUsd > 0
+      ? (receiveAmountNock * priceUsd).toLocaleString('en-US', {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+        })
+      : null;
+
+  const showReceiveEstimate = amountNum > 0 && !Number.isNaN(amountNum);
+  const receiveAmountDisplayText = receiveDisplayAmount;
+  const receiveUsdDisplayText =
+    receiveUsdValue !== null ? `$${receiveUsdValue} USD` : showReceiveEstimate ? '— USD' : '0 USD';
 
   const amountLineHeightPx = amountFontSizePx + 4;
 
@@ -154,7 +220,7 @@ export function SwapScreen() {
         <div className="relative flex flex-col gap-2">
           {/* You pay (Nockchain) - white/bg card with border */}
           <div
-            className="rounded-lg p-3 flex items-center justify-between gap-3"
+            className="rounded-lg px-3 pt-3 pb-5 flex items-center justify-between gap-3"
             style={{
               backgroundColor: 'var(--color-bg)',
               border: '1px solid var(--color-divider)',
@@ -196,6 +262,21 @@ export function SwapScreen() {
               >
                 {usdValue !== null ? `$${usdValue} USD` : '0 USD'}
                 <img src={UpDownVec} alt="" className="h-3.5 w-3.5 shrink-0" />
+              </div>
+              <div
+                className="text-[12px] leading-4 font-medium flex items-center gap-2 whitespace-nowrap"
+                style={{ color: 'var(--color-text-muted)', letterSpacing: '0.24px' }}
+              >
+                <span>Spendable: {formatNock(spendableNock, 2)} NOCK</span>
+                <button
+                  type="button"
+                  onClick={handleMaxAmount}
+                  disabled={isEstimatingMax}
+                  className="shrink-0 rounded-full px-[7px] py-[3px] transition disabled:opacity-50"
+                  style={{ backgroundColor: 'var(--color-surface-800)' }}
+                >
+                  {isEstimatingMax ? '...' : 'Max'}
+                </button>
               </div>
             </div>
             <div className="flex items-start gap-2 shrink-0 self-start">
@@ -269,13 +350,13 @@ export function SwapScreen() {
                   color: amount ? 'var(--color-text-primary)' : 'var(--color-text-muted)',
                 }}
               >
-                {displayAmount}
+                {receiveAmountDisplayText}
               </div>
               <div
                 className="text-[12px] leading-4 font-medium flex items-center gap-1.5"
                 style={{ color: 'var(--color-text-muted)', letterSpacing: '0.24px' }}
               >
-                {usdValue !== null ? `$${usdValue} USD` : '0 USD'}
+                {receiveUsdDisplayText}
                 <img src={UpDownVec} alt="" className="h-3.5 w-3.5 shrink-0" />
               </div>
             </div>
@@ -360,6 +441,21 @@ export function SwapScreen() {
             />
           </div>
 
+          <div className="flex flex-col gap-3 pt-2">
+            <div className="h-px" style={{ backgroundColor: 'var(--color-divider)' }} />
+            <div className="flex items-center justify-between text-[14px] font-medium">
+              <span style={{ letterSpacing: '0.14px', lineHeight: '18px' }}>
+                Bridge fee {bridgeProtocolFeePercentLabel}
+              </span>
+              <span
+                className="text-right"
+                style={{ color: 'var(--color-text-muted)', letterSpacing: '0.14px' }}
+              >
+                {bridgeProtocolFeeAmountDisplay} NOCK
+              </span>
+            </div>
+          </div>
+
           {(error || consolidatedAmountError) && (
             <div
               className="rounded-lg px-3 py-2 text-[13px] font-medium"
@@ -397,7 +493,7 @@ export function SwapScreen() {
             letterSpacing: '0.14px',
           }}
           onClick={handleReview}
-          disabled={false}
+          disabled={isPreparing || isEstimatingMax}
         >
           {isPreparing ? 'Preparing...' : 'Review'}
         </button>

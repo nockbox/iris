@@ -80,11 +80,18 @@ function getApiUrl(): string {
 }
 
 function normalizeTransaction(transaction: NockblocksTransaction): NockblocksTransaction {
+  const spends = transaction.spends || transaction.transaction?.spends || [];
+  const outputs = transaction.outputs || transaction.transaction?.outputs || [];
   return {
     ...transaction,
     txId: transaction.txId || transaction.id,
-    spends: transaction.spends || transaction.transaction?.spends || [],
-    outputs: transaction.outputs || transaction.transaction?.outputs || [],
+    spends,
+    outputs,
+    // Some RPC surfaces spends/outputs only on `transaction`; keep nested body in sync so
+    // callers that read `tx.transaction` (e.g. history sync) still see seeds + noteData.
+    transaction: transaction.transaction
+      ? { ...transaction.transaction, spends, outputs }
+      : { spends, outputs },
   };
 }
 

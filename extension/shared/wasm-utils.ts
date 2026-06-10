@@ -42,6 +42,7 @@ export async function initWasmModules(): Promise<void> {
  * Track if WASM modules have been initialized (per-context)
  */
 let wasmInitialized = false;
+let wasmInitializationPromise: Promise<void> | null = null;
 
 /**
  * Initialize WASM modules only once per context
@@ -51,8 +52,17 @@ export async function ensureWasmInitialized(): Promise<void> {
   if (wasmInitialized) {
     return;
   }
-  await initWasmModules();
-  wasmInitialized = true;
+  if (!wasmInitializationPromise) {
+    wasmInitializationPromise = initWasmModules()
+      .then(() => {
+        wasmInitialized = true;
+      })
+      .catch(error => {
+        wasmInitializationPromise = null;
+        throw error;
+      });
+  }
+  await wasmInitializationPromise;
 }
 
 /**
@@ -60,4 +70,5 @@ export async function ensureWasmInitialized(): Promise<void> {
  */
 export function resetWasmInitialization(): void {
   wasmInitialized = false;
+  wasmInitializationPromise = null;
 }

@@ -1,6 +1,5 @@
 import { useState, useLayoutEffect, useEffect, useRef, useMemo } from 'react';
 import { useStore } from '../store';
-import { useTheme } from '../contexts/ThemeContext';
 import { truncateAddress } from '../utils/format';
 import { send } from '../utils/messaging';
 import { ERROR_CODES, INTERNAL_METHODS, NOCK_TO_NICKS, STORAGE_KEYS } from '../../shared/constants';
@@ -33,7 +32,8 @@ import { resolveCounterpartyAccount } from '../../shared/account-lock-roots';
 import { isMigrationWalletTx } from '../../shared/v0-migration';
 import { isBridgeWalletTx } from '../../shared/bridge-config';
 import { useLockRootAccountMap } from '../hooks/useLockRootAccountMap';
-import SwapIconAsset from '../assets/swap_icon.svg';
+import { SwapIcon } from '../components/icons/SwapIcon';
+import SwapIconAssetDark from '../assets/SwapIconAsset-dark.svg';
 import BaseIconAsset from '../assets/base_icon.svg';
 import { SwapSubmittedToast } from '../components/SwapSubmittedToast';
 
@@ -60,7 +60,6 @@ export function HomeScreen() {
     refreshWalletAccounts,
     setSettingsAccountAddress,
   } = useStore();
-  const { theme } = useTheme();
   const lockRootToAccount = useLockRootAccountMap(wallet.accounts);
 
   const [balanceHidden, setBalanceHidden] = useState(false);
@@ -265,25 +264,28 @@ export function HomeScreen() {
     }>(INTERNAL_METHODS.SWITCH_ACCOUNT, [accountAddress]);
 
     if (result?.ok && result.account) {
-      // Get cached balance for the new account (or 0 if not cached)
-      const cachedBalance = wallet.accountBalances[result.account.address] ?? 0;
+      const latest = useStore.getState().wallet;
+      const addr = result.account.address;
+      const cachedBalance = latest.accountBalances[addr] ?? 0;
+      const cachedSpendable = latest.accountSpendableBalances?.[addr] ?? cachedBalance;
 
       const updatedWallet = {
-        ...wallet,
+        ...latest,
         currentAccount: result.account,
-        address: result.account.address,
-        activeSeedSourceId: result.activeSeedSourceId ?? wallet.activeSeedSourceId,
+        address: addr,
+        activeSeedSourceId: result.activeSeedSourceId ?? latest.activeSeedSourceId,
         balance: cachedBalance,
         availableBalance: cachedBalance,
+        spendableBalance: cachedSpendable,
       };
       syncWallet(updatedWallet);
+      setWalletDropdownOpen(false);
 
-      // Fetch balance and transactions for the switched account
-      fetchBalance();
-      fetchWalletTransactions();
+      // SYNC_UTXOS (incl. Nockblocks) must finish before tx list is reliable; fetchBalance awaits post-sync tx reload.
+      await fetchBalance();
+    } else {
+      setWalletDropdownOpen(false);
     }
-
-    setWalletDropdownOpen(false);
   }
 
   // Account creation handler
@@ -307,11 +309,8 @@ export function HomeScreen() {
   async function handleRefreshBalance() {
     setIsRefreshing(true);
     try {
-      // Fetch balance (which syncs UTXOs from chain)
+      // Fetch balance (syncs UTXOs + Nockblocks); fetchBalance already reloads transactions.
       await fetchBalance();
-
-      // Fetch latest wallet transactions
-      await fetchWalletTransactions();
     } finally {
       setIsRefreshing(false);
       // Connection status is automatically re-checked by useEffect when isBalanceFetching changes
@@ -874,9 +873,14 @@ export function HomeScreen() {
               }}
               onClick={() => navigate('swap')}
             >
-              <div className="relative h-5 w-5">
-                <img src={SwapIconAsset} alt="Swap" className="h-5 w-5" />
-              </div>
+              <span className="theme-icon-pair h-5 w-5">
+                <SwapIcon className="theme-icon-light h-full w-full" />
+                <img
+                  src={SwapIconAssetDark}
+                  alt=""
+                  className="theme-icon-dark h-full w-full object-contain"
+                />
+              </span>
               Swap
             </button>
             <button
