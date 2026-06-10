@@ -505,25 +505,39 @@ async function notifyApprovalPending(requestId: string, type: ApprovalType): Pro
   }
 }
 
-async function openSidePanelForApproval(tabId?: number): Promise<boolean> {
+async function openSidePanelForApproval(tabId?: number): Promise<void> {
   if (!chrome.sidePanel) {
-    return false;
+    return;
   }
 
   try {
     if (tabId !== undefined) {
+      await chrome.sidePanel.setOptions({
+        tabId,
+        path: 'sidepanel/index.html',
+        enabled: true,
+      });
       await chrome.sidePanel.open({ tabId });
-    } else {
-      const currentWindow = await chrome.windows.getLastFocused({ populate: false });
-      if (currentWindow.id !== undefined) {
-        await chrome.sidePanel.open({ windowId: currentWindow.id });
-      }
+      return;
     }
-    return true;
+
+    const currentWindow = await chrome.windows.getLastFocused({ populate: false });
+    if (currentWindow.id !== undefined) {
+      await chrome.sidePanel.open({ windowId: currentWindow.id });
+    }
   } catch (error) {
-    console.warn('[Background] sidePanel.open failed, falling back to popup window:', error);
-    return false;
+    // Panel may already be open, or open() may lack a user gesture — routing still works via message.
+    console.warn('[Background] sidePanel.open failed (panel may already be open):', error);
   }
+}
+
+async function routeApprovalToSidePanel(
+  requestId: string,
+  type: ApprovalType,
+  tabId?: number
+): Promise<void> {
+  await openSidePanelForApproval(tabId);
+  await notifyApprovalPending(requestId, type);
 }
 
 async function createPopupWithFallback(opts: any): Promise<any> {
@@ -564,11 +578,8 @@ async function createApprovalPopup(
 
   const displayMode = await getDisplayMode();
   if (displayMode === DISPLAY_MODES.SIDE_PANEL) {
-    const opened = await openSidePanelForApproval(tabId);
-    if (opened) {
-      await notifyApprovalPending(requestId, type);
-      return;
-    }
+    await routeApprovalToSidePanel(requestId, type, tabId);
+    return;
   }
 
   let hashPrefix: string;

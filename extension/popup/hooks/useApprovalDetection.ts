@@ -6,7 +6,7 @@
  * approval screen when the wallet is unlocked.
  */
 
-import { useEffect, useCallback } from 'react';
+import { useEffect, useCallback, useRef } from 'react';
 import { send } from '../utils/messaging';
 import {
   INTERNAL_METHODS,
@@ -55,6 +55,11 @@ export function useApprovalDetection({
   setPendingSignRawTxRequest,
   navigate,
 }: UseApprovalDetectionProps) {
+  const walletReady = walletAddress !== null;
+  const pendingSidePanelApproval = useRef<{ requestId: string; type: ApprovalType } | null>(null);
+  const walletReadyRef = useRef(walletReady);
+  walletReadyRef.current = walletReady;
+
   const handleApproval = useCallback(
     async (requestId: string, type: ApprovalType) => {
       const targetScreen = getApprovalScreen(type);
@@ -112,9 +117,65 @@ export function useApprovalDetection({
     ]
   );
 
+  const handleApprovalRef = useRef(handleApproval);
+  handleApprovalRef.current = handleApproval;
+
+  // Side panel: listen for approval messages immediately (may arrive before wallet init)
   useEffect(() => {
-    // Wait for wallet state to be initialized
-    if (walletAddress === null) return;
+    if (!isSidePanel()) return;
+
+    const handleRuntimeMessage = (message: {
+      type?: string;
+      requestId?: string;
+      approvalType?: ApprovalType;
+    }) => {
+      if (
+        message?.type === RUNTIME_MESSAGE_TYPES.APPROVAL_PENDING &&
+        message.requestId &&
+        message.approvalType
+      ) {
+        if (walletReadyRef.current) {
+          void handleApprovalRef
+            .current(message.requestId, message.approvalType)
+            .catch(console.error);
+        } else {
+          pendingSidePanelApproval.current = {
+            requestId: message.requestId,
+            type: message.approvalType,
+          };
+        }
+      }
+    };
+
+    chrome.runtime.onMessage.addListener(handleRuntimeMessage);
+    return () => chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
+  }, []);
+
+  // Side panel: process queued or pending approvals once wallet is ready
+  useEffect(() => {
+    if (!isSidePanel() || !walletReady) return;
+
+    const queued = pendingSidePanelApproval.current;
+    if (queued) {
+      pendingSidePanelApproval.current = null;
+      void handleApproval(queued.requestId, queued.type).catch(console.error);
+      return;
+    }
+
+    send<{ requestId: string; approvalType: ApprovalType } | null>(
+      INTERNAL_METHODS.GET_PENDING_APPROVAL
+    )
+      .then(pending => {
+        if (pending?.requestId && pending.approvalType) {
+          void handleApproval(pending.requestId, pending.approvalType).catch(console.error);
+        }
+      })
+      .catch(console.error);
+  }, [walletReady, handleApproval]);
+
+  // Popup windows: route via URL hash
+  useEffect(() => {
+    if (!walletReady || isSidePanel()) return;
 
     const hash = window.location.hash.slice(1); // Remove '#'
 
@@ -131,37 +192,5 @@ export function useApprovalDetection({
       const requestId = hash.replace(APPROVAL_CONSTANTS.SIGN_RAW_TX_HASH_PREFIX, '');
       void handleApproval(requestId, 'sign-raw-tx').catch(console.error);
     }
-  }, [walletAddress, handleApproval]);
-
-  useEffect(() => {
-    if (!isSidePanel() || walletAddress === null) return;
-
-    const handleRuntimeMessage = (message: {
-      type?: string;
-      requestId?: string;
-      approvalType?: ApprovalType;
-    }) => {
-      if (
-        message?.type === RUNTIME_MESSAGE_TYPES.APPROVAL_PENDING &&
-        message.requestId &&
-        message.approvalType
-      ) {
-        void handleApproval(message.requestId, message.approvalType).catch(console.error);
-      }
-    };
-
-    chrome.runtime.onMessage.addListener(handleRuntimeMessage);
-
-    send<{ requestId: string; approvalType: ApprovalType } | null>(
-      INTERNAL_METHODS.GET_PENDING_APPROVAL
-    )
-      .then(pending => {
-        if (pending?.requestId && pending.approvalType) {
-          void handleApproval(pending.requestId, pending.approvalType).catch(console.error);
-        }
-      })
-      .catch(console.error);
-
-    return () => chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
-  }, [walletAddress, handleApproval]);
+  }, [walletReady, handleApproval]);
 }
