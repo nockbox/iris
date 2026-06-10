@@ -155,6 +155,18 @@ export function useApprovalDetection({
   useEffect(() => {
     if (!isSidePanel() || !walletReady) return;
 
+    const fetchPendingApproval = () => {
+      send<{ requestId: string; approvalType: ApprovalType } | null>(
+        INTERNAL_METHODS.GET_PENDING_APPROVAL
+      )
+        .then(pending => {
+          if (pending?.requestId && pending.approvalType) {
+            void handleApproval(pending.requestId, pending.approvalType).catch(console.error);
+          }
+        })
+        .catch(console.error);
+    };
+
     const queued = pendingSidePanelApproval.current;
     if (queued) {
       pendingSidePanelApproval.current = null;
@@ -162,15 +174,29 @@ export function useApprovalDetection({
       return;
     }
 
-    send<{ requestId: string; approvalType: ApprovalType } | null>(
-      INTERNAL_METHODS.GET_PENDING_APPROVAL
-    )
-      .then(pending => {
-        if (pending?.requestId && pending.approvalType) {
-          void handleApproval(pending.requestId, pending.approvalType).catch(console.error);
-        }
-      })
-      .catch(console.error);
+    fetchPendingApproval();
+  }, [walletReady, handleApproval]);
+
+  // Side panel: re-check when panel becomes visible (e.g. reopened or refocused)
+  useEffect(() => {
+    if (!isSidePanel() || !walletReady) return;
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== 'visible') return;
+
+      send<{ requestId: string; approvalType: ApprovalType } | null>(
+        INTERNAL_METHODS.GET_PENDING_APPROVAL
+      )
+        .then(pending => {
+          if (pending?.requestId && pending.approvalType) {
+            void handleApproval(pending.requestId, pending.approvalType).catch(console.error);
+          }
+        })
+        .catch(console.error);
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
   }, [walletReady, handleApproval]);
 
   // Popup windows: route via URL hash
