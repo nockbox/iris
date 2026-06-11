@@ -45,7 +45,7 @@ import type {
   SignRawTxRequest,
   WalletTransaction,
 } from '../shared/types';
-import { SIDE_PANEL_DEFAULT_PATH } from '../shared/side-panel';
+import { SIDE_PANEL_DEFAULT_PATH, APPROVAL_PROVIDER_METHODS } from '../shared/side-panel';
 import {
   buildPendingApprovalSessionSnapshot,
   persistPendingApprovalSession,
@@ -64,6 +64,12 @@ let requestQueue: Array<{
   id: string;
   type: 'connect' | 'transaction' | 'sign-message' | 'sign-raw-tx';
 }> = []; // Queued requests
+
+/**
+ * In-memory display mode cache so the user-gesture side panel hook can run
+ * synchronously inside the onMessage listener (any await loses the gesture).
+ */
+let cachedDisplayMode: DisplayMode = DISPLAY_MODES.POPUP;
 
 /**
  * In-memory cache of approved origins
@@ -544,6 +550,8 @@ async function applyDisplayMode(mode: DisplayMode): Promise<void> {
       ? DISPLAY_MODES.SIDE_PANEL
       : DISPLAY_MODES.POPUP;
 
+  cachedDisplayMode = effectiveMode;
+
   if (effectiveMode === DISPLAY_MODES.SIDE_PANEL) {
     await chrome.action.setPopup({ popup: '' });
     await chrome.sidePanel!.setPanelBehavior({ openPanelOnActionClick: true });
@@ -949,9 +957,40 @@ function isFromPopup(sender: chrome.runtime.MessageSender): boolean {
 }
 
 /**
+ * Synchronous user-gesture hook: open the side panel for approval-bearing
+ * provider requests while the gesture from the dApp click is still active.
+ * Must run before any await in the listener — awaiting consumes the gesture.
+ */
+function maybeOpenSidePanelOnGesture(msg: any, sender: chrome.runtime.MessageSender): void {
+  if (cachedDisplayMode !== DISPLAY_MODES.SIDE_PANEL || !chrome.sidePanel) {
+    return;
+  }
+
+  const tabId = sender.tab?.id;
+  if (tabId === undefined || isFromPopup(sender)) {
+    return;
+  }
+
+  const method = msg?.payload?.method;
+  if (
+    typeof method !== 'string' ||
+    (!APPROVAL_PROVIDER_METHODS.has(method) && method !== 'nock_signRawTx')
+  ) {
+    return;
+  }
+
+  chrome.sidePanel.open({ tabId }).catch(() => {
+    // Gesture may have been consumed or panel already open; background
+    // routing via APPROVAL_PENDING still delivers the request.
+  });
+}
+
+/**
  * Handle messages from content script and popup
  */
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  maybeOpenSidePanelOnGesture(msg, _sender);
+
   (async () => {
     await initPromise;
     await ensureSessionRestored();
