@@ -310,6 +310,7 @@ function isProviderMethod(method: unknown): method is string {
     method === PROVIDER_METHODS.SEND_TRANSACTION ||
     method === PROVIDER_METHODS.GET_WALLET_INFO ||
     method === PROVIDER_METHODS.SIGN_TX ||
+    method === PROVIDER_METHODS.ESTIMATE_TRANSACTION_FEE ||
     // Legacy v0 API method
     method === 'nock_signRawTx'
   );
@@ -1042,6 +1043,54 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           await sendBridgedResponse(toInternalProviderError(err));
         }
         return;
+
+      case PROVIDER_METHODS.ESTIMATE_TRANSACTION_FEE: {
+        // Read-only like GET_WALLET_INFO: approved origin + unlocked vault, no approval popup
+        const estimateFeeOrigin = _sender.url || _sender.origin || '';
+        if (!isOriginApproved(estimateFeeOrigin)) {
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          return;
+        }
+
+        if (vault.isLocked()) {
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
+        const estimateFeeParams =
+          payload.params && typeof payload.params === 'object' ? payload.params : {};
+        const { to: estimateFeeTo, amount: estimateFeeAmount } = estimateFeeParams;
+        if (!isNockAddress(estimateFeeTo)) {
+          await sendBridgedResponse({ error: ERROR_CODES.BAD_ADDRESS });
+          return;
+        }
+        let estimateFeeAmountNicks: Nicks;
+        try {
+          estimateFeeAmountNicks = parseNicksParam(estimateFeeAmount, 'amount');
+        } catch (err) {
+          await sendBridgedResponse(toInvalidParamsError(err));
+          return;
+        }
+
+        try {
+          const estimateFeeResult = await vault.estimateTransactionFee(
+            estimateFeeTo,
+            estimateFeeAmountNicks
+          );
+          if ('error' in estimateFeeResult) {
+            await sendBridgedResponse({
+              error: { code: -32603, message: estimateFeeResult.error },
+            });
+            return;
+          }
+          // Vault returns a number; the public API uses canonical Nicks (string)
+          await sendBridgedResponse({ fee: String(estimateFeeResult.fee) as Nicks });
+        } catch (err) {
+          console.error('[Background] Public fee estimation failed:', err);
+          await sendBridgedResponse(toInternalProviderError(err));
+        }
+        return;
+      }
 
       // Internal methods (called from popup)
       case INTERNAL_METHODS.SET_AUTO_LOCK:
