@@ -540,7 +540,9 @@ async function getDisplayMode(): Promise<DisplayMode> {
 
 async function applyDisplayMode(mode: DisplayMode): Promise<void> {
   const effectiveMode =
-    mode === DISPLAY_MODES.SIDE_PANEL && chrome.sidePanel ? DISPLAY_MODES.SIDE_PANEL : DISPLAY_MODES.POPUP;
+    mode === DISPLAY_MODES.SIDE_PANEL && chrome.sidePanel
+      ? DISPLAY_MODES.SIDE_PANEL
+      : DISPLAY_MODES.POPUP;
 
   if (effectiveMode === DISPLAY_MODES.SIDE_PANEL) {
     await chrome.action.setPopup({ popup: '' });
@@ -618,11 +620,7 @@ async function createPopupWithFallback(opts: any): Promise<any> {
  * Uses MetaMask pattern: single popup window for all approval requests
  * Queues requests if user is currently viewing another request
  */
-async function createApprovalPopup(
-  requestId: string,
-  type: ApprovalType,
-  tabId?: number
-) {
+async function createApprovalPopup(requestId: string, type: ApprovalType, tabId?: number) {
   // If user is currently viewing a different request, queue this one
   if (currentRequestId !== null && currentRequestId !== requestId) {
     // Check if already in queue to prevent duplicates

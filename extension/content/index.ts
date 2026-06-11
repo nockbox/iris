@@ -6,10 +6,7 @@
  */
 
 import { MESSAGE_TARGETS } from '../shared/constants';
-import {
-  APPROVAL_PROVIDER_METHODS,
-  openSidePanelFromUserGesture,
-} from '../shared/side-panel';
+import { APPROVAL_PROVIDER_METHODS, openSidePanelFromUserGesture } from '../shared/side-panel';
 
 function getProviderMethod(payload: unknown): string | undefined {
   if (!payload || typeof payload !== 'object' || !('method' in payload)) {

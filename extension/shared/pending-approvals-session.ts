@@ -1,11 +1,6 @@
 import { SESSION_STORAGE_KEYS } from './constants';
 import type { ApprovalType } from './constants';
-import type {
-  ConnectRequest,
-  SignRequest,
-  TransactionRequest,
-  SignRawTxRequest,
-} from './types';
+import type { ConnectRequest, SignRequest, TransactionRequest, SignRawTxRequest } from './types';
 
 type PersistableRequest = ConnectRequest | SignRequest | TransactionRequest;
 
@@ -60,8 +55,7 @@ export function buildPendingApprovalSessionSnapshot(
 
   const queue = requestQueue.filter(item => pending[item.id]);
 
-  const activeCurrentId =
-    currentRequestId && pending[currentRequestId] ? currentRequestId : null;
+  const activeCurrentId = currentRequestId && pending[currentRequestId] ? currentRequestId : null;
   const activeCurrentType = activeCurrentId ? currentRequestType : null;
 
   if (!activeCurrentId && queue.length === 0 && Object.keys(pending).length === 0) {

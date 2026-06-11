@@ -115,7 +115,10 @@ export function DisplayModeScreen() {
     >
       <div className="flex flex-col gap-1 flex-1 pr-3">
         <span className="text-sm font-medium leading-[18px] tracking-[0.14px]">{label}</span>
-        <span className="text-xs leading-4 tracking-[0.12px]" style={{ color: 'var(--color-text-muted)' }}>
+        <span
+          className="text-xs leading-4 tracking-[0.12px]"
+          style={{ color: 'var(--color-text-muted)' }}
+        >
           {description}
         </span>
       </div>
@@ -159,8 +162,12 @@ export function DisplayModeScreen() {
       </header>
 
       {showPopupHint && (
-        <div className="mx-3 mb-2 px-3 py-2 rounded-lg text-xs leading-4" style={{ backgroundColor: 'var(--color-surface-800)', color: 'var(--color-text-muted)' }}>
-          Pop-up mode is active. Click the Iris icon in the toolbar to open the wallet in a pop-up window.
+        <div
+          className="mx-3 mb-2 px-3 py-2 rounded-lg text-xs leading-4"
+          style={{ backgroundColor: 'var(--color-surface-800)', color: 'var(--color-text-muted)' }}
+        >
+          Pop-up mode is active. Click the Iris icon in the toolbar to open the wallet in a pop-up
+          window.
         </div>
       )}
 

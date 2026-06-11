@@ -39,10 +39,7 @@ export function SignMessageScreen() {
 
   return (
     <div className="h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
-      <div
-        className="w-full h-full flex flex-col"
-        style={{ backgroundColor: bg }}
-      >
+      <div className="w-full h-full flex flex-col" style={{ backgroundColor: bg }}>
         {/* Header */}
         <div className="flex items-center justify-center px-4 py-4 shrink-0">
           <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>

@@ -53,7 +53,10 @@ export function ReceiveScreen() {
       </header>
 
       {/* Content */}
-      <div className="flex flex-col gap-2 flex-1 min-h-0" style={{ backgroundColor: 'var(--color-bg)' }}>
+      <div
+        className="flex flex-col gap-2 flex-1 min-h-0"
+        style={{ backgroundColor: 'var(--color-bg)' }}
+      >
         <div className="flex flex-col gap-8 px-4 py-2">
           {/* Intro */}
           <div className="flex flex-col items-center gap-3 w-full">

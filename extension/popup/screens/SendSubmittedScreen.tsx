@@ -104,10 +104,7 @@ export function SendSubmittedScreen() {
   }
 
   return (
-    <div
-      className="w-full h-full flex flex-col"
-      style={{ backgroundColor: 'var(--color-bg)' }}
-    >
+    <div className="w-full h-full flex flex-col" style={{ backgroundColor: 'var(--color-bg)' }}>
       {/* Header */}
       <header
         className="flex items-center justify-between px-4 py-3 min-h-[64px]"
