@@ -1617,10 +1617,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             const v2Result = await vault.sendTransactionV2(
               txRequest.to,
               txRequest.amount,
-              // Estimated fee: pass undefined so WASM auto-calculates the exact
-              // fee at build time (avoids "Insufficient fee" if the tx shape
-              // changed since estimation). Explicit dApp fees pass through verbatim.
-              txRequest.feeEstimated ? undefined : txRequest.fee,
+              // Always a concrete fee: the dApp's explicit fee, or the wallet's
+              // fresh estimate (matches the popup send flow). This sizes note
+              // selection to the displayed fee rather than the 2-NOCK placeholder
+              // the undefined-fee branch would use.
+              txRequest.fee,
               false,
               undefined,
               'provider_send'
@@ -1633,12 +1634,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             approveTxPending.sendResponse({
               txid: v2Result.txId,
               amount: txRequest.amount,
-              // Report the actual fee used when the dApp omitted fee
-              // (walletTx.fee = constructedTx.feeUsed, set after broadcast;
-              // fall back to the estimate if unset)
-              fee: txRequest.feeEstimated
-                ? (String(v2Result.walletTx.fee ?? txRequest.fee) as Nicks)
-                : txRequest.fee,
+              // Fee charged equals txRequest.fee (applied verbatim as fee override)
+              fee: txRequest.fee,
             });
             cancelPendingRequest(approveTxId);
             processNextRequest();

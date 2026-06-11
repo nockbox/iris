@@ -125,7 +125,6 @@ export function TransactionApprovalScreen() {
                   <div className="text-right">
                     <div>{formatNock(feeNum / NOCK_TO_NICKS)} NOCK</div>
                     <div className="text-[10px]" style={{ color: textMuted }}>
-                      {isFeeEstimated ? '~' : ''}
                       {formatNick(feeNum)} nicks
                     </div>
                   </div>
