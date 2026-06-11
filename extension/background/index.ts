@@ -987,13 +987,39 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
         let amountNicks: Nicks;
-        let feeNicks: Nicks;
+        let feeNicks: Nicks | undefined;
         try {
           amountNicks = parseNicksParam(amount, 'amount');
-          feeNicks = parseNicksParam(fee, 'fee', { allowZero: true });
+          feeNicks =
+            fee === undefined || fee === null
+              ? undefined // omitted: estimate below, auto-calc exact fee at build time
+              : parseNicksParam(fee, 'fee', { allowZero: true });
         } catch (err) {
           await sendBridgedResponse(toInvalidParamsError(err));
           return;
+        }
+
+        // Fee omitted: estimate it now so the approval popup can display it.
+        // Estimation failure rejects the request up front (better than a popup
+        // with no fee or a guaranteed-to-fail broadcast).
+        let displayFeeNicks: Nicks;
+        if (feeNicks === undefined) {
+          try {
+            const sendTxEstimate = await vault.estimateTransactionFee(to, amountNicks);
+            if ('error' in sendTxEstimate) {
+              await sendBridgedResponse({
+                error: { code: -32603, message: `Fee estimation failed: ${sendTxEstimate.error}` },
+              });
+              return;
+            }
+            displayFeeNicks = String(sendTxEstimate.fee) as Nicks;
+          } catch (err) {
+            console.error('[Background] Fee estimation for sendTransaction failed:', err);
+            await sendBridgedResponse(toInternalProviderError(err));
+            return;
+          }
+        } else {
+          displayFeeNicks = feeNicks;
         }
 
         // Create transaction approval request
@@ -1003,7 +1029,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           origin: sendTxOrigin,
           to,
           amount: amountNicks,
-          fee: feeNicks,
+          fee: displayFeeNicks,
+          feeEstimated: feeNicks === undefined,
           timestamp: Date.now(),
         };
 
@@ -1590,7 +1617,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             const v2Result = await vault.sendTransactionV2(
               txRequest.to,
               txRequest.amount,
-              txRequest.fee,
+              // Estimated fee: pass undefined so WASM auto-calculates the exact
+              // fee at build time (avoids "Insufficient fee" if the tx shape
+              // changed since estimation). Explicit dApp fees pass through verbatim.
+              txRequest.feeEstimated ? undefined : txRequest.fee,
               false,
               undefined,
               'provider_send'
@@ -1603,7 +1633,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             approveTxPending.sendResponse({
               txid: v2Result.txId,
               amount: txRequest.amount,
-              fee: txRequest.fee,
+              // Report the actual fee used when the dApp omitted fee
+              // (walletTx.fee = constructedTx.feeUsed, set after broadcast;
+              // fall back to the estimate if unset)
+              fee: txRequest.feeEstimated
+                ? (String(v2Result.walletTx.fee ?? txRequest.fee) as Nicks)
+                : txRequest.fee,
             });
             cancelPendingRequest(approveTxId);
             processNextRequest();

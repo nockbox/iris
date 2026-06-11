@@ -18,6 +18,7 @@ export function TransactionApprovalScreen() {
 
   const { id, origin, to, amount } = pendingTransactionRequest;
   const fee = pendingTransactionRequest.fee;
+  const isFeeEstimated = Boolean(pendingTransactionRequest.feeEstimated);
   const amountNum = Number(amount);
   const feeNum = Number(fee);
   const totalNum = amountNum + feeNum;
@@ -120,10 +121,11 @@ export function TransactionApprovalScreen() {
               {/* Fee & Total */}
               <div className="rounded-lg p-3 space-y-2" style={{ backgroundColor: surface }}>
                 <div className="flex justify-between text-sm">
-                  <span>Network fee</span>
+                  <span>Network fee{isFeeEstimated ? ' (estimated)' : ''}</span>
                   <div className="text-right">
                     <div>{formatNock(feeNum / NOCK_TO_NICKS)} NOCK</div>
                     <div className="text-[10px]" style={{ color: textMuted }}>
+                      {isFeeEstimated ? '~' : ''}
                       {formatNick(feeNum)} nicks
                     </div>
                   </div>
