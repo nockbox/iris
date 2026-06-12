@@ -405,48 +405,6 @@ export const UI_CONSTANTS = {
 } as const;
 
 /**
- * Account Icon Colors - Available colors for account customization
- */
-export const ACCOUNT_COLORS = [
-  '#2C9AEF', // blue
-  '#EF2C2F', // red
-  '#FFC413', // yellow (primary)
-  '#96B839', // green
-  '#3C2CEF', // purple
-  '#EF2CB1', // pink/magenta
-  '#2C6AEF', // darker blue
-] as const;
-
-/**
- * Preset Wallet Styles - Predetermined icon/color combinations for first 21 wallets
- * Ensures visual variety without repeating until all presets are used
- * After preset limit, random combinations are used
- */
-export const PRESET_WALLET_STYLES = [
-  { iconStyleId: 1, iconColor: '#FFC413' }, // Wallet 1: yellow, style 1
-  { iconStyleId: 5, iconColor: '#2C9AEF' }, // Wallet 2: blue, style 5
-  { iconStyleId: 9, iconColor: '#EF2C2F' }, // Wallet 3: red, style 9
-  { iconStyleId: 3, iconColor: '#96B839' }, // Wallet 4: green, style 3
-  { iconStyleId: 12, iconColor: '#3C2CEF' }, // Wallet 5: purple, style 12
-  { iconStyleId: 7, iconColor: '#EF2CB1' }, // Wallet 6: pink, style 7
-  { iconStyleId: 15, iconColor: '#2C6AEF' }, // Wallet 7: dark blue, style 15
-  { iconStyleId: 2, iconColor: '#EF2C2F' }, // Wallet 8: red, style 2
-  { iconStyleId: 6, iconColor: '#FFC413' }, // Wallet 9: yellow, style 6
-  { iconStyleId: 10, iconColor: '#96B839' }, // Wallet 10: green, style 10
-  { iconStyleId: 4, iconColor: '#2C9AEF' }, // Wallet 11: blue, style 4
-  { iconStyleId: 13, iconColor: '#EF2CB1' }, // Wallet 12: pink, style 13
-  { iconStyleId: 8, iconColor: '#3C2CEF' }, // Wallet 13: purple, style 8
-  { iconStyleId: 14, iconColor: '#2C6AEF' }, // Wallet 14: dark blue, style 14
-  { iconStyleId: 11, iconColor: '#EF2C2F' }, // Wallet 15: red, style 11
-  { iconStyleId: 1, iconColor: '#96B839' }, // Wallet 16: green, style 1
-  { iconStyleId: 5, iconColor: '#FFC413' }, // Wallet 17: yellow, style 5
-  { iconStyleId: 9, iconColor: '#2C9AEF' }, // Wallet 18: blue, style 9
-  { iconStyleId: 3, iconColor: '#3C2CEF' }, // Wallet 19: purple, style 3
-  { iconStyleId: 12, iconColor: '#EF2CB1' }, // Wallet 20: pink, style 12
-  { iconStyleId: 7, iconColor: '#2C6AEF' }, // Wallet 21: dark blue, style 7
-] as const;
-
-/**
  * Approval Request Constants - URL hash prefixes for approval flows
  */
 export const APPROVAL_CONSTANTS = {
