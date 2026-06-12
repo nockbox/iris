@@ -17,8 +17,8 @@ export interface SubAccount {
   address: string;
   /** BIP-44 derivation index (0 = master/underived, 1+ = slip10 children) */
   index: number;
-  /** Icon style ID (1-15, defaults to index % 3 + 1 for variety) */
-  iconStyleId?: number;
+  /** Icon style id (slug, e.g. 'sun'); legacy vaults may hold numeric ids 1-15 */
+  iconStyleId?: number | string;
   /** Icon color (hex string, defaults to #FFC413) */
   iconColor?: string;
   /** Whether this account is hidden from the UI */

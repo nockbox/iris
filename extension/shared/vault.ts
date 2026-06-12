@@ -13,11 +13,16 @@ import {
 import {
   ERROR_CODES,
   STORAGE_KEYS,
-  ACCOUNT_COLORS,
-  PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
   MAX_SUBWALLET_DISCOVERY_SCAN,
 } from './constants';
+import {
+  DEFAULT_WALLET_STYLE,
+  TOTAL_STYLE_COMBINATIONS,
+  getPresetWalletStyle,
+  normalizeIconStyleId,
+  type WalletStyle,
+} from './walletStyles';
 import { SubAccount, SeedAccount } from './types';
 import {
   buildMultiNotePayment,
@@ -341,30 +346,29 @@ export class Vault {
     return (account?.index ?? -1) === 0;
   }
 
-  /** Returns a style (icon + color) not already used by any account across all seeds. */
-  private pickUnusedStyleGlobally(): { iconStyleId: number; iconColor: string } {
+  /**
+   * Returns a style (icon + color) not already used by any account across all seeds.
+   *
+   * Walks the deterministic preset sequence (see `getPresetWalletStyle`) and
+   * returns the first combination still free, so new wallets get a varied but
+   * predictable look. Only once every combination is taken does it fall back
+   * to the default style.
+   */
+  private pickUnusedStyleGlobally(): WalletStyle {
     const allAccounts = this.seedAccounts.flatMap(seed => seed.accounts);
     const usedKeys = new Set(
       allAccounts.map(
-        a => `${a.iconStyleId ?? 1}-${a.iconColor ?? PRESET_WALLET_STYLES[0].iconColor}`
+        a =>
+          `${normalizeIconStyleId(a.iconStyleId)}-${a.iconColor ?? DEFAULT_WALLET_STYLE.iconColor}`
       )
     );
-    for (const preset of PRESET_WALLET_STYLES) {
-      const key = `${preset.iconStyleId}-${preset.iconColor}`;
-      if (!usedKeys.has(key)) {
-        return { iconStyleId: preset.iconStyleId, iconColor: preset.iconColor };
+    for (let i = 0; i < TOTAL_STYLE_COMBINATIONS; i++) {
+      const preset = getPresetWalletStyle(i);
+      if (!usedKeys.has(`${preset.iconStyleId}-${preset.iconColor}`)) {
+        return preset;
       }
     }
-    // All presets used: pick random until we find an unused combo
-    const styleIds = Array.from({ length: 15 }, (_, i) => i + 1);
-    const colors = [...ACCOUNT_COLORS];
-    for (let attempt = 0; attempt < 200; attempt++) {
-      const iconStyleId = styleIds[Math.floor(Math.random() * styleIds.length)];
-      const iconColor = colors[Math.floor(Math.random() * colors.length)];
-      const key = `${iconStyleId}-${iconColor}`;
-      if (!usedKeys.has(key)) return { iconStyleId, iconColor };
-    }
-    return { iconStyleId: 1, iconColor: PRESET_WALLET_STYLES[0].iconColor };
+    return { ...DEFAULT_WALLET_STYLE };
   }
 
   private createSeedAccountFromLegacy(mnemonic: string, legacyAccounts: SubAccount[]): SeedAccount {
@@ -537,8 +541,8 @@ export class Vault {
     }
 
     // Create first account (Wallet 1 at index 0)
-    // Use first preset style for consistent initial experience
-    const firstPreset = PRESET_WALLET_STYLES[0];
+    // Use the default style for consistent initial experience
+    const firstPreset = DEFAULT_WALLET_STYLE;
 
     const masterAddress = await deriveAddressFromMaster(words);
 
@@ -2797,7 +2801,7 @@ export class Vault {
    */
   async updateAccountStyling(
     address: string,
-    iconStyleId: number,
+    iconStyleId: number | string,
     iconColor: string
   ): Promise<{ ok: boolean } | { error: string }> {
     if (this.state.locked) {
@@ -2809,7 +2813,7 @@ export class Vault {
       return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
-    this.state.accounts[index].iconStyleId = iconStyleId;
+    this.state.accounts[index].iconStyleId = normalizeIconStyleId(iconStyleId);
     this.state.accounts[index].iconColor = iconColor;
 
     // Save accounts to encrypted vault
