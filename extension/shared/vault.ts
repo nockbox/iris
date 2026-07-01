@@ -21,6 +21,7 @@ import {
 import { SubAccount, SeedAccount } from './types';
 import {
   buildMultiNotePayment,
+  buildUnsignedMultiNotePayment,
   discoverSpendConditionForNote,
   type Note,
 } from './transaction-builder';
@@ -92,6 +93,50 @@ async function latestConfiguredTxEngineHeight(): Promise<number> {
 function nockchainTxToProtobuf(tx: wasm.NockchainTx): any {
   const rawTx = wasm.nockchainTxToRawTx(tx);
   return wasm.rawTxToProtobuf(rawTx);
+}
+
+function hexToBytes(hex: string): Uint8Array {
+  if (!/^[0-9a-fA-F]*$/.test(hex) || hex.length % 2 !== 0) {
+    throw new Error('Invalid hex string');
+  }
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) {
+    bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function parseExternalSourceRef(sourceRef?: string): {
+  publicKeyHex?: string;
+  slot?: number;
+  path?: number[];
+} {
+  if (!sourceRef) return {};
+  try {
+    const parsed = JSON.parse(sourceRef) as {
+      publicKeyHex?: unknown;
+      slot?: unknown;
+      path?: unknown;
+    };
+    if (!parsed || typeof parsed !== 'object') return {};
+    return {
+      publicKeyHex: typeof parsed.publicKeyHex === 'string' ? parsed.publicKeyHex : undefined,
+      slot: typeof parsed.slot === 'number' ? parsed.slot : undefined,
+      path: Array.isArray(parsed.path) ? parsed.path.filter(Number.isInteger) : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function isNocksterExternalSource(external: NonNullable<SeedAccount['external']>): boolean {
+  if (external.provider === 'nockster') return true;
+  const sourceRef = parseExternalSourceRef(external.sourceRef);
+  return (
+    typeof sourceRef.slot === 'number' &&
+    Array.isArray(sourceRef.path) &&
+    typeof sourceRef.publicKeyHex === 'string'
+  );
 }
 
 /**
@@ -469,6 +514,40 @@ export class Vault {
       return null;
     }
     return seedAccount.mnemonic || null;
+  }
+
+  private getExternalPublicKeyForCurrentAccount(
+    provider?: NonNullable<SeedAccount['external']>['provider']
+  ) {
+    const currentAccount = this.getCurrentAccount();
+    const seedAccount = this.getSeedAccountForWallet(currentAccount);
+    if (!seedAccount || seedAccount.type !== 'external' || !seedAccount.external) {
+      return null;
+    }
+    if (provider === 'nockster' && !isNocksterExternalSource(seedAccount.external)) {
+      return null;
+    }
+    if (provider && provider !== 'nockster' && seedAccount.external.provider !== provider) {
+      return null;
+    }
+    const sourceRef = parseExternalSourceRef(seedAccount.external.sourceRef);
+    const publicKeyHex = seedAccount.external.publicKeyHex ?? sourceRef.publicKeyHex;
+    if (!publicKeyHex) {
+      return null;
+    }
+    return hexToBytes(publicKeyHex);
+  }
+
+  private findWalletTransactionById(
+    walletTxId: string
+  ): { accountAddress: string; walletTx: WalletTransaction } | null {
+    for (const [accountAddress, transactions] of Object.entries(this.walletTxStore)) {
+      const walletTx = transactions.find(tx => tx.id === walletTxId);
+      if (walletTx) {
+        return { accountAddress, walletTx };
+      }
+    }
+    return null;
   }
 
   /**
@@ -1135,9 +1214,12 @@ export class Vault {
   async createExternalSeedSource(params: {
     address: string;
     name?: string;
-    provider?: 'ledger' | 'unknown';
+    provider?: 'ledger' | 'nockster' | 'unknown';
     sourceRef?: string;
     accountRef?: string;
+    publicKeyHex?: string;
+    slot?: number;
+    path?: number[];
   }): Promise<
     { seedSource: Omit<SeedAccount, 'mnemonic'>; account: SubAccount } | { error: string }
   > {
@@ -1178,6 +1260,10 @@ export class Vault {
       external: {
         provider,
         sourceRef: params.sourceRef,
+        accountRef: params.accountRef,
+        publicKeyHex: params.publicKeyHex,
+        slot: params.slot,
+        path: params.path,
       },
     };
 
@@ -3126,7 +3212,8 @@ export class Vault {
    */
   async estimateTransactionFee(
     to: string,
-    amount: Nicks
+    amount: Nicks,
+    externalIncludeLockData = true
   ): Promise<{ fee: number } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
@@ -3138,7 +3225,44 @@ export class Vault {
     }
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
-      return { error: 'Current account is external and cannot sign locally' };
+      const publicKey = this.getExternalPublicKeyForCurrentAccount('nockster');
+      if (!publicKey) {
+        return { error: 'Current account is external and cannot sign locally' };
+      }
+
+      try {
+        await initWasmModules();
+
+        const endpoint = await getEffectiveRpcEndpoint();
+        const rpcClient = createBrowserClient(endpoint);
+        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
+
+        if (balanceResult.utxoCount === 0) {
+          return { error: 'No UTXOs available. Your wallet may have zero balance.' };
+        }
+
+        const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+        const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
+        const txBuilderNotes = await Promise.all(
+          sortedNotes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
+        );
+
+        const unsignedTx = await buildUnsignedMultiNotePayment(
+          txBuilderNotes,
+          to,
+          amount,
+          publicKey,
+          undefined,
+          undefined,
+          balanceResult.blockHeight,
+          externalIncludeLockData
+        );
+
+        return { fee: unsignedTx.feeUsed };
+      } catch (error) {
+        console.error('[Vault] External fee estimation failed:', error);
+        return { error: feeEstimateUserFacingError(error, 'fee') };
+      }
     }
 
     try {
@@ -3224,7 +3348,8 @@ export class Vault {
    * @returns Max sendable amount and fee in nicks, or { error }
    */
   async estimateMaxSendAmount(
-    to: string
+    to: string,
+    externalIncludeLockData = true
   ): Promise<
     | { maxAmount: number; fee: number; totalAvailable: number; utxoCount: number }
     | { error: string }
@@ -3239,7 +3364,59 @@ export class Vault {
     }
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
-      return { error: 'Current account is external and cannot sign locally' };
+      const publicKey = this.getExternalPublicKeyForCurrentAccount('nockster');
+      if (!publicKey) {
+        return { error: 'Current account is external and cannot sign locally' };
+      }
+
+      try {
+        await initWasmModules();
+
+        const notes = this.getAvailableNotes(currentAccount.address);
+        const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+
+        if (notes.length === 0) {
+          return { error: 'No spendable UTXOs available.' };
+        }
+
+        const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
+        const txBuilderNotes = notes.map(convertStoredNoteForTxBuilder);
+        const sortedByValue = [...notes].sort((a, b) => a.assets - b.assets);
+        const smallestNote = sortedByValue[0].assets;
+        const estimationAmount = totalAvailable - Math.floor(smallestNote / 2);
+
+        if (estimationAmount <= 0) {
+          return { error: 'Balance too low to send. Need more than fee amount.' };
+        }
+
+        const unsignedTx = await buildUnsignedMultiNotePayment(
+          txBuilderNotes,
+          to,
+          String(estimationAmount) as Nicks,
+          publicKey,
+          undefined,
+          to,
+          blockHeight,
+          externalIncludeLockData
+        );
+
+        const fee = unsignedTx.feeUsed;
+        const maxAmount = totalAvailable - fee;
+
+        if (maxAmount <= 0) {
+          return { error: 'Balance too low. Fee would exceed available funds.' };
+        }
+
+        return {
+          maxAmount,
+          fee,
+          totalAvailable,
+          utxoCount: notes.length,
+        };
+      } catch (error) {
+        console.error('[Vault] External max send estimation failed:', error);
+        return { error: feeEstimateUserFacingError(error, 'max') };
+      }
     }
 
     try {
@@ -3438,6 +3615,258 @@ export class Vault {
   }
 
   /**
+   * Build an unsigned transaction draft for an external signer using UTXO store bookkeeping.
+   *
+   * This reserves the selected notes and creates a wallet transaction record. Call
+   * completePreparedSendTransactionV2 after the external signer returns a signed tx,
+   * or cancelPreparedSendTransactionV2 to release notes if signing is abandoned.
+   */
+  async prepareSendTransactionV2(
+    to: string,
+    amount: Nicks,
+    fee?: Nicks,
+    sendMax?: boolean,
+    priceUsdAtTime?: number,
+    origin: WalletTransaction['origin'] = 'popup_send',
+    externalIncludeLockData = true
+  ): Promise<
+    { walletTx: WalletTransaction; rawTx: wasm.RawTx; fee: number; broadcasted: false } | { error: string }
+  > {
+    if (this.state.locked) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+
+    const publicKey = this.getExternalPublicKeyForCurrentAccount('nockster');
+    if (!publicKey) {
+      return { error: 'Current account is not a paired Nockster account' };
+    }
+
+    return withAccountLock(currentAccount.address, async () => {
+      const walletTxId = crypto.randomUUID();
+      let selectedNoteIds: string[] = [];
+
+      try {
+        await initWasmModules();
+
+        const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
+        const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+
+        if (availableStoredNotes.length === 0) {
+          return {
+            error:
+              'No spendable UTXOs are available after balance sync. If this account has recent incoming history, the RPC balance query did not return unspent notes for this address yet.',
+          };
+        }
+
+        const estimatedFeeNum = fee !== undefined ? Number(fee) : 2 * NOCK_TO_NICKS;
+
+        let selectedStoredNotes: typeof availableStoredNotes;
+
+        if (sendMax) {
+          selectedStoredNotes = availableStoredNotes;
+        } else {
+          const targetAmount = Number(amount) + estimatedFeeNum;
+          const selected = selectNotesForAmount(availableStoredNotes, targetAmount);
+
+          if (!selected) {
+            return { error: 'Insufficient available funds' };
+          }
+
+          selectedStoredNotes = selected;
+        }
+
+        selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
+        const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
+
+        await this.markNotesInFlight(currentAccount.address, selectedNoteIds, walletTxId);
+
+        const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
+        const txBuilderNotes = sortedStoredNotes.map(convertStoredNoteForTxBuilder);
+        const refundAddress = sendMax ? to : undefined;
+
+        const unsignedTx = await buildUnsignedMultiNotePayment(
+          txBuilderNotes,
+          to,
+          amount,
+          publicKey,
+          fee,
+          refundAddress,
+          blockHeight,
+          externalIncludeLockData
+        );
+
+        const expectedChange = sendMax
+          ? 0
+          : selectedTotal - Number(amount) - unsignedTx.feeUsed;
+
+        const walletTx: WalletTransaction = {
+          id: walletTxId,
+          accountAddress: currentAccount.address,
+          direction: 'outgoing',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          priceUsdAtTime,
+          status: 'created',
+          origin,
+          inputNoteIds: selectedNoteIds,
+          recipient: to,
+          amount: Number(amount),
+          fee: unsignedTx.feeUsed,
+          expectedChange: expectedChange > 0 ? expectedChange : 0,
+        };
+        await this.addWalletTransaction(walletTx);
+
+        return {
+          walletTx,
+          rawTx: unsignedTx.rawTx,
+          fee: unsignedTx.feeUsed,
+          broadcasted: false,
+        };
+      } catch (error) {
+        console.error('[Vault V2] Transaction draft preparation failed:', error);
+
+        if (selectedNoteIds.length > 0) {
+          try {
+            await this.releaseInFlightNotes(currentAccount.address, selectedNoteIds);
+            await this.updateWalletTransaction(currentAccount.address, walletTxId, {
+              status: 'failed',
+            });
+          } catch (releaseError) {
+            console.error('[Vault V2] Error releasing notes:', releaseError);
+          }
+        }
+
+        const rawMsg = error instanceof Error ? error.message : String(error);
+        return {
+          error: `Transaction failed: ${rewriteInsufficientFeeErrorToDecimalNock(rawMsg)}`,
+        };
+      }
+    });
+  }
+
+  /**
+   * Broadcast an externally signed transaction prepared by prepareSendTransactionV2.
+   */
+  async completePreparedSendTransactionV2(
+    walletTxId: string,
+    signedTx: wasm.NockchainTx
+  ): Promise<
+    { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
+  > {
+    if (this.state.locked) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const located = this.findWalletTransactionById(walletTxId);
+    if (!located) {
+      return { error: ERROR_CODES.NOT_FOUND };
+    }
+
+    const { accountAddress, walletTx } = located;
+    if (
+      walletTx.status === 'broadcasted_unconfirmed' ||
+      walletTx.status === 'mempool_seen' ||
+      walletTx.status === 'confirmed'
+    ) {
+      return { error: 'Transaction has already been broadcast' };
+    }
+
+    return withAccountLock(accountAddress, async () => {
+      try {
+        await initWasmModules();
+        const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+        assertNativeRawTx(signedRawTx);
+        if (!guard.isRawTxV1(signedRawTx)) {
+          throw new Error('Only v1 raw transactions are supported');
+        }
+
+        const txId = signedRawTx.id;
+        const feeUsed = Number(wasm.rawTxTotalFees(signedRawTx));
+
+        await this.updateWalletTransaction(accountAddress, walletTxId, {
+          status: 'broadcast_pending',
+        });
+
+        const endpoint = await getEffectiveRpcEndpoint();
+        const rpcClient = createBrowserClient(endpoint);
+        const protobufTx = wasm.rawTxToProtobuf(signedRawTx);
+        await rpcClient.sendTransaction(protobufTx);
+
+        const updatedWalletTx: WalletTransaction = {
+          ...walletTx,
+          fee: feeUsed,
+          txHash: txId,
+          trackingTxId: txId,
+          status: 'broadcasted_unconfirmed',
+          updatedAt: Date.now(),
+          lastMempoolCheckAt: Date.now(),
+          lastConfirmationCheckAt: 0,
+        };
+        await this.updateWalletTransaction(accountAddress, walletTxId, updatedWalletTx);
+
+        return {
+          txId,
+          walletTx: updatedWalletTx,
+          broadcasted: true,
+        };
+      } catch (error) {
+        console.error('[Vault V2] Prepared transaction broadcast failed:', error);
+
+        if (walletTx.inputNoteIds?.length) {
+          try {
+            await this.releaseInFlightNotes(accountAddress, walletTx.inputNoteIds);
+            await this.updateWalletTransaction(accountAddress, walletTxId, {
+              status: 'failed',
+            });
+          } catch (releaseError) {
+            console.error('[Vault V2] Error releasing notes:', releaseError);
+          }
+        }
+
+        const rawMsg = error instanceof Error ? error.message : String(error);
+        return {
+          error: `Transaction failed: ${rewriteInsufficientFeeErrorToDecimalNock(rawMsg)}`,
+        };
+      }
+    });
+  }
+
+  async cancelPreparedSendTransactionV2(
+    walletTxId: string
+  ): Promise<{ ok: true } | { error: string }> {
+    const located = this.findWalletTransactionById(walletTxId);
+    if (!located) {
+      return { error: ERROR_CODES.NOT_FOUND };
+    }
+
+    const { accountAddress, walletTx } = located;
+    if (
+      walletTx.status === 'broadcasted_unconfirmed' ||
+      walletTx.status === 'mempool_seen' ||
+      walletTx.status === 'confirmed'
+    ) {
+      return { ok: true };
+    }
+
+    try {
+      if (walletTx.inputNoteIds?.length) {
+        await this.releaseInFlightNotes(accountAddress, walletTx.inputNoteIds);
+      }
+      await this.updateWalletTransaction(accountAddress, walletTxId, {
+        status: 'failed',
+      });
+      return { ok: true };
+    } catch (error) {
+      return { error: error instanceof Error ? error.message : 'Failed to cancel transaction' };
+    }
+  }
+
+  /**
    * Build, sign, and broadcast a transaction using UTXO store
    * This is the new preferred method for sending transactions
    *
@@ -3507,7 +3936,10 @@ export class Vault {
           const blockHeight = this.getAccountBlockHeight(currentAccount.address);
 
           if (availableStoredNotes.length === 0) {
-            return { error: 'No available UTXOs.' };
+            return {
+              error:
+                'No spendable UTXOs are available after balance sync. If this account has recent incoming history, the RPC balance query did not return unspent notes for this address yet.',
+            };
           }
 
           const totalAvailable = availableStoredNotes.reduce((sum, n) => sum + n.assets, 0);

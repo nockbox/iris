@@ -67,6 +67,7 @@ export type Screen =
   | 'wallet-add-start'
   | 'wallet-add-create'
   | 'wallet-add-import'
+  | 'wallet-add-nockster'
   | 'wallet-add-backup'
   | 'wallet-add-verify'
 
@@ -151,9 +152,12 @@ interface AppStore {
   createExternalSeedSource: (params: {
     address: string;
     name?: string;
-    provider?: 'ledger' | 'unknown';
+    provider?: 'ledger' | 'nockster' | 'unknown';
     sourceRef?: string;
     accountRef?: string;
+    publicKeyHex?: string;
+    slot?: number;
+    path?: number[];
   }) => Promise<any>;
   createChildAccount: (seedAccountId?: string, name?: string) => Promise<any>;
 
@@ -237,6 +241,7 @@ interface AppStore {
 
   // Balance fetching state
   isBalanceFetching: boolean;
+  balanceError: string | null;
 
   // Initialization state - true once cached balances have been loaded
   isInitialized: boolean;
@@ -311,6 +316,7 @@ export const useStore = create<AppStore>((set, get) => ({
   setSettingsAccountAddress: (address: string | null) => set({ settingsAccountAddress: address }),
   swapSubmittedToastVisible: false,
   isBalanceFetching: false,
+  balanceError: null,
   isInitialized: false,
   priceUsd: 0,
   priceChange24h: 0,
@@ -519,10 +525,12 @@ export const useStore = create<AppStore>((set, get) => ({
     try {
       // Check if we're opening for an approval request
       const hash = window.location.hash.slice(1); // Remove '#'
+      const isNocksterPairingRequest = hash === 'nockster-pair';
       const isApprovalRequest =
         hash.startsWith(APPROVAL_CONSTANTS.CONNECT_HASH_PREFIX) ||
         hash.startsWith(APPROVAL_CONSTANTS.TRANSACTION_HASH_PREFIX) ||
-        hash.startsWith(APPROVAL_CONSTANTS.SIGN_MESSAGE_HASH_PREFIX);
+        hash.startsWith(APPROVAL_CONSTANTS.SIGN_MESSAGE_HASH_PREFIX) ||
+        hash.startsWith(APPROVAL_CONSTANTS.SIGN_RAW_TX_HASH_PREFIX);
 
       // Get current vault state from service worker
       const state = await send<{
@@ -577,6 +585,8 @@ export const useStore = create<AppStore>((set, get) => ({
         // For approval requests, don't override the screen
         // Let the approval useEffect handle navigation
         initialScreen = walletState.locked ? 'locked' : 'home';
+      } else if (isNocksterPairingRequest) {
+        initialScreen = walletState.locked ? 'locked' : 'wallet-add-nockster';
       } else if (!state.hasVault) {
         const incompleteOnboardingNoVault = await hasIncompleteOnboarding();
         if (incompleteOnboardingNoVault) {
@@ -655,15 +665,31 @@ export const useStore = create<AppStore>((set, get) => ({
       // accounts keep whatever cached balances they had; they'll be refreshed
       // when the user switches to them. This avoids scaling balance-refresh
       // latency with wallet count.
+      let balanceError: string | null = null;
+
       try {
         const syncResult = await send<{
-          ok: boolean;
+          ok?: boolean;
           results?: Record<string, { success: boolean; error?: string }>;
+          error?: string;
         }>(INTERNAL_METHODS.SYNC_UTXOS, [currentAccount.address]);
-        if (!syncResult.ok) {
+
+        const accountSync = syncResult?.results?.[currentAccount.address];
+        if (!syncResult) {
+          balanceError = 'Balance sync returned no response';
+        } else if (syncResult.error) {
+          balanceError = syncResult.error;
+        } else if (accountSync && !accountSync.success) {
+          balanceError = accountSync.error || 'Balance sync failed';
+        } else if (!syncResult.ok) {
+          balanceError = 'Balance sync failed';
+        }
+
+        if (balanceError) {
           console.warn('[Store] UTXO sync failed:', syncResult);
         }
       } catch (syncErr) {
+        balanceError = syncErr instanceof Error ? syncErr.message : String(syncErr);
         console.warn('[Store] UTXO sync error:', syncErr);
       }
       // Vault may have updated walletTxStore during sync (incl. Nockblocks history). Reload list
@@ -689,13 +715,31 @@ export const useStore = create<AppStore>((set, get) => ({
           total: number;
           utxoCount: number;
           availableUtxoCount: number;
+          error?: string;
         }>(INTERNAL_METHODS.GET_BALANCE_FROM_STORE, [currentAccount.address]);
+        if (!storeBalance) {
+          throw new Error('Balance store returned no response');
+        }
+        if (storeBalance.error) {
+          throw new Error(storeBalance.error);
+        }
 
         // Convert from nicks to NOCK for display
         const availableNock = storeBalance.available / NOCK_TO_NICKS;
         const spendableNock = storeBalance.spendableNow / NOCK_TO_NICKS;
         const totalNock = storeBalance.total / NOCK_TO_NICKS;
         const pendingOutNock = storeBalance.pendingOut / NOCK_TO_NICKS;
+        const hasConfirmedFundedHistory = get().walletTransactions.some(
+          tx =>
+            tx.accountAddress === currentAccount.address &&
+            tx.status === 'confirmed' &&
+            (tx.amount || 0) > 0 &&
+            (tx.direction === 'incoming' || tx.direction === 'self' || tx.migrationFromV0)
+        );
+        if (!balanceError && availableNock === 0 && hasConfirmedFundedHistory) {
+          balanceError =
+            'History shows confirmed incoming NOCK, but the live UTXO balance query returned zero spendable notes for this account.';
+        }
         accountBalances[currentAccount.address] = availableNock;
         accountSpendableBalances[currentAccount.address] = spendableNock;
         accountBalanceDetails[currentAccount.address] = {
@@ -705,6 +749,7 @@ export const useStore = create<AppStore>((set, get) => ({
           available: availableNock,
         };
       } catch (err) {
+        balanceError = balanceError || (err instanceof Error ? err.message : String(err));
         console.warn(`[Store] Could not get balance for ${currentAccount.name}:`, err);
         // Keep previous balance if fetch fails
         if (accountBalances[currentAccount.address] === undefined) {
@@ -741,6 +786,7 @@ export const useStore = create<AppStore>((set, get) => ({
       const accountStillCurrent = latestCurrent?.address === currentAccount.address;
 
       set({
+        balanceError,
         wallet: {
           ...get().wallet,
           ...(accountStillCurrent
@@ -758,6 +804,7 @@ export const useStore = create<AppStore>((set, get) => ({
       clearFetchingIfLatest();
     } catch (error) {
       console.error('[Store] Failed to fetch balance:', error);
+      set({ balanceError: error instanceof Error ? error.message : String(error) });
       clearFetchingIfLatest();
     }
   },

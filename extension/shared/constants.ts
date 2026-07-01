@@ -124,6 +124,18 @@ export const INTERNAL_METHODS = {
   /** Send transaction using UTXO store (build, lock, broadcast atomically) */
   SEND_TRANSACTION_V2: 'wallet:sendTransactionV2',
 
+  /** Build and reserve an unsigned transaction for an external signer */
+  PREPARE_SEND_TRANSACTION_V2: 'wallet:prepareSendTransactionV2',
+
+  /** Broadcast a prepared transaction after an external signer returns it */
+  COMPLETE_SEND_TRANSACTION_V2: 'wallet:completeSendTransactionV2',
+
+  /** Cancel a prepared external-signing transaction and release reserved notes */
+  CANCEL_PREPARED_SEND_TRANSACTION_V2: 'wallet:cancelPreparedSendTransactionV2',
+
+  /** Complete a pending provider send request with an externally signed transaction */
+  COMPLETE_TRANSACTION: 'wallet:completeTransaction',
+
   /** Estimate bridge transaction fee for a given destination and amount */
   ESTIMATE_BRIDGE_FEE: 'wallet:estimateBridgeFee',
 
@@ -135,6 +147,12 @@ export const INTERNAL_METHODS = {
 
   /** Approve pending sign raw transaction request */
   APPROVE_SIGN_RAW_TX: 'wallet:approveSignRawTx',
+
+  /** Complete pending sign message request with an externally produced signature */
+  COMPLETE_SIGN_MESSAGE: 'wallet:completeSignMessage',
+
+  /** Complete pending sign raw transaction request with an externally signed tx */
+  COMPLETE_SIGN_RAW_TX: 'wallet:completeSignRawTx',
 
   /** Reject pending sign raw transaction request */
   REJECT_SIGN_RAW_TX: 'wallet:rejectSignRawTx',

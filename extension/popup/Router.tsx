@@ -15,6 +15,7 @@ import { ImportScreen } from './screens/onboarding/ImportScreen';
 import { ImportSuccessScreen } from './screens/onboarding/ImportSuccessScreen';
 import { ResumeBackupScreen } from './screens/onboarding/ResumeBackupScreen';
 import { AddWalletStartScreen } from './screens/AddWalletStartScreen';
+import { NocksterConnectScreen } from './screens/NocksterConnectScreen';
 import { HomeScreen } from './screens/HomeScreen';
 import { SendScreen } from './screens/SendScreen';
 import { SendReviewScreen } from './screens/SendReviewScreen';
@@ -72,6 +73,8 @@ export function Router() {
       return <CreateScreen />;
     case 'wallet-add-import':
       return <ImportScreen />;
+    case 'wallet-add-nockster':
+      return <NocksterConnectScreen />;
     case 'wallet-add-backup':
       return <BackupScreen />;
     case 'wallet-add-verify':

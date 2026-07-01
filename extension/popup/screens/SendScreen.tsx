@@ -21,6 +21,7 @@ import CheckmarkIcon from '../assets/checkmark-pencil-icon.svg';
 import InfoIcon from '../assets/info-icon.svg';
 import { guard } from '@nockbox/iris-sdk/wasm';
 import { ensureWasmInitialized } from '../../shared/wasm-utils';
+import { getCurrentNocksterAccount } from '../utils/nockster';
 
 function formatInt(n: number) {
   return n.toLocaleString('en-US', { maximumFractionDigits: 0 });
@@ -73,6 +74,7 @@ export function SendScreen() {
   const [minimumFeeNicks, setMinimumFeeNicks] = useState<number | null>(null);
   const [isSendingMax, setIsSendingMax] = useState(false); // Track if user is sending entire balance
   const [isLoadingBalance, setIsLoadingBalance] = useState(false); // Track balance refresh after account switch
+  const [nocksterFeeMinimized, setNocksterFeeMinimized] = useState(false);
 
   /** Nicks to pass at broadcast; kept in sync with auto-estimate, max-send, or manual save. */
   const feeSendNicksRef = useRef<number | null>(null);
@@ -83,6 +85,15 @@ export function SendScreen() {
   const accounts = (wallet.accounts || []).filter(acc => !acc.hidden);
   const currentAccount =
     wallet.currentAccount && !wallet.currentAccount.hidden ? wallet.currentAccount : accounts[0];
+  const currentNocksterAccount = (() => {
+    try {
+      return getCurrentNocksterAccount(wallet);
+    } catch {
+      return null;
+    }
+  })();
+  const isNocksterAccount = Boolean(currentNocksterAccount);
+  const includeLockDataForNockster = isNocksterAccount && !nocksterFeeMinimized;
   // Use spendable balance (only UTXOs that are not in_flight - can be spent NOW)
   const currentBalance = wallet.spendableBalance;
 
@@ -106,6 +117,7 @@ export function SendScreen() {
     feeEstimateSeqRef.current += 1;
     setIsFeeManuallyEdited(false);
     setIsSendingMax(false);
+    setNocksterFeeMinimized(false);
     setError('');
     setErrorType(null);
 
@@ -156,7 +168,7 @@ export function SendScreen() {
         totalAvailable?: number;
         utxoCount?: number;
         error?: string;
-      }>(INTERNAL_METHODS.ESTIMATE_MAX_SEND, [addressToUse]);
+      }>(INTERNAL_METHODS.ESTIMATE_MAX_SEND, [addressToUse, includeLockDataForNockster]);
 
       if (result?.error) {
         console.error('[SendScreen] Max estimation error:', result.error);
@@ -238,6 +250,19 @@ export function SendScreen() {
     }
   }
 
+  function handleNocksterFeeModeChange(checked: boolean) {
+    setNocksterFeeMinimized(checked);
+    setFee('');
+    setEditedFee('');
+    setMinimumFeeNicks(null);
+    feeSendNicksRef.current = null;
+    feeEstimateSeqRef.current += 1;
+    setIsFeeManuallyEdited(false);
+    setIsSendingMax(false);
+    setError('');
+    setErrorType(null);
+  }
+
   function handleFeeInputBlur() {
     // Auto-save fee when input loses focus
     handleSaveFee();
@@ -308,6 +333,7 @@ export function SendScreen() {
       to: receiverAddress.trim(),
       from: currentAccount?.address,
       sendMax: isSendingMax, // Flag for sweep transaction (all UTXOs to recipient)
+      nocksterFeeMinimized: isNocksterAccount ? nocksterFeeMinimized : undefined,
     });
 
     navigate('send-review');
@@ -414,7 +440,7 @@ export function SendScreen() {
         const amountNicks = Math.floor(amountNum * NOCK_TO_NICKS);
         const result = await send<{ fee?: number; error?: string }>(
           INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE,
-          [addressToUse, amountNicks]
+          [addressToUse, amountNicks, includeLockDataForNockster]
         );
 
         if (seq !== feeEstimateSeqRef.current) return;
@@ -447,7 +473,14 @@ export function SendScreen() {
       clearTimeout(timeoutId);
       setIsCalculatingFee(false);
     };
-  }, [receiverAddress, amount, isFeeManuallyEdited, currentAccount?.address, wallet.address]);
+  }, [
+    receiverAddress,
+    amount,
+    isFeeManuallyEdited,
+    currentAccount?.address,
+    wallet.address,
+    includeLockDataForNockster,
+  ]);
 
   // -----------------------------------------------------------------------------
 
@@ -799,6 +832,45 @@ export function SendScreen() {
               </button>
             )}
           </div>
+
+          {isNocksterAccount && (
+            <div
+              className="rounded-lg px-3 py-2.5 flex flex-col gap-2"
+              style={{
+                border: '1px solid var(--color-surface-700)',
+                backgroundColor: 'var(--color-bg)',
+              }}
+            >
+              <label className="flex items-start gap-3 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={nocksterFeeMinimized}
+                  onChange={e => handleNocksterFeeModeChange(e.target.checked)}
+                  className="mt-0.5 w-4 h-4 accent-[var(--color-primary)]"
+                />
+                <span className="flex-1 min-w-0">
+                  <span className="block text-[13px] leading-[18px] font-medium">
+                    Minimize fee
+                  </span>
+                  <span
+                    className="block text-[12px] leading-4 mt-0.5"
+                    style={{ color: 'var(--color-text-muted)' }}
+                  >
+                    Omits output lock data from the draft.
+                  </span>
+                </span>
+              </label>
+              {nocksterFeeMinimized && (
+                <div
+                  className="text-[12px] leading-4"
+                  style={{ color: 'var(--color-text-muted)' }}
+                >
+                  Fee-minimized drafts will show lock roots on the device, not the recipient PKH or
+                  change PKH.
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Error display - below fee section */}
           {error && (

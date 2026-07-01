@@ -9,6 +9,21 @@ import vectorBottomLeft from '../assets/vector-bottom-left.svg';
 export function AddWalletStartScreen() {
   const { navigate } = useStore();
 
+  async function handleConnectNockster() {
+    if (window.location.hash.slice(1) === 'nockster-pair') {
+      navigate('wallet-add-nockster');
+      return;
+    }
+
+    const url = chrome.runtime.getURL('popup/index.html#nockster-pair');
+    try {
+      await chrome.tabs.create({ url, active: true });
+    } catch {
+      window.open(url, '_blank');
+    }
+    window.close();
+  }
+
   return (
     <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)] overflow-hidden">
       <img
@@ -106,6 +121,21 @@ export function AddWalletStartScreen() {
             }}
           >
             I have a wallet
+          </button>
+
+          <button
+            onClick={() => void handleConnectNockster()}
+            className="h-12 px-5 py-[15px] bg-[var(--color-surface-800)] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90"
+            style={{
+              fontFamily: 'var(--font-sans)',
+              fontSize: 'var(--font-size-base)',
+              fontWeight: 500,
+              lineHeight: 'var(--line-height-snug)',
+              letterSpacing: '0.01em',
+              color: 'var(--color-text-primary)',
+            }}
+          >
+            Connect Nockster
           </button>
 
           <button

@@ -51,6 +51,7 @@ export function HomeScreen() {
     fetchWalletTransactions,
     setSelectedTransaction,
     isBalanceFetching,
+    balanceError,
     isInitialized,
     priceUsd,
     priceChange24h,
@@ -851,6 +852,17 @@ export function HomeScreen() {
                 </>
               )}
             </div>
+            {balanceError ? (
+              <div
+                className="mt-2 rounded-[8px] px-3 py-2 text-[12px] leading-[16px]"
+                style={{
+                  color: 'var(--color-red)',
+                  backgroundColor: 'rgba(236, 80, 80, 0.12)',
+                }}
+              >
+                Balance refresh failed: {balanceError}
+              </div>
+            ) : null}
           </div>
 
           {/* Actions */}
