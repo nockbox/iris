@@ -174,7 +174,15 @@ export class NockchainBrowserRPCClient {
    * Convert proto Balance format to our Note[] interface
    */
   private convertBalanceToNotes(balance: wasm.PbCom2Balance): Balance {
-    if (!balance.notes || balance.notes.length === 0 || !balance.height) {
+    const heightValue = balance.height?.value ?? balance.height ?? 0;
+    const height =
+      typeof heightValue === 'bigint'
+        ? Number(heightValue)
+        : typeof heightValue === 'string'
+          ? Number(heightValue)
+          : Number(heightValue || 0);
+
+    if (!balance.notes || balance.notes.length === 0) {
       return { notes: [], height: 0 };
     }
 
@@ -191,7 +199,7 @@ export class NockchainBrowserRPCClient {
       }
     }
 
-    return { notes, height: Number(balance.height.value) };
+    return { notes, height };
   }
 
   /**

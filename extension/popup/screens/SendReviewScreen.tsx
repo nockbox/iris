@@ -9,6 +9,7 @@ import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
 import IrisLogo40 from '../assets/iris-logo-40.svg';
 import IrisLogoBlue from '../assets/iris-logo-blue.svg';
+import { getCurrentNocksterAccount, signRawTxWithNockster } from '../utils/nockster';
 
 export function SendReviewScreen() {
   const { navigate, wallet, lastTransaction, priceUsd } = useStore();
@@ -58,20 +59,63 @@ export function SendReviewScreen() {
           ? Math.round(lastTransaction.feeNicks)
           : nockToNick(lastTransaction.fee);
 
-      // Send transaction using V2 (builds, locks notes, broadcasts atomically)
-      // If sendMax is true, this is a sweep transaction (all UTXOs to recipient)
-      const result = await send<{
+      const nockster = getCurrentNocksterAccount(wallet);
+      let preparedWalletTxId: string | null = null;
+      let completionStarted = false;
+      let result: {
         txid?: string;
         broadcasted?: boolean;
         walletTx?: any;
         error?: string;
-      }>(INTERNAL_METHODS.SEND_TRANSACTION_V2, [
-        lastTransaction.to,
-        amountInNicks,
-        feeInNicks,
-        lastTransaction.sendMax, // Pass sendMax flag for sweep transactions
-        priceUsd, // Store USD price at time of transaction for historical display
-      ]);
+      };
+
+      try {
+        if (nockster) {
+          const prepared = await send<{
+            walletTx?: { id?: string };
+            rawTx?: unknown;
+            error?: string;
+          }>(INTERNAL_METHODS.PREPARE_SEND_TRANSACTION_V2, [
+            lastTransaction.to,
+            amountInNicks,
+            feeInNicks,
+            lastTransaction.sendMax,
+            priceUsd,
+          ]);
+
+          if (prepared?.error) {
+            throw new Error(prepared.error);
+          }
+          if (!prepared?.walletTx?.id || !prepared.rawTx) {
+            throw new Error('Failed to prepare transaction for Nockster signing');
+          }
+
+          preparedWalletTxId = prepared.walletTx.id;
+          const signedTx = await signRawTxWithNockster(prepared.rawTx, nockster);
+          completionStarted = true;
+          result = await send(INTERNAL_METHODS.COMPLETE_SEND_TRANSACTION_V2, [
+            preparedWalletTxId,
+            signedTx,
+          ]);
+        } else {
+          // Send transaction using V2 (builds, locks notes, broadcasts atomically)
+          // If sendMax is true, this is a sweep transaction (all UTXOs to recipient)
+          result = await send(INTERNAL_METHODS.SEND_TRANSACTION_V2, [
+            lastTransaction.to,
+            amountInNicks,
+            feeInNicks,
+            lastTransaction.sendMax, // Pass sendMax flag for sweep transactions
+            priceUsd, // Store USD price at time of transaction for historical display
+          ]);
+        }
+      } catch (err) {
+        if (preparedWalletTxId && !completionStarted) {
+          await send(INTERNAL_METHODS.CANCEL_PREPARED_SEND_TRANSACTION_V2, [
+            preparedWalletTxId,
+          ]).catch(console.error);
+        }
+        throw err;
+      }
 
       if (result?.error) {
         setError(result.error);

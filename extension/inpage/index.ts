@@ -11,7 +11,41 @@ import { version } from '../../package.json';
 // Inline constant to avoid imports
 const MESSAGE_TARGET = 'IRIS';
 
+function readableErrorMessage(error: unknown): string {
+  if (!error) return 'Wallet request failed without a response';
+  if (typeof error === 'string') {
+    const text = error.trim();
+    return text && text !== '[object Object]' ? text : 'Wallet request failed';
+  }
+  if (typeof error !== 'object') return String(error);
+
+  const value = error as Record<string, unknown>;
+  for (const key of ['message', 'reason', 'details']) {
+    const detail = value[key];
+    if (typeof detail === 'string' && detail.trim() && detail !== '[object Object]') {
+      return detail;
+    }
+  }
+  for (const key of ['error', 'data', 'cause']) {
+    const detail = readableErrorMessage(value[key]);
+    if (detail && detail !== 'Wallet request failed without a response') {
+      return detail;
+    }
+  }
+
+  try {
+    const serialized = JSON.stringify(error);
+    if (serialized && serialized !== '{}') return serialized;
+  } catch {
+    // ignore serialization failures
+  }
+  return 'Wallet request failed';
+}
+
 class NockProvider implements InjectedNockchain {
+  version = version;
+  provider = 'iris';
+
   /**
    * Make a request to the wallet
    * @param args - Request arguments with method and params
@@ -44,7 +78,14 @@ class NockProvider implements InjectedNockchain {
           }
 
           if (data.reply?.error) {
-            reject(new Error(data.reply.error));
+            const error = data.reply.error;
+            const message = readableErrorMessage(error);
+            const wrapped = new Error(message);
+            (wrapped as Error & { originalError?: unknown }).originalError = error;
+            if (error && typeof error === 'object') {
+              Object.assign(wrapped, error);
+            }
+            reject(wrapped);
           } else {
             resolve(data.reply);
           }
@@ -65,12 +106,19 @@ class NockProvider implements InjectedNockchain {
       window.addEventListener('message', handler);
     });
   }
+
+  debug() {
+    return {
+      provider: 'iris',
+      version,
+      injected: true,
+      location: window.location.origin,
+    };
+  }
 }
 
 // Inject provider into window
 const provider = new NockProvider();
-(provider as InjectedNockchain).provider = 'iris';
-(provider as InjectedNockchain).version = version;
 (window as any).nockchain = provider;
 
 // Announce provider availability

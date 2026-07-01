@@ -35,6 +35,7 @@
     "@nockbox/iris-sdk": "0.2.0",
     "@scure/base": "^2.0.0",
     "@scure/bip39": "^2.0.1",
+    "@swps/nockster-js": "^1.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
     "zustand": "^5.0.8"

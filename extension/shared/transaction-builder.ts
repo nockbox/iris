@@ -150,6 +150,8 @@ export interface TransactionParams {
   blockHeight?: number;
 }
 
+export type UnsignedTransactionParams = Omit<TransactionParams, 'privateKey'>;
+
 /**
  * Constructed transaction ready for broadcast
  */
@@ -164,13 +166,18 @@ export interface ConstructedTransaction {
   feeUsed: number;
 }
 
-/**
- * Build a complete Nockchain transaction using the new builder API
- *
- * @param params - Transaction parameters
- * @returns Constructed transaction ready for broadcast
- */
-export async function buildTransaction(params: TransactionParams): Promise<ConstructedTransaction> {
+export interface UnsignedConstructedTransaction {
+  /** Unsigned raw transaction draft for an external signer */
+  rawTx: wasm.RawTx;
+  /** Fee used in the transaction (in nicks) */
+  feeUsed: number;
+  /** Transaction version */
+  version: number;
+}
+
+async function buildTransactionDraft(
+  params: UnsignedTransactionParams
+): Promise<{ builder: wasm.TxBuilder; feeUsed: number }> {
   // Initialize both WASM modules
   await ensureWasmInitialized();
 
@@ -181,7 +188,6 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     amount,
     fee,
     refundPKH,
-    privateKey,
     includeLockData,
     blockHeight,
   } = params;
@@ -246,51 +252,69 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     includeLockData
   );
 
-  // Sign and validate the transaction
-  await builder.sign(privateKey);
-  builder.validate();
-
-  // Get the fee before building (for return value)
-  const feeUsed = getFeeFromBuilder(builder);
-
-  // Build the final transaction
-  const nockchainTx = builder.build();
-
   return {
-    txId: getTxIdCompat(nockchainTx),
-    version: 1, // V1 only
-    nockchainTx,
-    feeUsed,
+    builder,
+    feeUsed: getFeeFromBuilder(builder),
   };
 }
 
 /**
- * Create a payment transaction using multiple notes (UTXOs)
+ * Build a complete Nockchain transaction using the new builder API
  *
- * This allows spending from multiple UTXOs when a single UTXO doesn't have
- * sufficient balance. The transaction will use all provided notes as inputs.
- *
- * @param notes - Array of UTXOs to spend
- * @param recipientPKH - Recipient's PKH digest string
- * @param amount - Amount to send in nicks
- * @param senderPublicKey - Your public key (97 bytes, for creating spend condition)
- * @param privateKey - Your private key (wasm object)
- * @param fee - Transaction fee in nicks (optional, WASM will auto-calculate if not provided)
- * @param refundPKH - Override for change address (optional, defaults to sender's PKH).
- *                    Set to recipientPKH for "send max" to sweep all funds to recipient.
- * @param blockHeight - Current block height for tx engine selection (optional).
- * @returns Constructed transaction
+ * @param params - Transaction parameters
+ * @returns Constructed transaction ready for broadcast
  */
-export async function buildMultiNotePayment(
+export async function buildTransaction(params: TransactionParams): Promise<ConstructedTransaction> {
+  const { builder, feeUsed } = await buildTransactionDraft(params);
+
+  try {
+    // Sign and validate the transaction
+    await builder.sign(params.privateKey);
+    builder.validate();
+
+    // Build the final transaction
+    const nockchainTx = builder.build();
+
+    return {
+      txId: getTxIdCompat(nockchainTx),
+      version: 1, // V1 only
+      nockchainTx,
+      feeUsed,
+    };
+  } finally {
+    builder.free();
+  }
+}
+
+/**
+ * Build an unsigned raw transaction draft for an external signer.
+ */
+export async function buildUnsignedTransaction(
+  params: UnsignedTransactionParams
+): Promise<UnsignedConstructedTransaction> {
+  const { builder, feeUsed } = await buildTransactionDraft(params);
+
+  try {
+    const nockchainTx = builder.build();
+    return {
+      rawTx: wasm.nockchainTxToRawTx(nockchainTx),
+      version: 1,
+      feeUsed,
+    };
+  } finally {
+    builder.free();
+  }
+}
+
+async function buildMultiNotePaymentDraft(
   notes: Note[],
   recipientPKH: string,
   amount: Nicks,
   senderPublicKey: Uint8Array,
-  privateKey: wasm.PrivateKey,
   fee?: Nicks,
   refundPKH?: string,
   blockHeight?: number
-): Promise<ConstructedTransaction> {
+): Promise<UnsignedConstructedTransaction> {
   // Initialize WASM
   await ensureWasmInitialized();
 
@@ -339,18 +363,94 @@ export async function buildMultiNotePayment(
   const changeAddress = refundPKH ?? senderPKH;
 
   // Build transaction with all notes and their individual spend conditions
-  return buildTransaction({
+  return buildUnsignedTransaction({
     notes,
     spendCondition: spendConditions, // Array of spend conditions (one per note)
     recipientPKH,
     amount,
     fee,
     refundPKH: changeAddress,
-    privateKey,
     // include_lock_data: false for lower fees (0.5 NOCK per word saved)
     includeLockData: false,
     blockHeight,
   });
+}
+
+/**
+ * Create an unsigned payment transaction using multiple notes (UTXOs).
+ */
+export async function buildUnsignedMultiNotePayment(
+  notes: Note[],
+  recipientPKH: string,
+  amount: Nicks,
+  senderPublicKey: Uint8Array,
+  fee?: Nicks,
+  refundPKH?: string,
+  blockHeight?: number
+): Promise<UnsignedConstructedTransaction> {
+  return buildMultiNotePaymentDraft(
+    notes,
+    recipientPKH,
+    amount,
+    senderPublicKey,
+    fee,
+    refundPKH,
+    blockHeight
+  );
+}
+
+/**
+ * Create a payment transaction using multiple notes (UTXOs)
+ *
+ * This allows spending from multiple UTXOs when a single UTXO doesn't have
+ * sufficient balance. The transaction will use all provided notes as inputs.
+ *
+ * @param notes - Array of UTXOs to spend
+ * @param recipientPKH - Recipient's PKH digest string
+ * @param amount - Amount to send in nicks
+ * @param senderPublicKey - Your public key (97 bytes, for creating spend condition)
+ * @param privateKey - Your private key (wasm object)
+ * @param fee - Transaction fee in nicks (optional, WASM will auto-calculate if not provided)
+ * @param refundPKH - Override for change address (optional, defaults to sender's PKH).
+ *                    Set to recipientPKH for "send max" to sweep all funds to recipient.
+ * @param blockHeight - Current block height for tx engine selection (optional).
+ * @returns Constructed transaction
+ */
+export async function buildMultiNotePayment(
+  notes: Note[],
+  recipientPKH: string,
+  amount: Nicks,
+  senderPublicKey: Uint8Array,
+  privateKey: wasm.PrivateKey,
+  fee?: Nicks,
+  refundPKH?: string,
+  blockHeight?: number
+): Promise<ConstructedTransaction> {
+  const unsigned = await buildMultiNotePaymentDraft(
+    notes,
+    recipientPKH,
+    amount,
+    senderPublicKey,
+    fee,
+    refundPKH,
+    blockHeight
+  );
+
+  const settings = await getTxEngineSettingsForHeight(blockHeight ?? 0);
+  const builder = wasm.TxBuilder.fromRawTx(unsigned.rawTx, settings);
+  try {
+    await builder.sign(privateKey);
+    builder.validate();
+    const nockchainTx = builder.build();
+    return {
+      txId: getTxIdCompat(nockchainTx),
+      version: 1,
+      nockchainTx,
+      feeUsed: unsigned.feeUsed,
+    };
+  } finally {
+    builder.free();
+  }
 }
 
 /**

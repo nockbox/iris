@@ -24,7 +24,7 @@
     "service_worker": "background/index.ts",
     "type": "module"
   },
-  "permissions": ["storage", "alarms"],
+  "permissions": ["storage", "alarms", "hid", "serial"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; font-src 'self'"
   },

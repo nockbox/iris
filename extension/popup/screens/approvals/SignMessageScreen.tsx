@@ -5,9 +5,13 @@ import { truncateAddress } from '../../utils/format';
 import { send } from '../../utils/messaging';
 import { INTERNAL_METHODS } from '../../../shared/constants';
 import { useAutoRejectOnClose } from '../../hooks/useAutoRejectOnClose';
+import { getCurrentNocksterAccount, signMessageWithNockster } from '../../utils/nockster';
+import { useState } from 'react';
 
 export function SignMessageScreen() {
   const { navigate, pendingSignRequest, setPendingSignRequest, wallet } = useStore();
+  const [isSigning, setIsSigning] = useState(false);
+  const [signError, setSignError] = useState('');
 
   if (!pendingSignRequest) {
     navigate('home');
@@ -25,9 +29,34 @@ export function SignMessageScreen() {
   }
 
   async function handleSign() {
-    await send(INTERNAL_METHODS.APPROVE_SIGN_MESSAGE, [id]);
-    setPendingSignRequest(null);
-    window.close();
+    setIsSigning(true);
+    setSignError('');
+    try {
+      const nockster = getCurrentNocksterAccount(wallet);
+      if (nockster) {
+        const signed = await signMessageWithNockster(message, nockster);
+        const result = await send<{ success?: boolean; error?: string }>(
+          INTERNAL_METHODS.COMPLETE_SIGN_MESSAGE,
+          [id, signed]
+        );
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+      } else {
+        const result = await send<{ success?: boolean; error?: string }>(
+          INTERNAL_METHODS.APPROVE_SIGN_MESSAGE,
+          [id]
+        );
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+      }
+      setPendingSignRequest(null);
+      window.close();
+    } catch (err) {
+      setSignError(err instanceof Error ? err.message : 'Failed to sign message');
+      setIsSigning(false);
+    }
   }
 
   const bg = 'var(--color-bg)';
@@ -96,7 +125,7 @@ export function SignMessageScreen() {
             </div>
 
             {/* Account */}
-            <div>
+            <div className="mb-3">
               <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
                 Signing Account
               </label>
@@ -119,6 +148,12 @@ export function SignMessageScreen() {
                 </div>
               </div>
             </div>
+
+            {signError && (
+              <div className="rounded-lg p-3 text-sm" style={{ backgroundColor: surface, color: '#ff6b6b' }}>
+                {signError}
+              </div>
+            )}
           </div>
         </div>
 
@@ -130,8 +165,8 @@ export function SignMessageScreen() {
           <button onClick={handleDecline} className="btn-secondary flex-1">
             Decline
           </button>
-          <button onClick={handleSign} className="btn-primary flex-1">
-            Sign
+          <button onClick={handleSign} disabled={isSigning} className="btn-primary flex-1">
+            {isSigning ? 'Signing...' : 'Sign'}
           </button>
         </div>
       </div>

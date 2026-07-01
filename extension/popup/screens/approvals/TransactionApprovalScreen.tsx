@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useStore } from '../../store';
 import { ChevronRightIcon } from '../../components/icons/ChevronRightIcon';
 import { AccountIcon } from '../../components/AccountIcon';
@@ -7,9 +8,12 @@ import { send } from '../../utils/messaging';
 import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../../shared/constants';
 import { formatNock, formatNick } from '../../../shared/currency';
 import { useAutoRejectOnClose } from '../../hooks/useAutoRejectOnClose';
+import { getCurrentNocksterAccount, signRawTxWithNockster } from '../../utils/nockster';
 
 export function TransactionApprovalScreen() {
   const { navigate, pendingTransactionRequest, setPendingTransactionRequest, wallet } = useStore();
+  const [isApproving, setIsApproving] = useState(false);
+  const [approvalError, setApprovalError] = useState('');
 
   if (!pendingTransactionRequest) {
     navigate('home');
@@ -32,9 +36,71 @@ export function TransactionApprovalScreen() {
   }
 
   async function handleApprove() {
-    await send(INTERNAL_METHODS.APPROVE_TRANSACTION, [id]);
-    setPendingTransactionRequest(null);
-    window.close();
+    setIsApproving(true);
+    setApprovalError('');
+    try {
+      const nockster = getCurrentNocksterAccount(wallet);
+
+      if (nockster) {
+        let preparedWalletTxId: string | null = null;
+        let completionStarted = false;
+
+        try {
+          const prepared = await send<{
+            walletTx?: { id?: string };
+            rawTx?: unknown;
+            error?: string;
+          }>(INTERNAL_METHODS.PREPARE_SEND_TRANSACTION_V2, [
+            to,
+            amount,
+            fee,
+            false,
+            undefined,
+            'provider_send',
+          ]);
+
+          if (prepared?.error) {
+            throw new Error(prepared.error);
+          }
+          if (!prepared?.walletTx?.id || !prepared.rawTx) {
+            throw new Error('Failed to prepare transaction for Nockster signing');
+          }
+
+          preparedWalletTxId = prepared.walletTx.id;
+          const signedTx = await signRawTxWithNockster(prepared.rawTx, nockster);
+          completionStarted = true;
+          const completed = await send<{ success?: boolean; txid?: string; error?: string }>(
+            INTERNAL_METHODS.COMPLETE_TRANSACTION,
+            [id, preparedWalletTxId, signedTx]
+          );
+
+          if (completed?.error) {
+            throw new Error(completed.error);
+          }
+        } catch (err) {
+          if (preparedWalletTxId && !completionStarted) {
+            await send(INTERNAL_METHODS.CANCEL_PREPARED_SEND_TRANSACTION_V2, [
+              preparedWalletTxId,
+            ]).catch(console.error);
+          }
+          throw err;
+        }
+      } else {
+        const result = await send<{ success?: boolean; error?: string }>(
+          INTERNAL_METHODS.APPROVE_TRANSACTION,
+          [id]
+        );
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+      }
+
+      setPendingTransactionRequest(null);
+      window.close();
+    } catch (err) {
+      setApprovalError(err instanceof Error ? err.message : 'Failed to approve transaction');
+      setIsApproving(false);
+    }
   }
 
   const bg = 'var(--color-bg)';
@@ -144,6 +210,15 @@ export function TransactionApprovalScreen() {
               <div className="text-center text-xs py-2" style={{ color: textMuted }}>
                 Balance after: {formatNock(wallet.spendableBalance - totalNum / NOCK_TO_NICKS)} NOCK
               </div>
+
+              {approvalError && (
+                <div
+                  className="rounded-lg p-3 text-sm"
+                  style={{ backgroundColor: surface, color: '#ff6b6b' }}
+                >
+                  {approvalError}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -156,8 +231,8 @@ export function TransactionApprovalScreen() {
           <button onClick={handleReject} className="btn-secondary flex-1">
             Reject
           </button>
-          <button onClick={handleApprove} className="btn-primary flex-1">
-            Approve
+          <button onClick={handleApprove} disabled={isApproving} className="btn-primary flex-1">
+            {isApproving ? 'Signing...' : 'Approve'}
           </button>
         </div>
       </div>

@@ -24,8 +24,21 @@ window.addEventListener('message', async (evt: MessageEvent) => {
     return;
   }
 
-  // Forward to service worker and relay response back to page
-  const reply = await chrome.runtime.sendMessage(data);
+  // Forward to service worker and relay response back to page.
+  // If the service worker was reloaded/unavailable, still answer the page so
+  // callers get the bridge error instead of timing out with no details.
+  let reply: unknown;
+  try {
+    reply = await chrome.runtime.sendMessage(data);
+  } catch (error) {
+    reply = {
+      error: {
+        code: -32603,
+        message:
+          error instanceof Error ? error.message : `Iris extension bridge failed: ${String(error)}`,
+      },
+    };
+  }
 
   const responseMessage = {
     target: MESSAGE_TARGETS.WALLET_BRIDGE,

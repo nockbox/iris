@@ -109,6 +109,21 @@ export function AddWalletStartScreen() {
           </button>
 
           <button
+            onClick={() => navigate('wallet-add-nockster')}
+            className="h-12 px-5 py-[15px] bg-[var(--color-surface-800)] rounded-lg flex items-center justify-center transition-opacity hover:opacity-90"
+            style={{
+              fontFamily: 'var(--font-sans)',
+              fontSize: 'var(--font-size-base)',
+              fontWeight: 500,
+              lineHeight: 'var(--line-height-snug)',
+              letterSpacing: '0.01em',
+              color: 'var(--color-text-primary)',
+            }}
+          >
+            Connect Nockster
+          </button>
+
+          <button
             onClick={() => navigate('home')}
             className="h-12 px-5 py-[15px] bg-transparent rounded-lg flex items-center justify-center transition-opacity hover:opacity-70"
             style={{

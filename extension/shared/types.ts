@@ -40,8 +40,12 @@ export interface SeedAccount {
   createdAt: number;
   accounts: SubAccount[];
   external?: {
-    provider: 'ledger' | 'unknown';
+    provider: 'ledger' | 'nockster' | 'unknown';
     sourceRef?: string;
+    accountRef?: string;
+    publicKeyHex?: string;
+    slot?: number;
+    path?: number[];
   };
 }
 

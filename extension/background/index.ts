@@ -245,6 +245,13 @@ function cancelPendingRequest(requestId: string, code?: number, message?: string
   }
 }
 
+function completePendingRequest(requestId: string): void {
+  pendingRequests.delete(requestId);
+  if (currentRequestId == requestId) {
+    currentRequestId = null;
+  }
+}
+
 /**
  * Check if a request timestamp has expired
  * @param timestamp - Request creation timestamp
@@ -703,7 +710,7 @@ async function syncAccountUTXOsWithDedupe(
           success: false,
           error: ERROR_CODES.LOCKED,
         };
-        return { ok: true, results };
+        return { ok: false, results };
       }
 
       try {
@@ -718,7 +725,7 @@ async function syncAccountUTXOsWithDedupe(
         };
       }
 
-      return { ok: true, results };
+      return { ok: results[accountAddress]?.success === true, results };
     })().finally(() => {
       utxoSyncInFlight.delete(accountAddress);
     });
@@ -1281,7 +1288,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse(storeBalance);
         } catch (err) {
           console.error('[Background] Error getting balance from store:', err);
-          sendResponse({ error: 'Failed to get balance from store' });
+          sendResponse({
+            error: err instanceof Error ? err.message : 'Failed to get balance from store',
+          });
         }
         return;
 
@@ -1321,7 +1330,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           sendResponse(syncOutcome);
         } catch (err) {
           console.error('[Background] SYNC_UTXOS error:', err);
-          sendResponse({ error: 'Failed to sync UTXOs' });
+          sendResponse({ error: err instanceof Error ? err.message : 'Failed to sync UTXOs' });
         }
         return;
 
@@ -1538,6 +1547,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
 
           try {
+            const currentAccount = vault.getCurrentAccount();
+            if (!currentAccount) {
+              throw new Error(ERROR_CODES.NO_ACCOUNT);
+            }
+
+            const syncResult = await syncAccountUTXOsWithDedupe(
+              currentAccount.address,
+              currentAccount.name
+            );
+            const accountSync = syncResult.results[currentAccount.address];
+            if (!accountSync?.success) {
+              throw new Error(
+                `Could not refresh spendable balance before signing: ${
+                  accountSync?.error || 'unknown balance sync error'
+                }`
+              );
+            }
+
             const v2Result = await vault.sendTransactionV2(
               txRequest.to,
               txRequest.amount,
@@ -1556,7 +1583,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               amount: txRequest.amount,
               fee: txRequest.fee,
             });
-            cancelPendingRequest(approveTxId);
+            completePendingRequest(approveTxId);
             processNextRequest();
             sendResponse({ success: true });
           } catch (error) {
@@ -1571,6 +1598,60 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             processNextRequest();
             sendResponse({
               error: error instanceof Error ? error.message : 'Transaction signing failed',
+            });
+          }
+        } else {
+          sendResponse({ error: ERROR_CODES.NOT_FOUND });
+        }
+        return;
+
+      case INTERNAL_METHODS.COMPLETE_TRANSACTION:
+        const [completeTxId, preparedWalletTxId, completeProviderSignedTx] = payload.params || [];
+        const completeTxPending = pendingRequests.get(completeTxId);
+        if (completeTxPending && isTransactionRequest(completeTxPending.request)) {
+          const txRequest = completeTxPending.request;
+
+          if (isRequestExpired(txRequest.timestamp)) {
+            cancelPendingRequest(completeTxId, 4003, 'Request expired');
+            sendResponse({ error: 'Request expired' });
+            return;
+          }
+
+          try {
+            if (typeof preparedWalletTxId !== 'string') {
+              throw new Error('Prepared transaction id is required');
+            }
+
+            const v2Result = await vault.completePreparedSendTransactionV2(
+              preparedWalletTxId,
+              completeProviderSignedTx
+            );
+
+            if ('error' in v2Result) {
+              throw new Error(v2Result.error);
+            }
+
+            completeTxPending.sendResponse({
+              txid: v2Result.txId,
+              amount: txRequest.amount,
+              fee: txRequest.fee,
+            });
+            completePendingRequest(completeTxId);
+            processNextRequest();
+            sendResponse({ success: true, txid: v2Result.txId });
+          } catch (error) {
+            console.error('External transaction completion failed:', error);
+            completeTxPending.sendResponse({
+              error: {
+                code: 4900,
+                message:
+                  error instanceof Error ? error.message : 'Transaction completion failed',
+              },
+            });
+            cancelPendingRequest(completeTxId);
+            processNextRequest();
+            sendResponse({
+              error: error instanceof Error ? error.message : 'Transaction completion failed',
             });
           }
         } else {
@@ -1606,7 +1687,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           try {
             const signMessageResponse = await vault.signMessage([signRequest.message]);
             approveSignPending.sendResponse(signMessageResponse);
-            cancelPendingRequest(approveSignId);
+            completePendingRequest(approveSignId);
             processNextRequest();
             sendResponse({ success: true });
           } catch (err) {
@@ -1625,6 +1706,25 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const rejectSignPending = pendingRequests.get(rejectSignId);
         if (rejectSignPending) {
           cancelPendingRequest(rejectSignId, 4001, 'User rejected the signature request');
+          processNextRequest();
+          sendResponse({ success: true });
+        } else {
+          sendResponse({ error: ERROR_CODES.NOT_FOUND });
+        }
+        return;
+
+      case INTERNAL_METHODS.COMPLETE_SIGN_MESSAGE:
+        const [completeSignId, completeSignResponse] = payload.params || [];
+        const completeSignPending = pendingRequests.get(completeSignId);
+        if (completeSignPending && isSignRequest(completeSignPending.request)) {
+          const signRequest = completeSignPending.request;
+          if (isRequestExpired(signRequest.timestamp)) {
+            cancelPendingRequest(completeSignId, 4003, 'Request expired');
+            sendResponse({ error: 'Request expired' });
+            return;
+          }
+          completeSignPending.sendResponse(completeSignResponse);
+          completePendingRequest(completeSignId);
           processNextRequest();
           sendResponse({ success: true });
         } else {
@@ -1652,7 +1752,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               rawTx: signRawTxRequest.rawTx,
             });
             approveSignRawTxPending.sendResponse({ tx: signedTx });
-            cancelPendingRequest(approveSignRawTxId);
+            completePendingRequest(approveSignRawTxId);
             processNextRequest();
             sendResponse({ success: true });
           } catch (err) {
@@ -1661,6 +1761,39 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               err instanceof Error ? err.message : 'Failed to sign raw transaction';
             cancelPendingRequest(approveSignRawTxId, 4001, errorMessage);
             processNextRequest();
+            sendResponse({ error: errorMessage });
+          }
+        } else {
+          sendResponse({ error: ERROR_CODES.NOT_FOUND });
+        }
+        return;
+
+      case INTERNAL_METHODS.COMPLETE_SIGN_RAW_TX:
+        const [completeSignRawTxId, completeSignedTx] = payload.params || [];
+        const completeSignRawTxPending = pendingRequests.get(completeSignRawTxId);
+
+        if (
+          completeSignRawTxPending &&
+          isSignRawTxRequest(completeSignRawTxPending.request)
+        ) {
+          const signRawTxRequest = completeSignRawTxPending.request;
+          if (isRequestExpired(signRawTxRequest.timestamp)) {
+            cancelPendingRequest(completeSignRawTxId, 4003, 'Request expired');
+            sendResponse({ error: 'Request expired' });
+            return;
+          }
+
+          try {
+            // Validate shape by converting back to a raw tx. The signed tx itself
+            // is still returned to the provider in Iris' native NockchainTx form.
+            wasm.nockchainTxToRawTx(completeSignedTx);
+            completeSignRawTxPending.sendResponse({ tx: completeSignedTx });
+            completePendingRequest(completeSignRawTxId);
+            processNextRequest();
+            sendResponse({ success: true });
+          } catch (err) {
+            const errorMessage =
+              err instanceof Error ? err.message : 'Invalid signed transaction';
             sendResponse({ error: errorMessage });
           }
         } else {
@@ -1710,7 +1843,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             // Add origin only after the response can be built.
             await approveOrigin(connectRequest.origin);
             approveConnectPending.sendResponse(connectResponse);
-            cancelPendingRequest(approveConnectId);
+            completePendingRequest(approveConnectId);
             processNextRequest();
             sendResponse({ success: true });
 
@@ -1926,6 +2059,123 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           console.error('[Background] SendTransactionV2 failed:', error);
           sendResponse({
             error: error instanceof Error ? error.message : 'Transaction failed',
+          });
+        }
+        return;
+
+      case INTERNAL_METHODS.PREPARE_SEND_TRANSACTION_V2:
+        // params: [to, amount, fee?, sendMax?, priceUsdAtTime?, origin?]
+        if (vault.isLocked()) {
+          sendResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
+        const [
+          prepareToV2,
+          prepareAmountV2,
+          prepareFeeV2,
+          prepareSendMaxV2,
+          preparePriceUsdAtTimeV2,
+          prepareOriginV2,
+        ] = payload.params || [];
+        if (!isNockAddress(prepareToV2)) {
+          sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
+          return;
+        }
+        let prepareAmountNicks: Nicks;
+        let prepareFeeNicks: Nicks | undefined;
+        try {
+          prepareAmountNicks = parseNicksParam(prepareAmountV2, 'amount');
+          prepareFeeNicks =
+            prepareFeeV2 === undefined || prepareFeeV2 === null
+              ? undefined
+              : parseNicksParam(prepareFeeV2, 'fee', { required: false, allowZero: true });
+        } catch (err) {
+          sendResponse({ error: err instanceof Error ? err.message : 'Invalid params' });
+          return;
+        }
+
+        try {
+          const currentAccount = vault.getCurrentAccount();
+          if (!currentAccount) {
+            throw new Error(ERROR_CODES.NO_ACCOUNT);
+          }
+
+          const syncResult = await syncAccountUTXOsWithDedupe(
+            currentAccount.address,
+            currentAccount.name
+          );
+          const accountSync = syncResult.results[currentAccount.address];
+          if (!accountSync?.success) {
+            throw new Error(
+              `Could not refresh spendable balance before signing: ${
+                accountSync?.error || 'unknown balance sync error'
+              }`
+            );
+          }
+
+          const prepareResult = await vault.prepareSendTransactionV2(
+            prepareToV2,
+            prepareAmountNicks,
+            prepareFeeNicks,
+            prepareSendMaxV2,
+            preparePriceUsdAtTimeV2,
+            prepareOriginV2 === 'provider_send' ? 'provider_send' : 'popup_send'
+          );
+
+          sendResponse(prepareResult);
+        } catch (error) {
+          console.error('[Background] PrepareSendTransactionV2 failed:', error);
+          sendResponse({
+            error: error instanceof Error ? error.message : 'Transaction preparation failed',
+          });
+        }
+        return;
+
+      case INTERNAL_METHODS.COMPLETE_SEND_TRANSACTION_V2:
+        const [completeWalletTxIdV2, completeSignedTxV2] = payload.params || [];
+        if (typeof completeWalletTxIdV2 !== 'string') {
+          sendResponse({ error: 'Prepared transaction id is required' });
+          return;
+        }
+
+        try {
+          const completeResult = await vault.completePreparedSendTransactionV2(
+            completeWalletTxIdV2,
+            completeSignedTxV2
+          );
+
+          if ('error' in completeResult) {
+            sendResponse({ error: completeResult.error });
+            return;
+          }
+
+          sendResponse({
+            txid: completeResult.txId,
+            broadcasted: completeResult.broadcasted,
+            walletTx: completeResult.walletTx,
+          });
+        } catch (error) {
+          console.error('[Background] CompleteSendTransactionV2 failed:', error);
+          sendResponse({
+            error: error instanceof Error ? error.message : 'Transaction broadcast failed',
+          });
+        }
+        return;
+
+      case INTERNAL_METHODS.CANCEL_PREPARED_SEND_TRANSACTION_V2:
+        const cancelWalletTxIdV2 = payload.params?.[0];
+        if (typeof cancelWalletTxIdV2 !== 'string') {
+          sendResponse({ error: 'Prepared transaction id is required' });
+          return;
+        }
+
+        try {
+          sendResponse(await vault.cancelPreparedSendTransactionV2(cancelWalletTxIdV2));
+        } catch (error) {
+          console.error('[Background] CancelPreparedSendTransactionV2 failed:', error);
+          sendResponse({
+            error: error instanceof Error ? error.message : 'Transaction cancellation failed',
           });
         }
         return;

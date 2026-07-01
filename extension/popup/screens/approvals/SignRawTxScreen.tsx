@@ -8,6 +8,7 @@ import { AccountIcon } from '../../components/AccountIcon';
 import { SiteIcon } from '../../components/SiteIcon';
 import { truncateAddress } from '../../utils/format';
 import { nickToNock, formatNock } from '../../../shared/currency';
+import { getCurrentNocksterAccount, signRawTxWithNockster } from '../../utils/nockster';
 
 interface NoteItemProps {
   note: any;
@@ -84,6 +85,8 @@ function NoteItem({ note, type, textPrimary, textMuted, surface }: NoteItemProps
 
 export function SignRawTxScreen() {
   const { pendingSignRawTxRequest, setPendingSignRawTxRequest, navigate, wallet } = useStore();
+  const [isSigning, setIsSigning] = useState(false);
+  const [signError, setSignError] = useState('');
 
   if (!pendingSignRawTxRequest) {
     navigate('home');
@@ -101,9 +104,34 @@ export function SignRawTxScreen() {
   }
 
   async function handleSign() {
-    await send(INTERNAL_METHODS.APPROVE_SIGN_RAW_TX, [id]);
-    setPendingSignRawTxRequest(null);
-    window.close();
+    setIsSigning(true);
+    setSignError('');
+    try {
+      const nockster = getCurrentNocksterAccount(wallet);
+      if (nockster) {
+        const signedTx = await signRawTxWithNockster(rawTx, nockster);
+        const result = await send<{ success?: boolean; error?: string }>(
+          INTERNAL_METHODS.COMPLETE_SIGN_RAW_TX,
+          [id, signedTx]
+        );
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+      } else {
+        const result = await send<{ success?: boolean; error?: string }>(
+          INTERNAL_METHODS.APPROVE_SIGN_RAW_TX,
+          [id]
+        );
+        if (result?.error) {
+          throw new Error(result.error);
+        }
+      }
+      setPendingSignRawTxRequest(null);
+      window.close();
+    } catch (err) {
+      setSignError(err instanceof Error ? err.message : 'Failed to sign transaction');
+      setIsSigning(false);
+    }
   }
 
   // Network fee from native rawTx. RawTxV1.spends is a ZMap<Name, SpendV1>
@@ -229,7 +257,7 @@ export function SignRawTxScreen() {
             </div>
 
             {/* Account */}
-            <div>
+            <div className="mb-3">
               <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
                 Signing Account
               </label>
@@ -252,6 +280,12 @@ export function SignRawTxScreen() {
                 </div>
               </div>
             </div>
+
+            {signError && (
+              <div className="rounded-lg p-3 text-sm" style={{ backgroundColor: surface, color: '#ff6b6b' }}>
+                {signError}
+              </div>
+            )}
           </div>
         </div>
 
@@ -263,8 +297,8 @@ export function SignRawTxScreen() {
           <button onClick={handleDecline} className="btn-secondary flex-1">
             Decline
           </button>
-          <button onClick={handleSign} className="btn-primary flex-1">
-            Sign
+          <button onClick={handleSign} disabled={isSigning} className="btn-primary flex-1">
+            {isSigning ? 'Signing...' : 'Sign'}
           </button>
         </div>
       </div>
