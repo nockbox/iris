@@ -1937,13 +1937,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE:
-        // params: [to, amount] - amount in nicks
+        // params: [to, amount, externalIncludeLockData?] - amount in nicks
         if (vault.isLocked()) {
           sendResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
-        const [estimateTo, estimateAmount] = payload.params || [];
+        const [estimateTo, estimateAmount, estimateExternalIncludeLockData] = payload.params || [];
         if (!isNockAddress(estimateTo)) {
           sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
@@ -1957,7 +1957,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
 
         try {
-          const result = await vault.estimateTransactionFee(estimateTo, estimateAmountNicks);
+          const result = await vault.estimateTransactionFee(
+            estimateTo,
+            estimateAmountNicks,
+            estimateExternalIncludeLockData !== false
+          );
 
           if ('error' in result) {
             sendResponse({ error: result.error });
@@ -1973,20 +1977,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case INTERNAL_METHODS.ESTIMATE_MAX_SEND:
-        // params: [to] - estimates max sendable amount for "send max" feature
+        // params: [to, externalIncludeLockData?] - estimates max sendable amount for "send max" feature
         if (vault.isLocked()) {
           sendResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
 
-        const [maxSendTo] = payload.params || [];
+        const [maxSendTo, maxSendExternalIncludeLockData] = payload.params || [];
         if (!isNockAddress(maxSendTo)) {
           sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
         }
 
         try {
-          const maxResult = await vault.estimateMaxSendAmount(maxSendTo);
+          const maxResult = await vault.estimateMaxSendAmount(
+            maxSendTo,
+            maxSendExternalIncludeLockData !== false
+          );
 
           if ('error' in maxResult) {
             sendResponse({ error: maxResult.error });
@@ -2064,7 +2071,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
 
       case INTERNAL_METHODS.PREPARE_SEND_TRANSACTION_V2:
-        // params: [to, amount, fee?, sendMax?, priceUsdAtTime?, origin?]
+        // params: [to, amount, fee?, sendMax?, priceUsdAtTime?, origin?, externalIncludeLockData?]
         if (vault.isLocked()) {
           sendResponse({ error: ERROR_CODES.LOCKED });
           return;
@@ -2077,6 +2084,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           prepareSendMaxV2,
           preparePriceUsdAtTimeV2,
           prepareOriginV2,
+          prepareExternalIncludeLockDataV2,
         ] = payload.params || [];
         if (!isNockAddress(prepareToV2)) {
           sendResponse({ error: ERROR_CODES.BAD_ADDRESS });
@@ -2120,7 +2128,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             prepareFeeNicks,
             prepareSendMaxV2,
             preparePriceUsdAtTimeV2,
-            prepareOriginV2 === 'provider_send' ? 'provider_send' : 'popup_send'
+            prepareOriginV2 === 'provider_send' ? 'provider_send' : 'popup_send',
+            prepareExternalIncludeLockDataV2 !== false
           );
 
           sendResponse(prepareResult);

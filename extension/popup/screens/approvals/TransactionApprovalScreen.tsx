@@ -57,6 +57,7 @@ export function TransactionApprovalScreen() {
             false,
             undefined,
             'provider_send',
+            true,
           ]);
 
           if (prepared?.error) {

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Iris Wallet",
   "homepage_url": "https://iriswallet.io",
-  "version": "1.2.4",
+  "version": "1.3.0",
   "description": "Iris Wallet - Browser Wallet for Nockchain",
   "icons": {
     "16": "icons/icon16.png",
@@ -24,7 +24,7 @@
     "service_worker": "background/index.ts",
     "type": "module"
   },
-  "permissions": ["storage", "alarms", "hid", "serial"],
+  "permissions": ["storage", "alarms"],
   "content_security_policy": {
     "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; font-src 'self'"
   },

@@ -109,6 +109,8 @@ export interface TransactionDetails {
   protobufTx?: any;
   /** Whether this is a sweep transaction (all UTXOs sent to recipient) */
   sendMax?: boolean;
+  /** Nockster-only: omit output lock data to reduce fee; device will show lock roots. */
+  nocksterFeeMinimized?: boolean;
 }
 
 /**

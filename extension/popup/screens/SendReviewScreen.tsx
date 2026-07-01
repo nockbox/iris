@@ -81,6 +81,8 @@ export function SendReviewScreen() {
             feeInNicks,
             lastTransaction.sendMax,
             priceUsd,
+            undefined,
+            !lastTransaction.nocksterFeeMinimized,
           ]);
 
           if (prepared?.error) {

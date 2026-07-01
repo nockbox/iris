@@ -106,6 +106,39 @@ function hexToBytes(hex: string): Uint8Array {
   return bytes;
 }
 
+function parseExternalSourceRef(sourceRef?: string): {
+  publicKeyHex?: string;
+  slot?: number;
+  path?: number[];
+} {
+  if (!sourceRef) return {};
+  try {
+    const parsed = JSON.parse(sourceRef) as {
+      publicKeyHex?: unknown;
+      slot?: unknown;
+      path?: unknown;
+    };
+    if (!parsed || typeof parsed !== 'object') return {};
+    return {
+      publicKeyHex: typeof parsed.publicKeyHex === 'string' ? parsed.publicKeyHex : undefined,
+      slot: typeof parsed.slot === 'number' ? parsed.slot : undefined,
+      path: Array.isArray(parsed.path) ? parsed.path.filter(Number.isInteger) : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+function isNocksterExternalSource(external: NonNullable<SeedAccount['external']>): boolean {
+  if (external.provider === 'nockster') return true;
+  const sourceRef = parseExternalSourceRef(external.sourceRef);
+  return (
+    typeof sourceRef.slot === 'number' &&
+    Array.isArray(sourceRef.path) &&
+    typeof sourceRef.publicKeyHex === 'string'
+  );
+}
+
 /**
  * Convert a balance query note to transaction builder note format
  * @param note - Note from balance query (with Uint8Array names)
@@ -491,10 +524,14 @@ export class Vault {
     if (!seedAccount || seedAccount.type !== 'external' || !seedAccount.external) {
       return null;
     }
-    if (provider && seedAccount.external.provider !== provider) {
+    if (provider === 'nockster' && !isNocksterExternalSource(seedAccount.external)) {
       return null;
     }
-    const publicKeyHex = seedAccount.external.publicKeyHex;
+    if (provider && provider !== 'nockster' && seedAccount.external.provider !== provider) {
+      return null;
+    }
+    const sourceRef = parseExternalSourceRef(seedAccount.external.sourceRef);
+    const publicKeyHex = seedAccount.external.publicKeyHex ?? sourceRef.publicKeyHex;
     if (!publicKeyHex) {
       return null;
     }
@@ -3175,7 +3212,8 @@ export class Vault {
    */
   async estimateTransactionFee(
     to: string,
-    amount: Nicks
+    amount: Nicks,
+    externalIncludeLockData = true
   ): Promise<{ fee: number } | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
@@ -3187,7 +3225,44 @@ export class Vault {
     }
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
-      return { error: 'Current account is external and cannot sign locally' };
+      const publicKey = this.getExternalPublicKeyForCurrentAccount('nockster');
+      if (!publicKey) {
+        return { error: 'Current account is external and cannot sign locally' };
+      }
+
+      try {
+        await initWasmModules();
+
+        const endpoint = await getEffectiveRpcEndpoint();
+        const rpcClient = createBrowserClient(endpoint);
+        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
+
+        if (balanceResult.utxoCount === 0) {
+          return { error: 'No UTXOs available. Your wallet may have zero balance.' };
+        }
+
+        const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+        const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
+        const txBuilderNotes = await Promise.all(
+          sortedNotes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
+        );
+
+        const unsignedTx = await buildUnsignedMultiNotePayment(
+          txBuilderNotes,
+          to,
+          amount,
+          publicKey,
+          undefined,
+          undefined,
+          balanceResult.blockHeight,
+          externalIncludeLockData
+        );
+
+        return { fee: unsignedTx.feeUsed };
+      } catch (error) {
+        console.error('[Vault] External fee estimation failed:', error);
+        return { error: feeEstimateUserFacingError(error, 'fee') };
+      }
     }
 
     try {
@@ -3273,7 +3348,8 @@ export class Vault {
    * @returns Max sendable amount and fee in nicks, or { error }
    */
   async estimateMaxSendAmount(
-    to: string
+    to: string,
+    externalIncludeLockData = true
   ): Promise<
     | { maxAmount: number; fee: number; totalAvailable: number; utxoCount: number }
     | { error: string }
@@ -3288,7 +3364,59 @@ export class Vault {
     }
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
-      return { error: 'Current account is external and cannot sign locally' };
+      const publicKey = this.getExternalPublicKeyForCurrentAccount('nockster');
+      if (!publicKey) {
+        return { error: 'Current account is external and cannot sign locally' };
+      }
+
+      try {
+        await initWasmModules();
+
+        const notes = this.getAvailableNotes(currentAccount.address);
+        const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+
+        if (notes.length === 0) {
+          return { error: 'No spendable UTXOs available.' };
+        }
+
+        const totalAvailable = notes.reduce((sum, note) => sum + note.assets, 0);
+        const txBuilderNotes = notes.map(convertStoredNoteForTxBuilder);
+        const sortedByValue = [...notes].sort((a, b) => a.assets - b.assets);
+        const smallestNote = sortedByValue[0].assets;
+        const estimationAmount = totalAvailable - Math.floor(smallestNote / 2);
+
+        if (estimationAmount <= 0) {
+          return { error: 'Balance too low to send. Need more than fee amount.' };
+        }
+
+        const unsignedTx = await buildUnsignedMultiNotePayment(
+          txBuilderNotes,
+          to,
+          String(estimationAmount) as Nicks,
+          publicKey,
+          undefined,
+          to,
+          blockHeight,
+          externalIncludeLockData
+        );
+
+        const fee = unsignedTx.feeUsed;
+        const maxAmount = totalAvailable - fee;
+
+        if (maxAmount <= 0) {
+          return { error: 'Balance too low. Fee would exceed available funds.' };
+        }
+
+        return {
+          maxAmount,
+          fee,
+          totalAvailable,
+          utxoCount: notes.length,
+        };
+      } catch (error) {
+        console.error('[Vault] External max send estimation failed:', error);
+        return { error: feeEstimateUserFacingError(error, 'max') };
+      }
     }
 
     try {
@@ -3499,7 +3627,8 @@ export class Vault {
     fee?: Nicks,
     sendMax?: boolean,
     priceUsdAtTime?: number,
-    origin: WalletTransaction['origin'] = 'popup_send'
+    origin: WalletTransaction['origin'] = 'popup_send',
+    externalIncludeLockData = true
   ): Promise<
     { walletTx: WalletTransaction; rawTx: wasm.RawTx; fee: number; broadcasted: false } | { error: string }
   > {
@@ -3567,7 +3696,8 @@ export class Vault {
           publicKey,
           fee,
           refundAddress,
-          blockHeight
+          blockHeight,
+          externalIncludeLockData
         );
 
         const expectedChange = sendMax

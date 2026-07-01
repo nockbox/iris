@@ -98,6 +98,8 @@ export function LockedScreen() {
         navigate('sign-message');
       } else if (pendingSignRawTxRequest) {
         navigate('approve-sign-raw-tx');
+      } else if (window.location.hash.slice(1) === 'nockster-pair') {
+        navigate('wallet-add-nockster');
       } else {
         navigate('home');
       }

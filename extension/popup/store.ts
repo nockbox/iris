@@ -525,10 +525,12 @@ export const useStore = create<AppStore>((set, get) => ({
     try {
       // Check if we're opening for an approval request
       const hash = window.location.hash.slice(1); // Remove '#'
+      const isNocksterPairingRequest = hash === 'nockster-pair';
       const isApprovalRequest =
         hash.startsWith(APPROVAL_CONSTANTS.CONNECT_HASH_PREFIX) ||
         hash.startsWith(APPROVAL_CONSTANTS.TRANSACTION_HASH_PREFIX) ||
-        hash.startsWith(APPROVAL_CONSTANTS.SIGN_MESSAGE_HASH_PREFIX);
+        hash.startsWith(APPROVAL_CONSTANTS.SIGN_MESSAGE_HASH_PREFIX) ||
+        hash.startsWith(APPROVAL_CONSTANTS.SIGN_RAW_TX_HASH_PREFIX);
 
       // Get current vault state from service worker
       const state = await send<{
@@ -583,6 +585,8 @@ export const useStore = create<AppStore>((set, get) => ({
         // For approval requests, don't override the screen
         // Let the approval useEffect handle navigation
         initialScreen = walletState.locked ? 'locked' : 'home';
+      } else if (isNocksterPairingRequest) {
+        initialScreen = walletState.locked ? 'locked' : 'wallet-add-nockster';
       } else if (!state.hasVault) {
         const incompleteOnboardingNoVault = await hasIncompleteOnboarding();
         if (incompleteOnboardingNoVault) {

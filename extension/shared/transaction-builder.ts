@@ -313,7 +313,8 @@ async function buildMultiNotePaymentDraft(
   senderPublicKey: Uint8Array,
   fee?: Nicks,
   refundPKH?: string,
-  blockHeight?: number
+  blockHeight?: number,
+  includeLockData = false
 ): Promise<UnsignedConstructedTransaction> {
   // Initialize WASM
   await ensureWasmInitialized();
@@ -370,8 +371,8 @@ async function buildMultiNotePaymentDraft(
     amount,
     fee,
     refundPKH: changeAddress,
-    // include_lock_data: false for lower fees (0.5 NOCK per word saved)
-    includeLockData: false,
+    // Hardware wallets need output lock data to render PKH recipients instead of lock roots.
+    includeLockData,
     blockHeight,
   });
 }
@@ -386,7 +387,8 @@ export async function buildUnsignedMultiNotePayment(
   senderPublicKey: Uint8Array,
   fee?: Nicks,
   refundPKH?: string,
-  blockHeight?: number
+  blockHeight?: number,
+  includeLockData = false
 ): Promise<UnsignedConstructedTransaction> {
   return buildMultiNotePaymentDraft(
     notes,
@@ -395,7 +397,8 @@ export async function buildUnsignedMultiNotePayment(
     senderPublicKey,
     fee,
     refundPKH,
-    blockHeight
+    blockHeight,
+    includeLockData
   );
 }
 
@@ -424,7 +427,8 @@ export async function buildMultiNotePayment(
   privateKey: wasm.PrivateKey,
   fee?: Nicks,
   refundPKH?: string,
-  blockHeight?: number
+  blockHeight?: number,
+  includeLockData = false
 ): Promise<ConstructedTransaction> {
   const unsigned = await buildMultiNotePaymentDraft(
     notes,
@@ -433,7 +437,8 @@ export async function buildMultiNotePayment(
     senderPublicKey,
     fee,
     refundPKH,
-    blockHeight
+    blockHeight,
+    includeLockData
   );
 
   const settings = await getTxEngineSettingsForHeight(blockHeight ?? 0);
