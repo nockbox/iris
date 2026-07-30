@@ -5,7 +5,14 @@
  * Note: The inpage provider is injected separately via manifest.json with "world": "MAIN"
  */
 
-import { MESSAGE_TARGETS, RUNTIME_MESSAGE_TYPES } from '../shared/constants';
+import {
+  DEFAULT_DISPLAY_MODE,
+  DISPLAY_MODES,
+  MESSAGE_TARGETS,
+  RUNTIME_MESSAGE_TYPES,
+  STORAGE_KEYS,
+} from '../shared/constants';
+import type { DisplayMode } from '../shared/constants';
 
 type BridgeRequest = {
   target: string;
@@ -17,6 +24,35 @@ type BridgeRequest = {
     timeout?: unknown;
   };
 };
+
+let cachedDisplayMode: DisplayMode | null = null;
+
+function normalizeDisplayMode(value: unknown): DisplayMode | null {
+  return value === DISPLAY_MODES.POPUP || value === DISPLAY_MODES.SIDE_PANEL ? value : null;
+}
+
+// Content scripts normally outlive the service worker. Keeping this small cache
+// here preserves the user's mode across cold worker starts without awaiting
+// storage inside the user-gesture message path.
+void chrome.storage.local
+  .get([STORAGE_KEYS.DISPLAY_MODE])
+  .then(stored => {
+    cachedDisplayMode =
+      normalizeDisplayMode(stored[STORAGE_KEYS.DISPLAY_MODE]) ?? DEFAULT_DISPLAY_MODE;
+  })
+  .catch(() => {
+    // An unknown mode fails closed: the worker will not synchronously open a panel.
+    cachedDisplayMode = null;
+  });
+
+chrome.storage.onChanged.addListener((changes, areaName) => {
+  if (areaName !== 'local' || !changes[STORAGE_KEYS.DISPLAY_MODE]) {
+    return;
+  }
+
+  cachedDisplayMode =
+    normalizeDisplayMode(changes[STORAGE_KEYS.DISPLAY_MODE].newValue) ?? DEFAULT_DISPLAY_MODE;
+});
 
 function isBridgeRequest(data: unknown): data is BridgeRequest {
   if (!data || typeof data !== 'object') {
@@ -51,7 +87,16 @@ window.addEventListener('message', async (evt: MessageEvent) => {
 
   let reply: unknown;
   try {
-    reply = await chrome.runtime.sendMessage(data);
+    // Rebuild the envelope instead of spreading page-controlled fields. This
+    // makes runtimeContext authoritative extension context, not dApp metadata.
+    reply = await chrome.runtime.sendMessage({
+      target: data.target,
+      id: data.id,
+      payload: data.payload,
+      runtimeContext: {
+        displayMode: cachedDisplayMode,
+      },
+    });
   } catch (error) {
     reply = {
       error: {

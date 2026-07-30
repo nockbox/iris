@@ -49,7 +49,7 @@ import type {
 import {
   SIDE_PANEL_DEFAULT_PATH,
   LEGACY_SIGN_RAW_TX_METHOD,
-  isApprovalProviderMethod,
+  isSidePanelGestureRequest,
 } from '../shared/side-panel';
 import {
   buildPendingApprovalSessionSnapshot,
@@ -74,12 +74,6 @@ let requestQueue: Array<{
   id: string;
   type: 'connect' | 'transaction' | 'sign-message' | 'sign-raw-tx';
 }> = []; // Queued requests
-
-/**
- * In-memory display mode cache so the user-gesture side panel hook can run
- * synchronously inside the onMessage listener (any await loses the gesture).
- */
-let cachedDisplayMode: DisplayMode = DEFAULT_DISPLAY_MODE;
 
 /**
  * In-memory cache of approved origins
@@ -715,8 +709,6 @@ async function applyDisplayMode(mode: DisplayMode): Promise<void> {
       ? DISPLAY_MODES.SIDE_PANEL
       : DISPLAY_MODES.POPUP;
 
-  cachedDisplayMode = effectiveMode;
-
   if (effectiveMode === DISPLAY_MODES.SIDE_PANEL) {
     await chrome.action.setPopup({ popup: '' });
     await chrome.sidePanel!.setPanelBehavior({ openPanelOnActionClick: true });
@@ -1148,17 +1140,12 @@ function isFromPopup(sender: chrome.runtime.MessageSender): boolean {
  * Must run before any await in the listener — awaiting consumes the gesture.
  */
 function maybeOpenSidePanelOnGesture(msg: any, sender: chrome.runtime.MessageSender): void {
-  if (cachedDisplayMode !== DISPLAY_MODES.SIDE_PANEL || !chrome.sidePanel) {
+  if (!chrome.sidePanel || !isSidePanelGestureRequest(msg)) {
     return;
   }
 
   const tabId = sender.tab?.id;
   if (tabId === undefined || isFromPopup(sender)) {
-    return;
-  }
-
-  const method = msg?.payload?.method;
-  if (!isApprovalProviderMethod(method)) {
     return;
   }
 
