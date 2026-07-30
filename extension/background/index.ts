@@ -53,6 +53,11 @@ import {
 } from '../shared/side-panel';
 import {
   buildPendingApprovalSessionSnapshot,
+  restorePendingApprovalSessionSnapshot,
+  pendingApprovalOriginMatches,
+  pendingApprovalAccountMatches,
+} from '../shared/pending-approval-state';
+import {
   persistPendingApprovalSession,
   loadPendingApprovalSession,
 } from '../shared/pending-approvals-session';
@@ -334,13 +339,10 @@ async function restorePendingApprovalsSession(): Promise<void> {
     return;
   }
 
+  const restored = restorePendingApprovalSessionSnapshot(snapshot, isRequestExpired);
   pendingRequests.clear();
 
-  for (const [id, entry] of Object.entries(snapshot.pending)) {
-    if (isRequestExpired(entry.request.timestamp)) {
-      continue;
-    }
-
+  for (const [id, entry] of Object.entries(restored.pending)) {
     pendingRequests.set(id, {
       request: entry.request,
       origin: entry.origin,
@@ -351,39 +353,11 @@ async function restorePendingApprovalsSession(): Promise<void> {
     });
   }
 
-  requestQueue = snapshot.queue.filter(item => pendingRequests.has(item.id));
-  currentRequestId =
-    snapshot.currentRequestId && pendingRequests.has(snapshot.currentRequestId)
-      ? snapshot.currentRequestId
-      : null;
+  requestQueue = restored.requestQueue;
+  currentRequestId = restored.currentRequestId;
   currentRequestType = currentRequestId
     ? approvalTypeForRequest(pendingRequests.get(currentRequestId)!.request)
     : null;
-
-  // A non-restorable or expired active request may have had valid requests behind it.
-  // Promote the next queued request so it cannot become unreachable in the side panel.
-  if (!currentRequestId) {
-    while (requestQueue.length > 0) {
-      const next = requestQueue.shift()!;
-      if (!pendingRequests.has(next.id)) {
-        continue;
-      }
-      currentRequestId = next.id;
-      currentRequestType = approvalTypeForRequest(pendingRequests.get(next.id)!.request);
-      break;
-    }
-  }
-
-  // Defensive recovery for snapshots written before queue normalization.
-  if (!currentRequestId && pendingRequests.size > 0) {
-    const oldest = [...pendingRequests.entries()].sort(
-      ([, a], [, b]) => a.request.timestamp - b.request.timestamp
-    )[0];
-    if (oldest) {
-      currentRequestId = oldest[0];
-      currentRequestType = approvalTypeForRequest(oldest[1].request);
-    }
-  }
 
   if (
     currentRequestId &&
@@ -408,24 +382,21 @@ async function isPendingRequesterActive(request: PendingRequest): Promise<boolea
     return false;
   }
 
-  if (!request.documentId) {
-    // Legacy snapshots lack a document ID. At least require the same tab origin
-    // and a live Iris content script before allowing a sensitive operation.
-    try {
-      const tab = await chrome.tabs.get(request.tabId);
-      if (normalizeWebOrigin(tab.url) !== request.origin) {
-        return false;
-      }
+  try {
+    const tab = await chrome.tabs.get(request.tabId);
+    if (!pendingApprovalOriginMatches(request.request, normalizeWebOrigin(tab.url))) {
+      return false;
+    }
+
+    if (!request.documentId) {
+      // Legacy snapshots lack a document ID. At least require the same tab origin
+      // and a live Iris content script before allowing a sensitive operation.
       const response = await chrome.tabs.sendMessage(request.tabId, {
         type: RUNTIME_MESSAGE_TYPES.REQUESTER_PING,
       });
       return response?.ok === true;
-    } catch {
-      return false;
     }
-  }
 
-  try {
     const response = await chrome.tabs.sendMessage(
       request.tabId,
       { type: RUNTIME_MESSAGE_TYPES.REQUESTER_PING },
@@ -480,11 +451,7 @@ async function validatePendingApproval(
     void syncPendingApprovalsSession();
   }
 
-  if (
-    !('accountAddress' in pending.request) ||
-    typeof pending.request.accountAddress !== 'string' ||
-    vault.getCurrentAccount()?.address !== pending.request.accountAddress
-  ) {
+  if (!pendingApprovalAccountMatches(pending.request, vault.getCurrentAccount()?.address ?? null)) {
     cancelPendingRequest(requestId, 4001, 'Selected account changed; request the action again');
     processNextRequest();
     sendResponse({ error: 'Selected account changed; request the action again' });
