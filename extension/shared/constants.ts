@@ -329,8 +329,11 @@ export const MESSAGE_TARGETS = {
 /**
  * Configuration - Default settings
  */
-/** Default auto-lock timeout in minutes (0 = never) */
-export const AUTOLOCK_MINUTES = 0;
+/** Default auto-lock timeout in minutes. */
+export const AUTOLOCK_MINUTES = 10;
+
+/** Supported auto-lock choices. Zero preserves the explicit "Never" preference. */
+export const AUTOLOCK_ALLOWED_MINUTES = [0, 1, 5, 10, 15, 30, 60, 240] as const;
 
 /** Default RPC endpoint URL */
 export const RPC_ENDPOINT = 'rpc.nockbox.org';
@@ -360,12 +363,6 @@ export const DEFAULT_TRANSACTION_FEE = 3_407_872;
  * (like GET_STATE, GET_ACCOUNTS, etc.) do NOT reset the timer.
  */
 export const USER_ACTIVITY_METHODS = new Set([
-  // Provider methods (user-initiated actions from dApps)
-  PROVIDER_METHODS.CONNECT,
-  PROVIDER_METHODS.SIGN_MESSAGE,
-  PROVIDER_METHODS.SEND_TRANSACTION,
-  PROVIDER_METHODS.SIGN_TX,
-
   // Internal methods (user actions in the UI)
   INTERNAL_METHODS.UNLOCK,
   INTERNAL_METHODS.SWITCH_ACCOUNT,
@@ -381,6 +378,10 @@ export const USER_ACTIVITY_METHODS = new Set([
   INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION,
   INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE,
   INTERNAL_METHODS.ESTIMATE_MAX_SEND,
+  INTERNAL_METHODS.APPROVE_CONNECTION,
+  INTERNAL_METHODS.APPROVE_TRANSACTION,
+  INTERNAL_METHODS.APPROVE_SIGN_MESSAGE,
+  INTERNAL_METHODS.APPROVE_SIGN_RAW_TX,
   INTERNAL_METHODS.REPORT_ACTIVITY,
 ]);
 
@@ -426,10 +427,16 @@ export const DISPLAY_MODES = {
   SIDE_PANEL: 'sidepanel',
 } as const satisfies Record<string, DisplayMode>;
 
+/** Default for new installs and users without a persisted display-mode preference. */
+export const DEFAULT_DISPLAY_MODE: DisplayMode = DISPLAY_MODES.SIDE_PANEL;
+
 /** Runtime message types (chrome.runtime.sendMessage) */
 export const RUNTIME_MESSAGE_TYPES = {
   /** Side panel should navigate to a pending approval */
   APPROVAL_PENDING: 'APPROVAL_PENDING',
+
+  /** Background verifies that the document which opened an approval is still active. */
+  REQUESTER_PING: 'REQUESTER_PING',
 } as const;
 
 export type ApprovalType = 'connect' | 'transaction' | 'sign-message' | 'sign-raw-tx';

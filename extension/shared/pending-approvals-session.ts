@@ -2,7 +2,7 @@ import { SESSION_STORAGE_KEYS } from './constants';
 import type { ApprovalType } from './constants';
 import type { ConnectRequest, SignRequest, TransactionRequest, SignRawTxRequest } from './types';
 
-type PersistableRequest = ConnectRequest | SignRequest | TransactionRequest;
+type PersistableRequest = ConnectRequest | SignRequest | TransactionRequest | SignRawTxRequest;
 
 export type PendingApprovalSessionSnapshot = {
   currentRequestId: string | null;
@@ -14,6 +14,7 @@ export type PendingApprovalSessionSnapshot = {
       request: PersistableRequest;
       origin: string;
       tabId?: number;
+      documentId?: string;
     }
   >;
 };
@@ -22,13 +23,8 @@ type PendingRequestLike = {
   request: ConnectRequest | SignRequest | TransactionRequest | SignRawTxRequest;
   origin: string;
   tabId?: number;
+  documentId?: string;
 };
-
-function isPersistableRequest(
-  request: ConnectRequest | SignRequest | TransactionRequest | SignRawTxRequest
-): request is PersistableRequest {
-  return !('rawTx' in request && 'notes' in request && 'spendConditions' in request);
-}
 
 export function buildPendingApprovalSessionSnapshot(
   pendingRequests: Map<string, PendingRequestLike>,
@@ -40,9 +36,6 @@ export function buildPendingApprovalSessionSnapshot(
   const pending: PendingApprovalSessionSnapshot['pending'] = {};
 
   for (const [id, entry] of pendingRequests.entries()) {
-    if (!isPersistableRequest(entry.request)) {
-      continue;
-    }
     if (isExpired(entry.request.timestamp)) {
       continue;
     }
@@ -50,6 +43,7 @@ export function buildPendingApprovalSessionSnapshot(
       request: entry.request,
       origin: entry.origin,
       tabId: entry.tabId,
+      documentId: entry.documentId,
     };
   }
 

@@ -12,10 +12,19 @@ import {
   getEffectiveRpcConfig,
   saveRpcConfig,
   clearRpcConfig,
+  normalizeRpcUrl,
   BLOCK_EXPLORER_OPTIONS,
   NOCKSCAN_URL,
   NOCKBLOCKS_URL,
 } from '../../shared/rpc-config';
+
+function isCustomRpcUrl(value: string): boolean {
+  try {
+    return normalizeRpcUrl(value) !== normalizeRpcUrl(defaultRpcConfig.rpcUrl);
+  } catch {
+    return false;
+  }
+}
 
 function txEngineHeightsToJson(heights: TxEngineActivationHeights | undefined): string {
   if (!heights || Object.keys(heights).length === 0) {
@@ -74,9 +83,10 @@ export function RpcSettingsScreen() {
   );
   const [explorerOpen, setExplorerOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [isLoading, setIsLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved'>('idle');
   const [txEngineError, setTxEngineError] = useState<string | null>(null);
+  const [rpcUrlError, setRpcUrlError] = useState<string | null>(null);
+  const [customRpcAcknowledged, setCustomRpcAcknowledged] = useState(false);
   const explorerRef = useRef<HTMLDivElement>(null);
 
   useClickOutside(explorerRef, () => setExplorerOpen(false), explorerOpen);
@@ -99,7 +109,6 @@ export function RpcSettingsScreen() {
             DEFAULT_COINBASE_TIMELOCK_BLOCKS
         )
       );
-      setIsLoading(false);
     });
   }, []);
 
@@ -108,6 +117,19 @@ export function RpcSettingsScreen() {
   }
 
   async function handleSave() {
+    let normalizedRpcUrl: string;
+    try {
+      normalizedRpcUrl = normalizeRpcUrl(rpcUrl);
+    } catch (error) {
+      setRpcUrlError(error instanceof Error ? error.message : 'Enter a valid RPC URL');
+      return;
+    }
+    if (isCustomRpcUrl(normalizedRpcUrl) && !customRpcAcknowledged) {
+      setRpcUrlError('Confirm that you trust this custom RPC before saving');
+      return;
+    }
+    setRpcUrlError(null);
+
     const parsed = parseTxEngineHeightsJson(txEngineConfig);
     if (!parsed) {
       setTxEngineError(
@@ -127,7 +149,7 @@ export function RpcSettingsScreen() {
     try {
       await saveRpcConfig({
         networkName,
-        rpcUrl: rpcUrl.trim(),
+        rpcUrl: normalizedRpcUrl,
         blockExplorerUrl,
         txEngineActivationHeights: parsed,
         coinbaseTimelockBlocks: timelock,
@@ -149,7 +171,10 @@ export function RpcSettingsScreen() {
       String(defaultRpcConfig.coinbaseTimelockBlocks ?? DEFAULT_COINBASE_TIMELOCK_BLOCKS)
     );
     setTxEngineError(null);
+    setRpcUrlError(null);
+    setCustomRpcAcknowledged(false);
     await clearRpcConfig();
+    await refreshRpcDisplayConfig();
   }
 
   const inputClass =
@@ -212,10 +237,46 @@ export function RpcSettingsScreen() {
             className={inputClass}
             style={inputStyle}
             value={rpcUrl}
-            onChange={e => setRpcUrl(e.target.value)}
+            onChange={e => {
+              setRpcUrl(e.target.value);
+              setRpcUrlError(null);
+              setCustomRpcAcknowledged(false);
+            }}
             onFocus={e => (e.currentTarget.style.borderColor = 'var(--color-primary)')}
-            onBlur={e => (e.currentTarget.style.borderColor = 'var(--color-surface-700)')}
+            onBlur={e =>
+              (e.currentTarget.style.borderColor = rpcUrlError
+                ? 'var(--color-error, #ef4444)'
+                : 'var(--color-surface-700)')
+            }
           />
+          {rpcUrlError && (
+            <span className="text-xs" style={{ color: 'var(--color-error, #ef4444)' }} role="alert">
+              {rpcUrlError}
+            </span>
+          )}
+          {isCustomRpcUrl(rpcUrl) && (
+            <label
+              className="rounded-lg p-3 flex items-start gap-2 text-xs leading-5"
+              style={{
+                backgroundColor: 'var(--color-yellow-light, rgba(250, 204, 21, 0.12))',
+                color: 'var(--color-text-primary)',
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={customRpcAcknowledged}
+                onChange={event => {
+                  setCustomRpcAcknowledged(event.target.checked);
+                  setRpcUrlError(null);
+                }}
+                className="mt-1"
+              />
+              <span>
+                I trust this RPC provider. It can observe wallet queries and misreport balances,
+                fees, or network state. Plain HTTP traffic can also be modified in transit.
+              </span>
+            </label>
+          )}
         </div>
 
         <div className="flex flex-col gap-[6px]" ref={explorerRef}>

@@ -8,7 +8,7 @@ import { closeAfterApproval } from '../../utils/displayContext';
 import { AccountIcon } from '../../components/AccountIcon';
 import { SiteIcon } from '../../components/SiteIcon';
 import { truncateAddress } from '../../utils/format';
-import { nickToNock, formatNock } from '../../../shared/currency';
+import { formatNicksAsNock } from '../../../shared/currency';
 
 interface NoteItemProps {
   note: any;
@@ -43,9 +43,7 @@ function NoteItem({ note, type, textPrimary, textMuted, surface }: NoteItemProps
   }
 
   const assetsValue = versionData.assets?.value || '0';
-  const nicks = parseInt(assetsValue, 10);
-  const nocks = nickToNock(nicks);
-  const formattedNocks = formatNock(nocks);
+  const formattedNocks = formatNicksAsNock(String(assetsValue));
 
   const firstName = versionData.name?.first || '';
   const lastName = versionData.name?.last || '';
@@ -54,10 +52,14 @@ function NoteItem({ note, type, textPrimary, textMuted, surface }: NoteItemProps
   // Truncate name: first 4 chars of first name ... last 4 chars of last name
   const truncatedName = `[ ${firstName.slice(0, 4)}...${lastName.slice(-4)} ]`;
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(fullName);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(fullName);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy note name:', error);
+    }
   };
 
   return (
@@ -65,11 +67,13 @@ function NoteItem({ note, type, textPrimary, textMuted, surface }: NoteItemProps
       <div className="flex flex-row items-center gap-1 text-sm font-medium">
         <span style={{ color: textPrimary }}>{formattedNocks} NOCK</span>
         <span style={{ color: textMuted }}>{type}</span>
-        <span
+        <button
+          type="button"
           className="font-mono cursor-pointer hover:opacity-80 transition-opacity relative group"
           style={{ color: textMuted }}
-          onClick={handleCopy}
+          onClick={() => void handleCopy()}
           title={fullName}
+          aria-label={`Copy note name ${fullName}`}
         >
           {truncatedName}
           {copied && (
@@ -77,7 +81,7 @@ function NoteItem({ note, type, textPrimary, textMuted, surface }: NoteItemProps
               Copied!
             </span>
           )}
-        </span>
+        </button>
       </div>
     </div>
   );
@@ -85,15 +89,33 @@ function NoteItem({ note, type, textPrimary, textMuted, surface }: NoteItemProps
 
 export function SignRawTxScreen() {
   const { pendingSignRawTxRequest, setPendingSignRawTxRequest, navigate, wallet } = useStore();
+  const [isSigning, setIsSigning] = useState(false);
+  const [signError, setSignError] = useState('');
+
+  useAutoRejectOnClose(pendingSignRawTxRequest?.id ?? null, INTERNAL_METHODS.REJECT_SIGN_RAW_TX);
+
+  useEffect(() => {
+    if (!pendingSignRawTxRequest) {
+      navigate('home');
+    }
+  }, [navigate, pendingSignRawTxRequest]);
 
   if (!pendingSignRawTxRequest) {
-    navigate('home');
     return null;
   }
 
-  const { id, origin, rawTx, notes, spendConditions, outputs } = pendingSignRawTxRequest;
-
-  useAutoRejectOnClose(id, INTERNAL_METHODS.REJECT_SIGN_RAW_TX);
+  const {
+    id,
+    origin,
+    inputs,
+    inputsVerified,
+    inputCount,
+    outputs,
+    transactionId,
+    totalFee,
+    accountAddress,
+  } = pendingSignRawTxRequest;
+  const signingAccount = wallet.accounts.find(account => account.address === accountAddress);
 
   async function handleDecline() {
     await send(INTERNAL_METHODS.REJECT_SIGN_RAW_TX, [id]);
@@ -102,33 +124,27 @@ export function SignRawTxScreen() {
   }
 
   async function handleSign() {
-    await send(INTERNAL_METHODS.APPROVE_SIGN_RAW_TX, [id]);
-    setPendingSignRawTxRequest(null);
-    closeAfterApproval(navigate);
-  }
-
-  // Network fee from native rawTx. RawTxV1.spends is a ZMap<Name, SpendV1>
-  // serialized as [Name, SpendV1][].
-  let totalFeeNicks = 0;
-  try {
-    const spends =
-      rawTx && typeof rawTx === 'object' && 'spends' in rawTx
-        ? (rawTx as { spends: unknown[] }).spends
-        : undefined;
-    if (spends && Array.isArray(spends) && spends.length > 0) {
-      totalFeeNicks = spends.reduce((sum: number, entry: unknown) => {
-        const spendV1 = (entry as [unknown, unknown])[1] as { fee?: string };
-        const feeValue = spendV1?.fee;
-        const fee = feeValue ? parseInt(feeValue, 10) : 0;
-        return sum + (isNaN(fee) ? 0 : fee);
-      }, 0);
+    setIsSigning(true);
+    setSignError('');
+    try {
+      const result = await send<{ success?: boolean; error?: string }>(
+        INTERNAL_METHODS.APPROVE_SIGN_RAW_TX,
+        [id]
+      );
+      if (result?.error || !result?.success) {
+        setSignError(result?.error || 'Transaction could not be signed');
+        return;
+      }
+      setPendingSignRawTxRequest(null);
+      closeAfterApproval(navigate);
+    } catch (error) {
+      setSignError(error instanceof Error ? error.message : 'Transaction could not be signed');
+    } finally {
+      setIsSigning(false);
     }
-  } catch (err) {
-    console.error('Error calculating fee:', err);
   }
 
-  const totalFeeNocks = nickToNock(totalFeeNicks);
-  const formattedFee = formatNock(totalFeeNocks);
+  const formattedFee = formatNicksAsNock(totalFee);
 
   const bg = 'var(--color-bg)';
   const surface = 'var(--color-surface-800)';
@@ -142,7 +158,7 @@ export function SignRawTxScreen() {
         {/* Header */}
         <div className="flex items-center justify-center px-4 py-4 shrink-0">
           <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>
-            Sign Raw Transaction
+            Review Transaction
           </h2>
         </div>
 
@@ -174,24 +190,68 @@ export function SignRawTxScreen() {
               </div>
             </div>
 
-            {/* Raw Transaction Content */}
+            <div
+              className="mb-3 rounded-lg p-3 text-xs leading-5"
+              style={{
+                backgroundColor: inputsVerified
+                  ? 'var(--color-green-light, rgba(34, 197, 94, 0.12))'
+                  : 'var(--color-yellow-light, rgba(250, 204, 21, 0.12))',
+                color: textPrimary,
+              }}
+            >
+              {inputsVerified
+                ? 'Iris derived this review from the exact transaction and matched every input to an available note in the selected account.'
+                : `Iris could not match all ${inputCount} inputs to the local wallet cache. The transaction ID, outputs, and fee below come from the exact transaction, but the input values are not verified. Only continue if you trust the requesting site.`}
+            </div>
+
             <div className="mb-3">
               <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
-                Inputs ({notes.length})
+                Transaction ID
               </label>
-              <div className="max-h-48 overflow-y-auto">
-                {notes.map((note: any, index: number) => (
-                  <NoteItem
-                    key={`input-${index}`}
-                    note={note}
-                    type="from"
-                    textPrimary={textPrimary}
-                    textMuted={textMuted}
-                    surface={surface}
-                  />
-                ))}
+              <div className="rounded-lg p-3" style={{ backgroundColor: surface }}>
+                <p
+                  className="text-xs font-mono break-all"
+                  style={{ color: textPrimary }}
+                  title={transactionId}
+                >
+                  {transactionId}
+                </p>
               </div>
             </div>
+
+            {/* Verified transaction inputs */}
+            {inputsVerified && (
+              <div className="mb-3">
+                <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
+                  Verified Inputs ({inputs.length})
+                </label>
+                <div className="max-h-48 overflow-y-auto">
+                  {inputs.map((note: any, index: number) => (
+                    <NoteItem
+                      key={`input-${index}`}
+                      note={note}
+                      type="from"
+                      textPrimary={textPrimary}
+                      textMuted={textMuted}
+                      surface={surface}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {signError && (
+              <div
+                className="mb-3 rounded-lg p-3 text-xs"
+                style={{
+                  backgroundColor: 'var(--color-red-light)',
+                  color: 'var(--color-red)',
+                }}
+                role="alert"
+              >
+                {signError}
+              </div>
+            )}
 
             {/* Raw Transaction Outputs */}
             {outputs && outputs.length > 0 && (
@@ -236,16 +296,16 @@ export function SignRawTxScreen() {
                 style={{ backgroundColor: surface }}
               >
                 <AccountIcon
-                  styleId={wallet.currentAccount?.iconStyleId}
-                  color={wallet.currentAccount?.iconColor}
+                  styleId={signingAccount?.iconStyleId}
+                  color={signingAccount?.iconColor}
                   className="w-8 h-8 shrink-0"
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium" style={{ color: textPrimary }}>
-                    {wallet.currentAccount?.name || 'Unknown'}
+                    {signingAccount?.name || 'Unknown'}
                   </p>
                   <p className="text-xs font-mono mt-0.5" style={{ color: textMuted }}>
-                    {truncateAddress(wallet.currentAccount?.address)}
+                    {truncateAddress(accountAddress)}
                   </p>
                 </div>
               </div>
@@ -258,11 +318,21 @@ export function SignRawTxScreen() {
           className="px-4 py-2.5 shrink-0 flex gap-3"
           style={{ borderTop: `1px solid ${divider}` }}
         >
-          <button onClick={handleDecline} className="btn-secondary flex-1">
+          <button
+            type="button"
+            onClick={handleDecline}
+            disabled={isSigning}
+            className="btn-secondary flex-1"
+          >
             Decline
           </button>
-          <button onClick={handleSign} className="btn-primary flex-1">
-            Sign
+          <button
+            type="button"
+            onClick={handleSign}
+            disabled={isSigning}
+            className="btn-primary flex-1 disabled:opacity-50"
+          >
+            {isSigning ? 'Verifying...' : inputsVerified ? 'Sign' : 'Sign anyway'}
           </button>
         </div>
       </div>

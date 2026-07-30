@@ -2946,27 +2946,35 @@ export class Vault {
    * Derives the account's private key and signs the message digest
    * @returns Canonical API v1 signature response
    */
-  async signMessage(params: unknown): Promise<SignMessageResponse> {
+  async signMessage(params: unknown, accountAddress?: string): Promise<SignMessageResponse> {
     if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
-    // Initialize WASM modules
-    await initWasmModules();
-
     const msg = (Array.isArray(params) ? params[0] : params) ?? '';
     const msgString = String(msg);
 
+    // Capture and bind the account before the first await so a concurrent account
+    // switch cannot change which key signs an already-approved message.
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      throw new Error('No account selected');
+    }
+    if (accountAddress && currentAccount.address !== accountAddress) {
+      throw new Error('Signing account changed after approval');
+    }
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
       throw new Error('Current account is external and cannot sign locally');
     }
 
+    // Initialize WASM modules
+    await initWasmModules();
+
     // Derive the account's private key based on derivation method
     const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
-    const currentAccount = this.getCurrentAccount();
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
-    const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
+    const childIndex = currentAccount.index;
     const accountKey = this.isMasterAccount(currentAccount)
       ? masterKey // Use master key directly for master-derived accounts
       : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
@@ -3461,7 +3469,8 @@ export class Vault {
     fee?: Nicks,
     sendMax?: boolean,
     priceUsdAtTime?: number,
-    origin: WalletTransaction['origin'] = 'popup_send'
+    origin: WalletTransaction['origin'] = 'popup_send',
+    accountAddress?: string
   ): Promise<
     { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
   > {
@@ -3472,6 +3481,9 @@ export class Vault {
     const currentAccount = this.getCurrentAccount();
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+    if (accountAddress && currentAccount.address !== accountAddress) {
+      return { error: 'Signing account changed after approval' };
     }
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
@@ -4058,7 +4070,11 @@ export class Vault {
    * @param params - Transaction parameters with raw tx
    * @returns Signed transaction in canonical NockchainTx form
    */
-  async signRawTx(params: { rawTx: wasm.RawTx }): Promise<wasm.NockchainTx> {
+  async signRawTx(params: {
+    rawTx: wasm.RawTx;
+    blockHeight?: number;
+    accountAddress?: string;
+  }): Promise<wasm.NockchainTx> {
     if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
@@ -4069,6 +4085,14 @@ export class Vault {
     const { rawTx } = params;
     assertNativeRawTx(rawTx);
 
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      throw new Error('No account selected');
+    }
+    if (params.accountAddress && currentAccount.address !== params.accountAddress) {
+      throw new Error('Signing account changed after approval');
+    }
+
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
       throw new Error('Current account is external and cannot sign locally');
@@ -4076,8 +4100,7 @@ export class Vault {
 
     // Derive the account's private key
     const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
-    const currentAccount = this.getCurrentAccount();
-    const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
+    const childIndex = currentAccount.index;
     const accountKey = this.isMasterAccount(currentAccount)
       ? masterKey
       : masterKey.deriveChild(childIndex);
@@ -4092,15 +4115,9 @@ export class Vault {
 
     const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
 
-    const endpoint = await getEffectiveRpcEndpoint();
-    const rpcClient = createBrowserClient(endpoint);
-
     try {
-      // Use block height from latest balance (max originPage of current account's notes)
-      const blockHeight = currentAccount
-        ? this.getAccountBlockHeight(currentAccount.address)
-        : await rpcClient.getCurrentBlockHeight();
-
+      // Use the same account block height as the approval descriptor.
+      const blockHeight = params.blockHeight ?? this.getAccountBlockHeight(currentAccount.address);
       const settings = await txEngineSettings(blockHeight);
       if (!guard.isRawTxV1(rawTx)) {
         throw new Error('Only v1 raw transactions are supported');
@@ -4150,5 +4167,69 @@ export class Vault {
       console.error('Failed to compute outputs:', err);
       throw err;
     }
+  }
+
+  /**
+   * Build the trusted review model for a dApp-supplied raw transaction.
+   *
+   * Input names come from the raw transaction and are resolved exclusively against
+   * the selected account's encrypted UTXO store. DApp-supplied note metadata is
+   * intentionally ignored so it cannot influence the approval display.
+   */
+  async describeRawTxForApproval(rawTx: wasm.RawTx): Promise<{
+    transactionId: string;
+    totalFee: Nicks;
+    blockHeight: number;
+    accountAddress: string;
+    inputs: unknown[];
+    inputsVerified: boolean;
+    inputCount: number;
+    outputs: unknown[];
+  }> {
+    if (this.state.locked) {
+      throw new Error('Wallet is locked');
+    }
+
+    await initWasmModules();
+    assertNativeRawTx(rawTx);
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      throw new Error('No account selected');
+    }
+
+    const inputNames = wasm.rawTxInputNames(rawTx);
+    if (inputNames.length === 0) {
+      throw new Error('Transaction has no inputs');
+    }
+
+    const availableNotes = new Map(
+      this.getAvailableNotes(currentAccount.address).map(note => [note.noteId, note])
+    );
+    const resolvedInputs = inputNames.map(name => {
+      const noteId = generateNoteId(String(name.first), String(name.last));
+      const storedNote = availableNotes.get(noteId);
+      return storedNote?.protoNote;
+    });
+    const inputsVerified = resolvedInputs.every(input => input !== undefined);
+    const inputs = inputsVerified ? resolvedInputs : [];
+
+    // Keep output derivation on the exact transaction-engine settings used by signRawTx.
+    const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+    const settings = await txEngineSettings(blockHeight);
+    const outputs = wasm
+      .rawTxOutputs(rawTx, blockHeight, settings)
+      .map(output => wasm.noteToProtobuf(output));
+
+    return {
+      transactionId: String(wasm.rawTxId(rawTx)),
+      totalFee: String(wasm.rawTxTotalFees(rawTx)) as Nicks,
+      blockHeight,
+      accountAddress: currentAccount.address,
+      inputs,
+      inputsVerified,
+      inputCount: inputNames.length,
+      outputs,
+    };
   }
 }

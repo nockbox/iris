@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useStore } from '../store';
 import { send } from '../utils/messaging';
-import { INTERNAL_METHODS } from '../../shared/constants';
+import { AUTOLOCK_MINUTES, INTERNAL_METHODS } from '../../shared/constants';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 
 type LockTimeOption = '1min' | '5min' | '10min' | '15min' | '30min' | '1hour' | '4hours' | 'never';
@@ -16,7 +16,7 @@ function minutesToOption(minutes: number): LockTimeOption {
   if (minutes === 60) return '1hour';
   if (minutes === 240) return '4hours';
   if (minutes === 0) return 'never';
-  return '15min'; // default
+  return '10min';
 }
 
 function optionToMinutes(option: LockTimeOption): number {
@@ -38,7 +38,7 @@ function optionToMinutes(option: LockTimeOption): number {
     case 'never':
       return 0;
     default:
-      return 15;
+      return AUTOLOCK_MINUTES;
   }
 }
 
@@ -48,7 +48,7 @@ function optionToMinutes(option: LockTimeOption): number {
  */
 export function LockTimeScreen() {
   const { navigate } = useStore();
-  const [selectedTime, setSelectedTime] = useState<LockTimeOption>('15min');
+  const [selectedTime, setSelectedTime] = useState<LockTimeOption>('10min');
 
   // Load current lock time setting on mount
   useEffect(() => {

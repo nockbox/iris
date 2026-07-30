@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useStore } from '../../store';
 import { AccountIcon } from '../../components/AccountIcon';
 import { SiteIcon } from '../../components/SiteIcon';
@@ -9,15 +10,23 @@ import { closeAfterApproval } from '../../utils/displayContext';
 
 export function SignMessageScreen() {
   const { navigate, pendingSignRequest, setPendingSignRequest, wallet } = useStore();
+  const [isSigning, setIsSigning] = useState(false);
+  const [signError, setSignError] = useState('');
+
+  useAutoRejectOnClose(pendingSignRequest?.id ?? null, INTERNAL_METHODS.REJECT_SIGN_MESSAGE);
+
+  useEffect(() => {
+    if (!pendingSignRequest) {
+      navigate('home');
+    }
+  }, [navigate, pendingSignRequest]);
 
   if (!pendingSignRequest) {
-    navigate('home');
     return null;
   }
 
-  const { id, origin, message } = pendingSignRequest;
-
-  useAutoRejectOnClose(id, INTERNAL_METHODS.REJECT_SIGN_MESSAGE);
+  const { id, origin, message, accountAddress } = pendingSignRequest;
+  const signingAccount = wallet.accounts.find(account => account.address === accountAddress);
 
   async function handleDecline() {
     await send(INTERNAL_METHODS.REJECT_SIGN_MESSAGE, [id]);
@@ -26,9 +35,24 @@ export function SignMessageScreen() {
   }
 
   async function handleSign() {
-    await send(INTERNAL_METHODS.APPROVE_SIGN_MESSAGE, [id]);
-    setPendingSignRequest(null);
-    closeAfterApproval(navigate);
+    setIsSigning(true);
+    setSignError('');
+    try {
+      const result = await send<{ success?: boolean; error?: string }>(
+        INTERNAL_METHODS.APPROVE_SIGN_MESSAGE,
+        [id]
+      );
+      if (result?.error || !result?.success) {
+        setSignError(result?.error || 'Message could not be signed');
+        return;
+      }
+      setPendingSignRequest(null);
+      closeAfterApproval(navigate);
+    } catch (error) {
+      setSignError(error instanceof Error ? error.message : 'Message could not be signed');
+    } finally {
+      setIsSigning(false);
+    }
   }
 
   const bg = 'var(--color-bg)';
@@ -103,20 +127,33 @@ export function SignMessageScreen() {
                 style={{ backgroundColor: surface }}
               >
                 <AccountIcon
-                  styleId={wallet.currentAccount?.iconStyleId}
-                  color={wallet.currentAccount?.iconColor}
+                  styleId={signingAccount?.iconStyleId}
+                  color={signingAccount?.iconColor}
                   className="w-8 h-8 shrink-0"
                 />
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium" style={{ color: textPrimary }}>
-                    {wallet.currentAccount?.name || 'Unknown'}
+                    {signingAccount?.name || 'Unknown'}
                   </p>
                   <p className="text-xs font-mono mt-0.5" style={{ color: textMuted }}>
-                    {truncateAddress(wallet.currentAccount?.address)}
+                    {truncateAddress(accountAddress)}
                   </p>
                 </div>
               </div>
             </div>
+
+            {signError && (
+              <div
+                className="mt-3 rounded-lg p-3 text-xs"
+                style={{
+                  backgroundColor: 'var(--color-red-light)',
+                  color: 'var(--color-red)',
+                }}
+                role="alert"
+              >
+                {signError}
+              </div>
+            )}
           </div>
         </div>
 
@@ -125,11 +162,21 @@ export function SignMessageScreen() {
           className="px-4 py-2.5 shrink-0 flex gap-3"
           style={{ borderTop: `1px solid ${divider}` }}
         >
-          <button onClick={handleDecline} className="btn-secondary flex-1">
+          <button
+            type="button"
+            onClick={handleDecline}
+            disabled={isSigning}
+            className="btn-secondary flex-1"
+          >
             Decline
           </button>
-          <button onClick={handleSign} className="btn-primary flex-1">
-            Sign
+          <button
+            type="button"
+            onClick={handleSign}
+            disabled={isSigning}
+            className="btn-primary flex-1 disabled:opacity-50"
+          >
+            {isSigning ? 'Verifying...' : 'Sign'}
           </button>
         </div>
       </div>

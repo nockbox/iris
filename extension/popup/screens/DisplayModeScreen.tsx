@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useStore } from '../store';
 import { send } from '../utils/messaging';
-import { INTERNAL_METHODS, DISPLAY_MODES } from '../../shared/constants';
+import { INTERNAL_METHODS, DISPLAY_MODES, DEFAULT_DISPLAY_MODE } from '../../shared/constants';
 import type { DisplayMode } from '../../shared/constants';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { isSidePanel, isSidePanelSupported } from '../utils/displayContext';
@@ -9,7 +9,7 @@ import { SIDE_PANEL_DEFAULT_PATH } from '../../shared/side-panel';
 
 export function DisplayModeScreen() {
   const { navigate } = useStore();
-  const [mode, setMode] = useState<DisplayMode>(DISPLAY_MODES.POPUP);
+  const [mode, setMode] = useState<DisplayMode>(DEFAULT_DISPLAY_MODE);
   const [isSaving, setIsSaving] = useState(false);
   const [showPopupHint, setShowPopupHint] = useState(false);
 
