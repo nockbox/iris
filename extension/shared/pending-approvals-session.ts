@@ -2,7 +2,7 @@ import { SESSION_STORAGE_KEYS } from './constants';
 import type { ApprovalType } from './constants';
 import type { ConnectRequest, SignRequest, TransactionRequest, SignRawTxRequest } from './types';
 
-type PersistableRequest = ConnectRequest | SignRequest | TransactionRequest | SignRawTxRequest;
+type PersistableRequest = ConnectRequest | SignRequest | TransactionRequest;
 
 export type PendingApprovalSessionSnapshot = {
   currentRequestId: string | null;
@@ -26,6 +26,14 @@ type PendingRequestLike = {
   documentId?: string;
 };
 
+function isPersistableRequest(
+  request: ConnectRequest | SignRequest | TransactionRequest | SignRawTxRequest
+): request is PersistableRequest {
+  // Native WASM raw transactions are not structured-clone safe. They must be
+  // requested again after a service-worker restart.
+  return !('rawTx' in request);
+}
+
 export function buildPendingApprovalSessionSnapshot(
   pendingRequests: Map<string, PendingRequestLike>,
   currentRequestId: string | null,
@@ -36,6 +44,9 @@ export function buildPendingApprovalSessionSnapshot(
   const pending: PendingApprovalSessionSnapshot['pending'] = {};
 
   for (const [id, entry] of pendingRequests.entries()) {
+    if (!isPersistableRequest(entry.request)) {
+      continue;
+    }
     if (isExpired(entry.request.timestamp)) {
       continue;
     }

@@ -96,7 +96,7 @@ export function SettingsScreen() {
       </header>
 
       {/* Content */}
-      <div className="flex flex-col justify-between flex-1 flex-1 min-h-0">
+      <div className="flex flex-col justify-between flex-1 min-h-0">
         {/* Menu */}
         <div className="flex flex-col gap-2 px-3 py-2">
           <Row icon={ThemeIcon} label="Theme settings" onClick={handleThemeSettings} />
