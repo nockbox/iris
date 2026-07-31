@@ -435,7 +435,7 @@ export function HomeScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] overflow-hidden relative"
+      className="w-full h-full overflow-hidden relative"
       style={{ backgroundColor: 'var(--color-home-fill)', color: 'var(--color-text-primary)' }}
     >
       <SwapSubmittedToast />

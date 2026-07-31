@@ -1,43 +1,11 @@
 import { useEffect, useState } from 'react';
 
-// Import all wallet icon styles
-import WalletStyle1 from '../assets/wallet-icon-style-1.svg';
-import WalletStyle2 from '../assets/wallet-icon-style-2.svg';
-import WalletStyle3 from '../assets/wallet-icon-style-3.svg';
-import WalletStyle4 from '../assets/wallet-icon-style-4.svg';
-import WalletStyle5 from '../assets/wallet-icon-style-5.svg';
-import WalletStyle6 from '../assets/wallet-icon-style-6.svg';
-import WalletStyle7 from '../assets/wallet-icon-style-7.svg';
-import WalletStyle8 from '../assets/wallet-icon-style-8.svg';
-import WalletStyle9 from '../assets/wallet-icon-style-9.svg';
-import WalletStyle10 from '../assets/wallet-icon-style-10.svg';
-import WalletStyle11 from '../assets/wallet-icon-style-11.svg';
-import WalletStyle12 from '../assets/wallet-icon-style-12.svg';
-import WalletStyle13 from '../assets/wallet-icon-style-13.svg';
-import WalletStyle14 from '../assets/wallet-icon-style-14.svg';
-import WalletStyle15 from '../assets/wallet-icon-style-15.svg';
-
-const iconStyles = [
-  { id: 1, icon: WalletStyle1 },
-  { id: 2, icon: WalletStyle2 },
-  { id: 3, icon: WalletStyle3 },
-  { id: 4, icon: WalletStyle4 },
-  { id: 5, icon: WalletStyle5 },
-  { id: 6, icon: WalletStyle6 },
-  { id: 7, icon: WalletStyle7 },
-  { id: 8, icon: WalletStyle8 },
-  { id: 9, icon: WalletStyle9 },
-  { id: 10, icon: WalletStyle10 },
-  { id: 11, icon: WalletStyle11 },
-  { id: 12, icon: WalletStyle12 },
-  { id: 13, icon: WalletStyle13 },
-  { id: 14, icon: WalletStyle14 },
-  { id: 15, icon: WalletStyle15 },
-];
+import { DEFAULT_WALLET_STYLE, normalizeIconStyleId } from '../../shared/walletStyles';
+import { WALLET_ICON_ASSETS } from './walletIconAssets';
 
 interface AccountIconProps {
-  /** Icon style ID (1-15) */
-  styleId?: number;
+  /** Icon style id (slug; legacy numeric ids are mapped automatically) */
+  styleId?: number | string;
   /** Icon color (hex string) */
   color?: string;
   /** CSS class names */
@@ -49,16 +17,18 @@ interface AccountIconProps {
  * Fetches the SVG and applies the color dynamically
  */
 export function AccountIcon({
-  styleId = 1,
-  color = '#FFC413',
+  styleId,
+  color = DEFAULT_WALLET_STYLE.iconColor,
   className = 'h-6 w-6',
 }: AccountIconProps) {
   const [svgContent, setSvgContent] = useState<string>('');
 
-  useEffect(() => {
-    const selectedIcon = iconStyles.find(s => s.id === styleId) || iconStyles[0];
+  const iconId = normalizeIconStyleId(styleId);
 
-    fetch(selectedIcon.icon)
+  useEffect(() => {
+    const asset = WALLET_ICON_ASSETS[iconId];
+
+    fetch(asset)
       .then(res => res.text())
       .then(text => {
         // Replace CSS var `--fill-0` with the chosen color
@@ -72,7 +42,7 @@ export function AccountIcon({
           `<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" fill="${color}"/></svg>`
         );
       });
-  }, [styleId, color]);
+  }, [iconId, color]);
 
   return <div className={className} dangerouslySetInnerHTML={{ __html: svgContent }} />;
 }

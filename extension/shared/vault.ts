@@ -13,11 +13,16 @@ import {
 import {
   ERROR_CODES,
   STORAGE_KEYS,
-  ACCOUNT_COLORS,
-  PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
   MAX_SUBWALLET_DISCOVERY_SCAN,
 } from './constants';
+import {
+  DEFAULT_WALLET_STYLE,
+  TOTAL_STYLE_COMBINATIONS,
+  getPresetWalletStyle,
+  normalizeIconStyleId,
+  type WalletStyle,
+} from './walletStyles';
 import { SubAccount, SeedAccount } from './types';
 import {
   buildMultiNotePayment,
@@ -341,30 +346,29 @@ export class Vault {
     return (account?.index ?? -1) === 0;
   }
 
-  /** Returns a style (icon + color) not already used by any account across all seeds. */
-  private pickUnusedStyleGlobally(): { iconStyleId: number; iconColor: string } {
+  /**
+   * Returns a style (icon + color) not already used by any account across all seeds.
+   *
+   * Walks the deterministic preset sequence (see `getPresetWalletStyle`) and
+   * returns the first combination still free, so new wallets get a varied but
+   * predictable look. Only once every combination is taken does it fall back
+   * to the default style.
+   */
+  private pickUnusedStyleGlobally(): WalletStyle {
     const allAccounts = this.seedAccounts.flatMap(seed => seed.accounts);
     const usedKeys = new Set(
       allAccounts.map(
-        a => `${a.iconStyleId ?? 1}-${a.iconColor ?? PRESET_WALLET_STYLES[0].iconColor}`
+        a =>
+          `${normalizeIconStyleId(a.iconStyleId)}-${a.iconColor ?? DEFAULT_WALLET_STYLE.iconColor}`
       )
     );
-    for (const preset of PRESET_WALLET_STYLES) {
-      const key = `${preset.iconStyleId}-${preset.iconColor}`;
-      if (!usedKeys.has(key)) {
-        return { iconStyleId: preset.iconStyleId, iconColor: preset.iconColor };
+    for (let i = 0; i < TOTAL_STYLE_COMBINATIONS; i++) {
+      const preset = getPresetWalletStyle(i);
+      if (!usedKeys.has(`${preset.iconStyleId}-${preset.iconColor}`)) {
+        return preset;
       }
     }
-    // All presets used: pick random until we find an unused combo
-    const styleIds = Array.from({ length: 15 }, (_, i) => i + 1);
-    const colors = [...ACCOUNT_COLORS];
-    for (let attempt = 0; attempt < 200; attempt++) {
-      const iconStyleId = styleIds[Math.floor(Math.random() * styleIds.length)];
-      const iconColor = colors[Math.floor(Math.random() * colors.length)];
-      const key = `${iconStyleId}-${iconColor}`;
-      if (!usedKeys.has(key)) return { iconStyleId, iconColor };
-    }
-    return { iconStyleId: 1, iconColor: PRESET_WALLET_STYLES[0].iconColor };
+    return { ...DEFAULT_WALLET_STYLE };
   }
 
   private createSeedAccountFromLegacy(mnemonic: string, legacyAccounts: SubAccount[]): SeedAccount {
@@ -537,8 +541,8 @@ export class Vault {
     }
 
     // Create first account (Wallet 1 at index 0)
-    // Use first preset style for consistent initial experience
-    const firstPreset = PRESET_WALLET_STYLES[0];
+    // Use the default style for consistent initial experience
+    const firstPreset = DEFAULT_WALLET_STYLE;
 
     const masterAddress = await deriveAddressFromMaster(words);
 
@@ -2797,7 +2801,7 @@ export class Vault {
    */
   async updateAccountStyling(
     address: string,
-    iconStyleId: number,
+    iconStyleId: number | string,
     iconColor: string
   ): Promise<{ ok: boolean } | { error: string }> {
     if (this.state.locked) {
@@ -2809,7 +2813,7 @@ export class Vault {
       return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
-    this.state.accounts[index].iconStyleId = iconStyleId;
+    this.state.accounts[index].iconStyleId = normalizeIconStyleId(iconStyleId);
     this.state.accounts[index].iconColor = iconColor;
 
     // Save accounts to encrypted vault
@@ -2942,27 +2946,35 @@ export class Vault {
    * Derives the account's private key and signs the message digest
    * @returns Canonical API v1 signature response
    */
-  async signMessage(params: unknown): Promise<SignMessageResponse> {
+  async signMessage(params: unknown, accountAddress?: string): Promise<SignMessageResponse> {
     if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
-    // Initialize WASM modules
-    await initWasmModules();
-
     const msg = (Array.isArray(params) ? params[0] : params) ?? '';
     const msgString = String(msg);
 
+    // Capture and bind the account before the first await so a concurrent account
+    // switch cannot change which key signs an already-approved message.
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      throw new Error('No account selected');
+    }
+    if (accountAddress && currentAccount.address !== accountAddress) {
+      throw new Error('Signing account changed after approval');
+    }
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
       throw new Error('Current account is external and cannot sign locally');
     }
 
+    // Initialize WASM modules
+    await initWasmModules();
+
     // Derive the account's private key based on derivation method
     const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
-    const currentAccount = this.getCurrentAccount();
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
-    const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
+    const childIndex = currentAccount.index;
     const accountKey = this.isMasterAccount(currentAccount)
       ? masterKey // Use master key directly for master-derived accounts
       : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
@@ -3457,7 +3469,8 @@ export class Vault {
     fee?: Nicks,
     sendMax?: boolean,
     priceUsdAtTime?: number,
-    origin: WalletTransaction['origin'] = 'popup_send'
+    origin: WalletTransaction['origin'] = 'popup_send',
+    accountAddress?: string
   ): Promise<
     { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
   > {
@@ -3468,6 +3481,9 @@ export class Vault {
     const currentAccount = this.getCurrentAccount();
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+    if (accountAddress && currentAccount.address !== accountAddress) {
+      return { error: 'Signing account changed after approval' };
     }
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
@@ -4054,7 +4070,11 @@ export class Vault {
    * @param params - Transaction parameters with raw tx
    * @returns Signed transaction in canonical NockchainTx form
    */
-  async signRawTx(params: { rawTx: wasm.RawTx }): Promise<wasm.NockchainTx> {
+  async signRawTx(params: {
+    rawTx: wasm.RawTx;
+    blockHeight?: number;
+    accountAddress?: string;
+  }): Promise<wasm.NockchainTx> {
     if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
@@ -4065,6 +4085,14 @@ export class Vault {
     const { rawTx } = params;
     assertNativeRawTx(rawTx);
 
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      throw new Error('No account selected');
+    }
+    if (params.accountAddress && currentAccount.address !== params.accountAddress) {
+      throw new Error('Signing account changed after approval');
+    }
+
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
       throw new Error('Current account is external and cannot sign locally');
@@ -4072,8 +4100,7 @@ export class Vault {
 
     // Derive the account's private key
     const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
-    const currentAccount = this.getCurrentAccount();
-    const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
+    const childIndex = currentAccount.index;
     const accountKey = this.isMasterAccount(currentAccount)
       ? masterKey
       : masterKey.deriveChild(childIndex);
@@ -4088,15 +4115,9 @@ export class Vault {
 
     const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
 
-    const endpoint = await getEffectiveRpcEndpoint();
-    const rpcClient = createBrowserClient(endpoint);
-
     try {
-      // Use block height from latest balance (max originPage of current account's notes)
-      const blockHeight = currentAccount
-        ? this.getAccountBlockHeight(currentAccount.address)
-        : await rpcClient.getCurrentBlockHeight();
-
+      // Use the same account block height as the approval descriptor.
+      const blockHeight = params.blockHeight ?? this.getAccountBlockHeight(currentAccount.address);
       const settings = await txEngineSettings(blockHeight);
       if (!guard.isRawTxV1(rawTx)) {
         throw new Error('Only v1 raw transactions are supported');
@@ -4146,5 +4167,69 @@ export class Vault {
       console.error('Failed to compute outputs:', err);
       throw err;
     }
+  }
+
+  /**
+   * Build the trusted review model for a dApp-supplied raw transaction.
+   *
+   * Input names come from the raw transaction and are resolved exclusively against
+   * the selected account's encrypted UTXO store. DApp-supplied note metadata is
+   * intentionally ignored so it cannot influence the approval display.
+   */
+  async describeRawTxForApproval(rawTx: wasm.RawTx): Promise<{
+    transactionId: string;
+    totalFee: Nicks;
+    blockHeight: number;
+    accountAddress: string;
+    inputs: unknown[];
+    inputsVerified: boolean;
+    inputCount: number;
+    outputs: unknown[];
+  }> {
+    if (this.state.locked) {
+      throw new Error('Wallet is locked');
+    }
+
+    await initWasmModules();
+    assertNativeRawTx(rawTx);
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      throw new Error('No account selected');
+    }
+
+    const inputNames = wasm.rawTxInputNames(rawTx);
+    if (inputNames.length === 0) {
+      throw new Error('Transaction has no inputs');
+    }
+
+    const availableNotes = new Map(
+      this.getAvailableNotes(currentAccount.address).map(note => [note.noteId, note])
+    );
+    const resolvedInputs = inputNames.map(name => {
+      const noteId = generateNoteId(String(name.first), String(name.last));
+      const storedNote = availableNotes.get(noteId);
+      return storedNote?.protoNote;
+    });
+    const inputsVerified = resolvedInputs.every(input => input !== undefined);
+    const inputs = inputsVerified ? resolvedInputs : [];
+
+    // Keep output derivation on the exact transaction-engine settings used by signRawTx.
+    const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+    const settings = await txEngineSettings(blockHeight);
+    const outputs = wasm
+      .rawTxOutputs(rawTx, blockHeight, settings)
+      .map(output => wasm.noteToProtobuf(output));
+
+    return {
+      transactionId: String(wasm.rawTxId(rawTx)),
+      totalFee: String(wasm.rawTxTotalFees(rawTx)) as Nicks,
+      blockHeight,
+      accountAddress: currentAccount.address,
+      inputs,
+      inputsVerified,
+      inputCount: inputNames.length,
+      outputs,
+    };
   }
 }

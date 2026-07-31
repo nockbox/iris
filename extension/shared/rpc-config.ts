@@ -74,12 +74,36 @@ export const defaultRpcConfig: RpcConfig = {
   coinbaseTimelockBlocks: DEFAULT_COINBASE_TIMELOCK_BLOCKS,
 };
 
-function ensureHttps(url: string): string {
-  const trimmed = url.trim();
-  const toNormalize = trimmed || RPC_ENDPOINT.trim();
-  if (!toNormalize) return RPC_ENDPOINT;
-  if (/^https?:\/\//i.test(toNormalize)) return toNormalize;
-  return `https://${toNormalize}`;
+/**
+ * Normalize and validate an RPC endpoint.
+ * HTTP remains supported for backwards compatibility with private/test nodes;
+ * the settings UI requires an explicit trust acknowledgement for custom RPCs.
+ */
+export function normalizeRpcUrl(value: string): string {
+  const trimmed = value.trim();
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) && !/^https?:\/\//i.test(trimmed)) {
+    throw new Error('RPC URL must use HTTP or HTTPS');
+  }
+  const withProtocol = /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  let parsed: URL;
+
+  try {
+    parsed = new URL(withProtocol);
+  } catch {
+    throw new Error('Enter a valid RPC URL');
+  }
+
+  if (parsed.username || parsed.password) {
+    throw new Error('RPC URLs cannot contain credentials');
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('RPC URL must use HTTP or HTTPS');
+  }
+  return parsed.toString().replace(/\/$/, '');
+}
+
+function defaultNormalizedRpcUrl(): string {
+  return normalizeRpcUrl(defaultRpcConfig.rpcUrl || RPC_ENDPOINT);
 }
 
 /**
@@ -96,7 +120,7 @@ export async function getEffectiveRpcConfig(): Promise<RpcConfig> {
   if (!stored || Object.keys(stored).length === 0) {
     return {
       ...defaultRpcConfig,
-      rpcUrl: ensureHttps(defaultRpcConfig.rpcUrl),
+      rpcUrl: defaultNormalizedRpcUrl(),
     };
   }
 
@@ -117,7 +141,11 @@ export async function getEffectiveRpcConfig(): Promise<RpcConfig> {
     coinbaseTimelockBlocks:
       stored.coinbaseTimelockBlocks ?? defaultRpcConfig.coinbaseTimelockBlocks,
   };
-  merged.rpcUrl = ensureHttps(merged.rpcUrl);
+  try {
+    merged.rpcUrl = normalizeRpcUrl(merged.rpcUrl);
+  } catch {
+    merged.rpcUrl = defaultNormalizedRpcUrl();
+  }
   return merged;
 }
 
@@ -133,7 +161,11 @@ export async function getEffectiveRpcEndpoint(): Promise<string> {
  * Save RPC config to storage. Pass partial to only override specific keys.
  */
 export async function saveRpcConfig(config: StoredRpcConfig): Promise<void> {
-  await chrome.storage.local.set({ [STORAGE_KEYS.RPC_CONFIG]: config });
+  const normalized: StoredRpcConfig = {
+    ...config,
+    ...(config.rpcUrl !== undefined ? { rpcUrl: normalizeRpcUrl(config.rpcUrl) } : {}),
+  };
+  await chrome.storage.local.set({ [STORAGE_KEYS.RPC_CONFIG]: normalized });
 }
 
 /**

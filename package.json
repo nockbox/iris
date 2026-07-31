@@ -11,6 +11,7 @@
     "preview": "vite preview",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
+    "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
@@ -25,7 +26,8 @@
     "tailwindcss": "^4.1.14",
     "terser": "^5.44.1",
     "typescript": "^5.5.3",
-    "vite": "^5.3.3"
+    "vite": "^5.3.3",
+    "vitest": "^3.2.6"
   },
   "optionalDependencies": {
     "lightningcss-linux-x64-gnu": "1.30.1"

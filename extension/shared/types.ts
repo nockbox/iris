@@ -17,8 +17,8 @@ export interface SubAccount {
   address: string;
   /** BIP-44 derivation index (0 = master/underived, 1+ = slip10 children) */
   index: number;
-  /** Icon style ID (1-15, defaults to index % 3 + 1 for variety) */
-  iconStyleId?: number;
+  /** Icon style id (slug, e.g. 'sun'); legacy vaults may hold numeric ids 1-15 */
+  iconStyleId?: number | string;
   /** Icon color (hex string, defaults to #FFC413) */
   iconColor?: string;
   /** Whether this account is hidden from the UI */
@@ -130,6 +130,8 @@ export interface ConnectRequest {
   id: string;
   /** Origin of the requesting site (e.g., "https://app.example.com") */
   origin: string;
+  /** Account selected for the permission grant, populated after unlock when necessary. */
+  accountAddress?: string;
   /** Request timestamp */
   timestamp: number;
 }
@@ -144,6 +146,8 @@ export interface SignRequest {
   origin: string;
   /** Message to be signed */
   message: string;
+  /** Account selected when the signing request was created. */
+  accountAddress: string;
   /** Request timestamp */
   timestamp: number;
 }
@@ -162,6 +166,8 @@ export interface TransactionRequest {
   amount: Nicks;
   /** Transaction fee in nicks */
   fee: Nicks;
+  /** Account selected when the transaction request was created. */
+  accountAddress: string;
   /** Request timestamp */
   timestamp: number;
 }
@@ -169,8 +175,20 @@ export interface TransactionRequest {
 /** Pending signTx approval request stored in native wasm form. */
 export interface SignRawTxRequest {
   rawTx: unknown; // wasm.RawTx (native)
-  notes: unknown[]; // wasm.Note[] (native); popup receives protobuf for display
-  spendConditions: unknown[]; // wasm.SpendCondition[] (native)
+  /** Inputs resolved from the selected account's encrypted UTXO store. */
+  inputs: unknown[];
+  /** Whether every transaction input was matched to an available local wallet note. */
+  inputsVerified: boolean;
+  /** Number of input names committed by the raw transaction. */
+  inputCount: number;
+  /** Canonical ID calculated by WASM from rawTx at intake. */
+  transactionId: string;
+  /** Total fee calculated by WASM from rawTx, in nicks. */
+  totalFee: Nicks;
+  /** Account block height used to derive outputs and transaction-engine settings. */
+  reviewBlockHeight: number;
+  /** Account whose available notes were used to verify the transaction inputs. */
+  accountAddress: string;
   id: string;
   origin: string;
   outputs?: unknown[];

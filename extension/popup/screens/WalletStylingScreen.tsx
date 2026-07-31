@@ -1,26 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { useStore } from '../store';
 import { send } from '../utils/messaging';
-import { INTERNAL_METHODS, ACCOUNT_COLORS } from '../../shared/constants';
+import { INTERNAL_METHODS } from '../../shared/constants';
+import {
+  ACCOUNT_COLORS,
+  DEFAULT_WALLET_STYLE,
+  WALLET_ICONS,
+  normalizeIconStyleId,
+} from '../../shared/walletStyles';
+import { WALLET_ICON_ASSETS } from '../components/walletIconAssets';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
-
-// Icons
-import WalletStyle1 from '../assets/wallet-icon-style-1.svg';
-import WalletStyle2 from '../assets/wallet-icon-style-2.svg';
-import WalletStyle3 from '../assets/wallet-icon-style-3.svg';
-import WalletStyle4 from '../assets/wallet-icon-style-4.svg';
-import WalletStyle5 from '../assets/wallet-icon-style-5.svg';
-import WalletStyle6 from '../assets/wallet-icon-style-6.svg';
-import WalletStyle7 from '../assets/wallet-icon-style-7.svg';
-import WalletStyle8 from '../assets/wallet-icon-style-8.svg';
-import WalletStyle9 from '../assets/wallet-icon-style-9.svg';
-import WalletStyle10 from '../assets/wallet-icon-style-10.svg';
-import WalletStyle11 from '../assets/wallet-icon-style-11.svg';
-import WalletStyle12 from '../assets/wallet-icon-style-12.svg';
-import WalletStyle13 from '../assets/wallet-icon-style-13.svg';
-import WalletStyle14 from '../assets/wallet-icon-style-14.svg';
-import WalletStyle15 from '../assets/wallet-icon-style-15.svg';
 
 export function WalletStylingScreen() {
   const { navigate, wallet, refreshWalletAccounts, settingsAccountAddress } = useStore();
@@ -35,40 +25,27 @@ export function WalletStylingScreen() {
     wallet.accounts[0];
 
   // Load initial values from current account or use defaults
-  const [selectedStyle, setSelectedStyle] = useState(currentAccount?.iconStyleId || 1);
-  const [selectedColor, setSelectedColor] = useState(currentAccount?.iconColor || '#FFC413');
+  const [selectedStyle, setSelectedStyle] = useState(
+    normalizeIconStyleId(currentAccount?.iconStyleId)
+  );
+  const [selectedColor, setSelectedColor] = useState(
+    currentAccount?.iconColor || DEFAULT_WALLET_STYLE.iconColor
+  );
   const [svgContent, setSvgContent] = useState<string>('');
 
   // Track if we're scrolled to the end (false = at start, true = at end)
   const [isScrolledRight, setIsScrolledRight] = useState(false);
   const colorScrollRef = useRef<HTMLDivElement>(null);
 
-  const iconStyles = [
-    { id: 1, icon: WalletStyle1 },
-    { id: 2, icon: WalletStyle2 },
-    { id: 3, icon: WalletStyle3 },
-    { id: 4, icon: WalletStyle4 },
-    { id: 5, icon: WalletStyle5 },
-    { id: 6, icon: WalletStyle6 },
-    { id: 7, icon: WalletStyle7 },
-    { id: 8, icon: WalletStyle8 },
-    { id: 9, icon: WalletStyle9 },
-    { id: 10, icon: WalletStyle10 },
-    { id: 11, icon: WalletStyle11 },
-    { id: 12, icon: WalletStyle12 },
-    { id: 13, icon: WalletStyle13 },
-    { id: 14, icon: WalletStyle14 },
-    { id: 15, icon: WalletStyle15 },
-  ];
-
-  // Use shared color constants
+  // Shared icon registry (picker order: similar styles grouped) and color palette
+  const iconStyles = WALLET_ICONS.map(icon => ({ id: icon.id, icon: WALLET_ICON_ASSETS[icon.id] }));
   const colors = ACCOUNT_COLORS;
 
   // Sync state when current account changes
   useEffect(() => {
     if (currentAccount) {
-      setSelectedStyle(currentAccount.iconStyleId || 1);
-      const color = currentAccount.iconColor || '#FFC413';
+      setSelectedStyle(normalizeIconStyleId(currentAccount.iconStyleId));
+      const color = currentAccount.iconColor || DEFAULT_WALLET_STYLE.iconColor;
       setSelectedColor(color);
     }
   }, [currentAccount?.address, currentAccount?.iconStyleId, currentAccount?.iconColor]);
@@ -89,7 +66,7 @@ export function WalletStylingScreen() {
   }, [selectedStyle, selectedColor]);
 
   // Persist styling changes
-  async function handleStyleChange(styleId: number) {
+  async function handleStyleChange(styleId: string) {
     if (!currentAccount) return;
 
     setSelectedStyle(styleId);
@@ -149,7 +126,7 @@ export function WalletStylingScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col"
+      className="w-full h-full flex flex-col"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}
@@ -173,7 +150,7 @@ export function WalletStylingScreen() {
       </header>
 
       {/* Content */}
-      <div className="flex flex-col gap-[20px] h-[536px] pt-[16px] px-0 pb-0">
+      <div className="flex flex-col gap-[20px] flex-1 min-h-0 pt-[16px] px-0 pb-0">
         {/* Preview */}
         <div className="flex items-center justify-center shrink-0">
           <div className="w-24 h-24 block" dangerouslySetInnerHTML={{ __html: svgContent }} />

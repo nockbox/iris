@@ -74,6 +74,7 @@ export type Screen =
   | 'home'
   | 'settings'
   | 'theme-settings'
+  | 'display-mode'
   | 'lock-time'
   | 'key-settings'
   | 'rpc-settings'
