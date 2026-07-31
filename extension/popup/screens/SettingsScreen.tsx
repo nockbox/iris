@@ -1,5 +1,4 @@
 import { useStore } from '../store';
-import IrisLogo from '../assets/iris-logo.svg';
 import ThemeIcon from '../assets/theme-icon.svg';
 import DisplayModeIcon from '../assets/display-mode-icon.svg';
 import RpcSettingsIcon from '../assets/rpc-settings-icon.svg';
@@ -8,12 +7,15 @@ import ClockIcon from '../assets/clock-icon.svg';
 import TransferV0Icon from '../assets/transferv0_icon.svg';
 import { CloseIcon } from '../components/icons/CloseIcon';
 import { ChevronRightIcon } from '../components/icons/ChevronRightIcon';
+import { AccountIcon } from '../components/AccountIcon';
 import AboutIcon from '../assets/settings-gear-icon.svg';
 import { version } from '../../../package-lock.json';
 import { isSidePanelSupported } from '../utils/displayContext';
 
 export function SettingsScreen() {
-  const { navigate } = useStore();
+  const { navigate, wallet } = useStore();
+  const currentAccount =
+    wallet.currentAccount ?? wallet.accounts.find(account => !account.hidden) ?? wallet.accounts[0];
 
   function handleClose() {
     navigate('home');
@@ -79,7 +81,11 @@ export function SettingsScreen() {
         style={{ backgroundColor: 'var(--color-bg)' }}
       >
         <div className="w-8 h-8 flex items-center justify-center shrink-0">
-          <img src={IrisLogo} alt="Iris" className="w-6 h-6" />
+          <AccountIcon
+            styleId={currentAccount?.iconStyleId}
+            color={currentAccount?.iconColor}
+            className="w-6 h-6"
+          />
         </div>
         <h1 className="m-0 text-base font-medium leading-[22px] tracking-[0.16px]">Settings</h1>
         <button
