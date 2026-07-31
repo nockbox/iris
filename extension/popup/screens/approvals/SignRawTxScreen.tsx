@@ -111,7 +111,7 @@ export function SignRawTxScreen() {
     inputsVerified,
     inputCount,
     outputs,
-    transactionId,
+    signingIntentId,
     totalFee,
     accountAddress,
   } = pendingSignRawTxRequest;
@@ -201,20 +201,20 @@ export function SignRawTxScreen() {
             >
               {inputsVerified
                 ? 'Iris derived this review from the exact transaction and matched every input to an available note in the selected account.'
-                : `Iris could not match all ${inputCount} inputs to the local wallet cache. The transaction ID, outputs, and fee below come from the exact transaction, but the input values are not verified. Only continue if you trust the requesting site.`}
+                : `Iris could not match all ${inputCount} inputs to the local wallet cache. The transaction intent, outputs, and fee below come from the exact transaction, but the input values are not verified. Only continue if you trust the requesting site.`}
             </div>
 
             <div className="mb-3">
               <label className="text-xs block mb-1.5 font-medium" style={{ color: textMuted }}>
-                Transaction ID
+                Transaction intent ID
               </label>
               <div className="rounded-lg p-3" style={{ backgroundColor: surface }}>
                 <p
                   className="text-xs font-mono break-all"
                   style={{ color: textPrimary }}
-                  title={transactionId}
+                  title={signingIntentId}
                 >
-                  {transactionId}
+                  {signingIntentId}
                 </p>
               </div>
             </div>

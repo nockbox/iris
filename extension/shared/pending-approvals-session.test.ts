@@ -48,6 +48,7 @@ function rawRequest(id: string, timestamp = ACTIVE_TIMESTAMP): SignRawTxRequest 
     inputsVerified: false,
     inputCount: 1,
     transactionId: 'tx-id',
+    signingIntentId: 'intent-id',
     totalFee: '1' as SignRawTxRequest['totalFee'],
     reviewBlockHeight: 1,
   };

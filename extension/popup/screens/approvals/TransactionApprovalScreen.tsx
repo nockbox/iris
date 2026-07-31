@@ -175,6 +175,13 @@ export function TransactionApprovalScreen() {
                 </div>
               </div>
 
+              {isFeeEstimated && (
+                <div className="text-center text-xs px-2" style={{ color: textMuted }}>
+                  The final network fee is calculated when the transaction is built and may differ
+                  from this estimate.
+                </div>
+              )}
+
               {/* Balance After */}
               <div className="text-center text-xs py-2" style={{ color: textMuted }}>
                 {isFeeEstimated ? 'Estimated balance after' : 'Balance after'}:{' '}

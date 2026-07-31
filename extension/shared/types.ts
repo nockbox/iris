@@ -188,6 +188,8 @@ export interface SignRawTxRequest {
   inputCount: number;
   /** Canonical ID calculated by WASM from rawTx at intake. */
   transactionId: string;
+  /** Stable hash of the witnessless spends that the user is approving. */
+  signingIntentId: string;
   /** Total fee calculated by WASM from rawTx, in nicks. */
   totalFee: Nicks;
   /** Account block height used to derive outputs and transaction-engine settings. */

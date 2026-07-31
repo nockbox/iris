@@ -74,7 +74,11 @@ import {
 import { buildBridgeTransaction, validateBridgeTransaction } from '@nockbox/iris-sdk';
 import { BRIDGE_CONFIG } from './bridge-config';
 import { rewriteInsufficientFeeErrorToDecimalNock } from './currency';
-import { resolveBuiltTransactionAmounts } from './transaction-fee';
+import {
+  buildWithAdvisoryFeeRetry,
+  resolveBuiltInputSelection,
+  resolveBuiltTransactionAmounts,
+} from './transaction-fee';
 
 type SendTransactionV2Options = {
   /** Advisory fee for note selection only. WASM still calculates the actual fee. */
@@ -3536,8 +3540,6 @@ export class Vault {
             return { error: 'No available UTXOs.' };
           }
 
-          const totalAvailable = availableStoredNotes.reduce((sum, n) => sum + n.assets, 0);
-
           // 2. Choose enough notes using the exact override, an advisory estimate, or the
           // legacy fallback. Only `fee` is forwarded to WASM as an exact fee override.
           const amountNum = Number(amount);
@@ -3580,8 +3582,6 @@ export class Vault {
           }
 
           selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
-          const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
-
           // 4. Mark notes as in_flight BEFORE building transaction
           await this.markNotesInFlight(currentAccount.address, selectedNoteIds, walletTxId);
 
@@ -3603,44 +3603,94 @@ export class Vault {
           };
           await this.addWalletTransaction(walletTx);
 
-          // 6. Convert stored notes to transaction builder format
-          const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
-          const txBuilderNotes = sortedStoredNotes.map(convertStoredNoteForTxBuilder);
-
           const endpoint = await getEffectiveRpcEndpoint();
           const rpcClient = createBrowserClient(endpoint);
 
           // For sendMax: set refundPKH = recipient so all funds go to recipient (sweep)
           const refundAddress = sendMax ? to : undefined;
 
-          const constructedTx = await buildMultiNotePayment(
-            txBuilderNotes,
-            to,
-            amount,
-            accountKey.publicKey,
-            privateKey,
-            fee,
-            refundAddress,
-            blockHeight
+          // 6. Build with the approval estimate as a selection hint. If WASM's actual
+          // fee needs more value, reserve the remaining locally-available notes and
+          // retry once. Explicit-fee requests never take this path.
+          const allowAdvisoryRetry =
+            !sendMax && fee === undefined && options.feeSelectionHint !== undefined;
+          const buildAttempt = await buildWithAdvisoryFeeRetry({
+            initialCandidates: selectedStoredNotes,
+            retryCandidates: allowAdvisoryRetry ? availableStoredNotes : selectedStoredNotes,
+            allowRetry: allowAdvisoryRetry,
+            beforeRetry: async retryCandidates => {
+              const retryNoteIds = retryCandidates.map(note => note.noteId);
+              const initiallyReserved = new Set(selectedNoteIds);
+              const additionalNoteIds = retryNoteIds.filter(
+                noteId => !initiallyReserved.has(noteId)
+              );
+
+              // Assign before awaiting so the outer failure path releases every note
+              // even if persistence fails after partially reserving the retry set.
+              selectedNoteIds = retryNoteIds;
+              if (additionalNoteIds.length > 0) {
+                await this.markNotesInFlight(currentAccount.address, additionalNoteIds, walletTxId);
+              }
+            },
+            build: async candidates => {
+              const txBuilderNotes = [...candidates]
+                .sort((a, b) => b.assets - a.assets)
+                .map(convertStoredNoteForTxBuilder);
+              return await buildMultiNotePayment(
+                txBuilderNotes,
+                to,
+                amount,
+                accountKey.publicKey,
+                privateKey,
+                fee,
+                refundAddress,
+                blockHeight
+              );
+            },
+          });
+          const constructedTx = buildAttempt.result;
+
+          const builtRawTx = wasm.nockchainTxToRawTx(constructedTx.nockchainTx);
+          const builtInputNoteIds = wasm
+            .rawTxInputNames(builtRawTx)
+            .map(name => generateNoteId(String(name.first), String(name.last)));
+          const builtSelection = resolveBuiltInputSelection(
+            buildAttempt.candidates,
+            builtInputNoteIds
           );
 
+          // Retry candidates are reservations, not necessarily transaction inputs.
+          // Release anything WASM did not select before broadcasting.
+          const builtInputSet = new Set(builtSelection.inputNoteIds);
+          const unusedReservedNoteIds = selectedNoteIds.filter(
+            noteId => !builtInputSet.has(noteId)
+          );
+          if (unusedReservedNoteIds.length > 0) {
+            await this.releaseInFlightNotes(currentAccount.address, unusedReservedNoteIds);
+          }
+          selectedNoteIds = builtSelection.inputNoteIds;
+
           const actualAmounts = resolveBuiltTransactionAmounts(
-            selectedTotal,
+            builtSelection.selectedTotal,
             amount,
             constructedTx.feeUsed,
             sendMax
           );
 
           // 7. Broadcast transaction
+          walletTx.inputNoteIds = selectedNoteIds;
+          walletTx.fee = actualAmounts.fee;
+          walletTx.expectedChange = actualAmounts.expectedChange;
           await this.updateWalletTransaction(currentAccount.address, walletTxId, {
             status: 'broadcast_pending',
+            inputNoteIds: selectedNoteIds,
+            fee: actualAmounts.fee,
+            expectedChange: actualAmounts.expectedChange,
           });
           const protobufTx = nockchainTxToProtobuf(constructedTx.nockchainTx);
           await rpcClient.sendTransaction(protobufTx);
 
           // 8. Update tx status to broadcasted
-          walletTx.fee = actualAmounts.fee;
-          walletTx.expectedChange = actualAmounts.expectedChange;
           walletTx.txHash = constructedTx.txId;
           walletTx.trackingTxId = constructedTx.txId;
           walletTx.status = 'broadcasted_unconfirmed';
@@ -4212,6 +4262,7 @@ export class Vault {
    */
   async describeRawTxForApproval(rawTx: wasm.RawTx): Promise<{
     transactionId: string;
+    signingIntentId: string;
     totalFee: Nicks;
     blockHeight: number;
     accountAddress: string;
@@ -4226,6 +4277,9 @@ export class Vault {
 
     await initWasmModules();
     assertNativeRawTx(rawTx);
+    if (!guard.isRawTxV1(rawTx)) {
+      throw new Error('Only v1 raw transactions are supported');
+    }
 
     const currentAccount = this.getCurrentAccount();
     if (!currentAccount) {
@@ -4254,9 +4308,19 @@ export class Vault {
     const outputs = wasm
       .rawTxOutputs(rawTx, blockHeight, settings)
       .map(output => wasm.noteToProtobuf(output));
+    const intentBuilder = wasm.TxBuilder.fromRawTx(rawTx, settings);
+    let signingIntentId: string;
+    try {
+      // Rebuilding splits witness data from spends. Hashing those witnessless
+      // spends produces an intent ID that remains stable as signatures are added.
+      signingIntentId = String(wasm.spendsV1Hash(intentBuilder.build().spends));
+    } finally {
+      intentBuilder.free();
+    }
 
     return {
       transactionId: String(wasm.rawTxId(rawTx)),
+      signingIntentId,
       totalFee: String(wasm.rawTxTotalFees(rawTx)) as Nicks,
       blockHeight,
       accountAddress: currentAccount.address,

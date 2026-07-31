@@ -670,6 +670,7 @@ function isSignRawTxRequest(
     'inputsVerified' in request &&
     'inputCount' in request &&
     'transactionId' in request &&
+    'signingIntentId' in request &&
     'reviewBlockHeight' in request &&
     'accountAddress' in request
   );
@@ -1364,6 +1365,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           inputCount: review.inputCount,
           outputs: review.outputs,
           transactionId: review.transactionId,
+          signingIntentId: review.signingIntentId,
           totalFee: review.totalFee,
           reviewBlockHeight: review.blockHeight,
           accountAddress: review.accountAddress,
@@ -2202,6 +2204,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             const currentReview = await vault.describeRawTxForApproval(signRawTxRequest.rawTx);
             if (
               currentReview.transactionId !== signRawTxRequest.transactionId ||
+              currentReview.signingIntentId !== signRawTxRequest.signingIntentId ||
               currentReview.blockHeight !== signRawTxRequest.reviewBlockHeight ||
               currentReview.accountAddress !== signRawTxRequest.accountAddress ||
               (signRawTxRequest.inputsVerified && !currentReview.inputsVerified)
@@ -2214,9 +2217,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               blockHeight: signRawTxRequest.reviewBlockHeight,
               accountAddress: signRawTxRequest.accountAddress,
             });
-            const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
-            const signedTransactionId = String(wasm.rawTxId(signedRawTx));
-            if (signedTransactionId !== signRawTxRequest.transactionId) {
+            const signedIntentId = String(wasm.spendsV1Hash(signedTx.spends));
+            if (signedIntentId !== signRawTxRequest.signingIntentId) {
               throw new Error('Signed transaction does not match the approved transaction');
             }
 
