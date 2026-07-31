@@ -42,6 +42,7 @@ import type {
   SignRawTxRequest,
   WalletTransaction,
 } from '../shared/types';
+import { resolveTransactionFeeForBuild } from '../shared/transaction-fee';
 
 const vault = new Vault();
 let lastActivity = Date.now();
@@ -1614,17 +1615,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
 
           try {
+            const feeBuildOptions = resolveTransactionFeeForBuild(
+              txRequest.fee,
+              txRequest.feeEstimated
+            );
             const v2Result = await vault.sendTransactionV2(
               txRequest.to,
               txRequest.amount,
-              // Always a concrete fee: the dApp's explicit fee, or the wallet's
-              // fresh estimate (matches the popup send flow). This sizes note
-              // selection to the displayed fee rather than the 2-NOCK placeholder
-              // the undefined-fee branch would use.
-              txRequest.fee,
+              feeBuildOptions.fee,
               false,
               undefined,
-              'provider_send'
+              'provider_send',
+              { feeSelectionHint: feeBuildOptions.feeSelectionHint }
             );
 
             if ('error' in v2Result) {
@@ -1634,8 +1636,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             approveTxPending.sendResponse({
               txid: v2Result.txId,
               amount: txRequest.amount,
-              // Fee charged equals txRequest.fee (applied verbatim as fee override)
-              fee: txRequest.fee,
+              // Return the actual fee used by WASM, which may differ from the approval estimate.
+              fee: String(v2Result.walletTx.fee) as Nicks,
             });
             cancelPendingRequest(approveTxId);
             processNextRequest();
@@ -1884,7 +1886,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
-      case INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE:
+      case INTERNAL_METHODS.ESTIMATE_SEND_FEE:
         // params: [to, amount] - amount in nicks
         if (vault.isLocked()) {
           sendResponse({ error: ERROR_CODES.LOCKED });

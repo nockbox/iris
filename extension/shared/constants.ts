@@ -122,8 +122,8 @@ export const INTERNAL_METHODS = {
   /** Sign a transaction (internal popup-initiated transactions) */
   SIGN_TRANSACTION: 'wallet:signTransaction',
 
-  /** Estimate transaction fee for a given recipient and amount */
-  ESTIMATE_TRANSACTION_FEE: 'wallet:estimateTransactionFee',
+  /** Estimate transaction fee for a wallet-initiated send. Keep the wire value for compatibility. */
+  ESTIMATE_SEND_FEE: 'wallet:estimateTransactionFee',
 
   /** Estimate max sendable amount (for "send max" feature) */
   ESTIMATE_MAX_SEND: 'wallet:estimateMaxSend',
@@ -374,7 +374,7 @@ export const USER_ACTIVITY_METHODS = new Set([
   INTERNAL_METHODS.GET_MNEMONIC, // Viewing secret phrase is user activity
   INTERNAL_METHODS.SEND_TRANSACTION_V2,
   INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION,
-  INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE,
+  INTERNAL_METHODS.ESTIMATE_SEND_FEE,
   INTERNAL_METHODS.ESTIMATE_MAX_SEND,
   INTERNAL_METHODS.REPORT_ACTIVITY,
 ]);

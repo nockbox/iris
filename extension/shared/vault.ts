@@ -70,6 +70,11 @@ import { buildBridgeTransaction, validateBridgeTransaction } from '@nockbox/iris
 import { BRIDGE_CONFIG } from './bridge-config';
 import { rewriteInsufficientFeeErrorToDecimalNock } from './currency';
 
+type SendTransactionV2Options = {
+  /** Advisory fee for note selection only. WASM still calculates the actual fee. */
+  feeSelectionHint?: Nicks;
+};
+
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
   return await getTxEngineSettingsForHeight(blockHeight);
 }
@@ -3449,6 +3454,7 @@ export class Vault {
    * @param fee - Fee in nicks (optional, WASM will calculate if not provided)
    * @param sendMax - If true, sweep all available UTXOs to recipient (no change back)
    * @param priceUsdAtTime - USD price per NOCK at time of transaction (for historical display)
+   * @param options.feeSelectionHint - Advisory fee used only to choose enough notes
    * @returns Transaction result with txId and wallet transaction record
    */
   async sendTransactionV2(
@@ -3457,7 +3463,8 @@ export class Vault {
     fee?: Nicks,
     sendMax?: boolean,
     priceUsdAtTime?: number,
-    origin: WalletTransaction['origin'] = 'popup_send'
+    origin: WalletTransaction['origin'] = 'popup_send',
+    options: SendTransactionV2Options = {}
   ): Promise<
     { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
   > {
@@ -3512,8 +3519,20 @@ export class Vault {
 
           const totalAvailable = availableStoredNotes.reduce((sum, n) => sum + n.assets, 0);
 
-          // 2. Estimate fee if not provided (rough estimate: 2 NOCK should cover most cases)
-          const estimatedFeeNum = fee !== undefined ? Number(fee) : 2 * NOCK_TO_NICKS;
+          // 2. Choose enough notes using the exact override, an advisory estimate, or the
+          // legacy fallback. Only `fee` is forwarded to WASM as an exact fee override.
+          const amountNum = Number(amount);
+          const selectionFeeNicks = fee ?? options.feeSelectionHint;
+          const selectionFeeNum =
+            selectionFeeNicks !== undefined ? Number(selectionFeeNicks) : 2 * NOCK_TO_NICKS;
+          if (
+            !Number.isSafeInteger(amountNum) ||
+            amountNum < 0 ||
+            !Number.isSafeInteger(selectionFeeNum) ||
+            selectionFeeNum < 0
+          ) {
+            return { error: 'Amount or fee exceeds the supported Nicks range' };
+          }
 
           let selectedStoredNotes: typeof availableStoredNotes;
           let expectedChange: number;
@@ -3524,7 +3543,10 @@ export class Vault {
             expectedChange = 0; // All goes to recipient (minus fee)
           } else {
             // NORMAL: Select only notes needed for amount + fee
-            const targetAmount = Number(amount) + estimatedFeeNum;
+            const targetAmount = amountNum + selectionFeeNum;
+            if (!Number.isSafeInteger(targetAmount)) {
+              return { error: 'Amount plus fee exceeds the supported Nicks range' };
+            }
             const selected = selectNotesForAmount(availableStoredNotes, targetAmount);
 
             if (!selected) {
@@ -3535,7 +3557,7 @@ export class Vault {
 
             selectedStoredNotes = selected;
             const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
-            expectedChange = selectedTotal - Number(amount) - estimatedFeeNum;
+            expectedChange = selectedTotal - amountNum - selectionFeeNum;
           }
 
           selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
@@ -3556,8 +3578,8 @@ export class Vault {
             origin,
             inputNoteIds: selectedNoteIds,
             recipient: to,
-            amount: Number(amount),
-            fee: estimatedFeeNum,
+            amount: amountNum,
+            fee: selectionFeeNum,
             expectedChange: expectedChange > 0 ? expectedChange : 0,
           };
           await this.addWalletTransaction(walletTx);
@@ -3583,6 +3605,10 @@ export class Vault {
             blockHeight
           );
 
+          const actualExpectedChange = sendMax
+            ? 0
+            : Math.max(0, selectedTotal - amountNum - constructedTx.feeUsed);
+
           // 7. Broadcast transaction
           await this.updateWalletTransaction(currentAccount.address, walletTxId, {
             status: 'broadcast_pending',
@@ -3592,11 +3618,13 @@ export class Vault {
 
           // 8. Update tx status to broadcasted
           walletTx.fee = constructedTx.feeUsed;
+          walletTx.expectedChange = actualExpectedChange;
           walletTx.txHash = constructedTx.txId;
           walletTx.trackingTxId = constructedTx.txId;
           walletTx.status = 'broadcasted_unconfirmed';
           await this.updateWalletTransaction(currentAccount.address, walletTxId, {
             fee: constructedTx.feeUsed,
+            expectedChange: actualExpectedChange,
             txHash: constructedTx.txId,
             trackingTxId: constructedTx.txId,
             status: 'broadcasted_unconfirmed',
