@@ -61,6 +61,7 @@ import {
   persistPendingApprovalSession,
   loadPendingApprovalSession,
 } from '../shared/pending-approvals-session';
+import { resolveTransactionFeeForBuild } from '../shared/transaction-fee';
 
 const vault = new Vault();
 let lastActivity = Date.now();
@@ -513,6 +514,7 @@ function isProviderMethod(method: unknown): method is string {
     method === PROVIDER_METHODS.SEND_TRANSACTION ||
     method === PROVIDER_METHODS.GET_WALLET_INFO ||
     method === PROVIDER_METHODS.SIGN_TX ||
+    method === PROVIDER_METHODS.ESTIMATE_TRANSACTION_FEE ||
     // Legacy v0 API method
     method === LEGACY_SIGN_RAW_TX_METHOD
   );
@@ -1407,15 +1409,44 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
         let amountNicks: Nicks;
-        let feeNicks: Nicks;
+        let feeNicks: Nicks | undefined;
         try {
           amountNicks = parseNicksParam(amount, 'amount');
-          feeNicks = parseNicksParam(fee, 'fee', { allowZero: true });
-          if (Number(amountNicks) + Number(feeNicks) > Number.MAX_SAFE_INTEGER) {
-            throw new Error('Amount plus fee exceeds the supported range');
-          }
+          feeNicks =
+            fee === undefined || fee === null
+              ? undefined // omitted: estimate below, auto-calc exact fee at build time
+              : parseNicksParam(fee, 'fee', { allowZero: true });
         } catch (err) {
           await sendBridgedResponse(toInvalidParamsError(err));
+          return;
+        }
+
+        // Fee omitted: estimate it now so the approval popup can display it.
+        // Estimation failure rejects the request up front (better than a popup
+        // with no fee or a guaranteed-to-fail broadcast).
+        let displayFeeNicks: Nicks;
+        if (feeNicks === undefined) {
+          try {
+            const sendTxEstimate = await vault.estimateTransactionFee(to, amountNicks);
+            if ('error' in sendTxEstimate) {
+              await sendBridgedResponse({
+                error: { code: -32603, message: `Fee estimation failed: ${sendTxEstimate.error}` },
+              });
+              return;
+            }
+            displayFeeNicks = String(sendTxEstimate.fee) as Nicks;
+          } catch (err) {
+            console.error('[Background] Fee estimation for sendTransaction failed:', err);
+            await sendBridgedResponse(toInternalProviderError(err));
+            return;
+          }
+        } else {
+          displayFeeNicks = feeNicks;
+        }
+        if (BigInt(amountNicks) + BigInt(displayFeeNicks) > BigInt(Number.MAX_SAFE_INTEGER)) {
+          await sendBridgedResponse(
+            toInvalidParamsError(new Error('Amount plus fee exceeds the supported range'))
+          );
           return;
         }
 
@@ -1426,7 +1457,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           origin: sendTxOrigin,
           to,
           amount: amountNicks,
-          fee: feeNicks,
+          fee: displayFeeNicks,
+          feeEstimated: feeNicks === undefined,
           accountAddress: vault.getAddress(),
           timestamp: Date.now(),
         };
@@ -1471,6 +1503,54 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           await sendBridgedResponse(toInternalProviderError(err));
         }
         return;
+
+      case PROVIDER_METHODS.ESTIMATE_TRANSACTION_FEE: {
+        // Read-only like GET_WALLET_INFO: approved origin + unlocked vault, no approval popup
+        const estimateFeeOrigin = senderOrigin!;
+        if (!isOriginApproved(estimateFeeOrigin)) {
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          return;
+        }
+
+        if (vault.isLocked()) {
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
+        const estimateFeeParams =
+          payload.params && typeof payload.params === 'object' ? payload.params : {};
+        const { to: estimateFeeTo, amount: estimateFeeAmount } = estimateFeeParams;
+        if (!isNockAddress(estimateFeeTo)) {
+          await sendBridgedResponse({ error: ERROR_CODES.BAD_ADDRESS });
+          return;
+        }
+        let estimateFeeAmountNicks: Nicks;
+        try {
+          estimateFeeAmountNicks = parseNicksParam(estimateFeeAmount, 'amount');
+        } catch (err) {
+          await sendBridgedResponse(toInvalidParamsError(err));
+          return;
+        }
+
+        try {
+          const estimateFeeResult = await vault.estimateTransactionFee(
+            estimateFeeTo,
+            estimateFeeAmountNicks
+          );
+          if ('error' in estimateFeeResult) {
+            await sendBridgedResponse({
+              error: { code: -32603, message: estimateFeeResult.error },
+            });
+            return;
+          }
+          // Vault returns a number; the public API uses canonical Nicks (string)
+          await sendBridgedResponse({ fee: String(estimateFeeResult.fee) as Nicks });
+        } catch (err) {
+          console.error('[Background] Public fee estimation failed:', err);
+          await sendBridgedResponse(toInternalProviderError(err));
+        }
+        return;
+      }
 
       // Internal methods (called from popup)
       case INTERNAL_METHODS.SET_AUTO_LOCK:
@@ -1989,14 +2069,21 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
 
           try {
+            const feeBuildOptions = resolveTransactionFeeForBuild(
+              txRequest.fee,
+              txRequest.feeEstimated
+            );
             const v2Result = await vault.sendTransactionV2(
               txRequest.to,
               txRequest.amount,
-              txRequest.fee,
+              feeBuildOptions.fee,
               false,
               undefined,
               'provider_send',
-              txRequest.accountAddress
+              {
+                accountAddress: txRequest.accountAddress,
+                feeSelectionHint: feeBuildOptions.feeSelectionHint,
+              }
             );
 
             if ('error' in v2Result) {
@@ -2006,7 +2093,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             approveTxPending.sendResponse({
               txid: v2Result.txId,
               amount: txRequest.amount,
-              fee: txRequest.fee,
+              // Return the actual fee used by WASM, which may differ from the approval estimate.
+              fee: String(v2Result.walletTx.fee) as Nicks,
             });
             cancelPendingRequest(approveTxId);
             processNextRequest();
@@ -2298,7 +2386,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
-      case INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE:
+      case INTERNAL_METHODS.ESTIMATE_SEND_FEE:
         // params: [to, amount] - amount in nicks
         if (vault.isLocked()) {
           sendResponse({ error: ERROR_CODES.LOCKED });

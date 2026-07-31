@@ -130,6 +130,25 @@ describe('pending approval session state', () => {
     expect(restored.requestQueue).toEqual([{ id: 'transaction', type: 'transaction' }]);
   });
 
+  it('preserves an estimated-fee approval across a worker restart', () => {
+    const request = { ...transactionRequest('transaction'), feeEstimated: true };
+    const snapshot = buildPendingApprovalSessionSnapshot(
+      pendingMap([['transaction', request]]),
+      'transaction',
+      'transaction',
+      [],
+      isExpired
+    )!;
+
+    const restored = restorePendingApprovalSessionSnapshot(snapshot, isExpired);
+
+    expect(restored.pending.transaction.request).toMatchObject({
+      fee: '1',
+      feeEstimated: true,
+      accountAddress: ACCOUNT,
+    });
+  });
+
   it('drops expired requests without blocking later queued approvals', () => {
     const snapshot = buildPendingApprovalSessionSnapshot(
       pendingMap([

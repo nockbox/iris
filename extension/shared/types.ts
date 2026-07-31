@@ -164,8 +164,13 @@ export interface TransactionRequest {
   to: string;
   /** Amount in nicks (WASM Nicks = string) */
   amount: Nicks;
-  /** Transaction fee in nicks */
+  /** Transaction fee in nicks (explicit from dApp, or wallet-estimated when omitted) */
   fee: Nicks;
+  /**
+   * True when the dApp omitted `fee` and `fee` holds a wallet-side estimate;
+   * on approval the exact fee is auto-calculated by WASM at build time.
+   */
+  feeEstimated?: boolean;
   /** Account selected when the transaction request was created. */
   accountAddress: string;
   /** Request timestamp */

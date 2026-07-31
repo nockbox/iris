@@ -413,7 +413,7 @@ export function SendScreen() {
 
         const amountNicks = Math.floor(amountNum * NOCK_TO_NICKS);
         const result = await send<{ fee?: number; error?: string }>(
-          INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE,
+          INTERNAL_METHODS.ESTIMATE_SEND_FEE,
           [addressToUse, amountNicks]
         );
 

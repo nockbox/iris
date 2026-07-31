@@ -34,6 +34,7 @@ export function TransactionApprovalScreen() {
 
   const { id, origin, to, amount, accountAddress } = pendingTransactionRequest;
   const fee = pendingTransactionRequest.fee;
+  const isFeeEstimated = Boolean(pendingTransactionRequest.feeEstimated);
   const totalNicks = nicksToBigInt(amount) + nicksToBigInt(fee);
   const totalNicksString = totalNicks.toString();
   const displayOrigin = origin.includes('://') ? new URL(origin).hostname : origin;
@@ -146,20 +147,28 @@ export function TransactionApprovalScreen() {
               {/* Fee & Total */}
               <div className="rounded-lg p-3 space-y-2" style={{ backgroundColor: surface }}>
                 <div className="flex justify-between text-sm">
-                  <span>Network fee</span>
+                  <span>Network fee{isFeeEstimated ? ' (estimated)' : ''}</span>
                   <div className="text-right">
-                    <div>{formatNicksAsNock(fee)} NOCK</div>
+                    <div>
+                      {isFeeEstimated ? '~' : ''}
+                      {formatNicksAsNock(fee)} NOCK
+                    </div>
                     <div className="text-[10px]" style={{ color: textMuted }}>
+                      {isFeeEstimated ? '~' : ''}
                       {formatNicks(fee)} nicks
                     </div>
                   </div>
                 </div>
                 <div className="h-px" style={{ backgroundColor: 'var(--color-surface-700)' }} />
                 <div className="flex justify-between text-sm font-semibold">
-                  <span>Total</span>
+                  <span>Total{isFeeEstimated ? ' (estimated)' : ''}</span>
                   <div className="text-right">
-                    <div>{formatNicksAsNock(totalNicksString)} NOCK</div>
+                    <div>
+                      {isFeeEstimated ? '~' : ''}
+                      {formatNicksAsNock(totalNicksString)} NOCK
+                    </div>
                     <div className="text-[10px] font-normal" style={{ color: textMuted }}>
+                      {isFeeEstimated ? '~' : ''}
                       {formatNicks(totalNicksString)} nicks
                     </div>
                   </div>
@@ -168,7 +177,7 @@ export function TransactionApprovalScreen() {
 
               {/* Balance After */}
               <div className="text-center text-xs py-2" style={{ color: textMuted }}>
-                Balance after:{' '}
+                {isFeeEstimated ? 'Estimated balance after' : 'Balance after'}:{' '}
                 {formatNock(signingAccountBalance - Number(totalNicks) / NOCK_TO_NICKS)} NOCK
               </div>
 
