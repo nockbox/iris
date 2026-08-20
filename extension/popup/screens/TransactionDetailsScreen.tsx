@@ -52,7 +52,7 @@ export function TransactionDetailsScreen() {
   if (!selectedTransaction) {
     return (
       <div
-        className="w-[357px] h-[600px] flex items-center justify-center"
+        className="w-full h-full flex items-center justify-center"
         style={{ backgroundColor: 'var(--color-bg)' }}
       >
         <div className="text-center" style={{ color: 'var(--color-text-muted)' }}>
@@ -227,7 +227,7 @@ export function TransactionDetailsScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col"
+      className="w-full h-full flex flex-col"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}
@@ -262,7 +262,7 @@ export function TransactionDetailsScreen() {
 
       {/* Content */}
       <div
-        className="flex flex-col gap-2 h-[536px] overflow-y-auto"
+        className="flex flex-col gap-2 flex-1 min-h-0 overflow-y-auto"
         style={{ backgroundColor: 'var(--color-bg)' }}
       >
         <div className="flex flex-col gap-8 px-4 py-2">

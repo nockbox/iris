@@ -5,8 +5,18 @@
  */
 
 // Import provider methods from SDK
-import { PROVIDER_METHODS } from '@nockbox/iris-sdk';
-export { PROVIDER_METHODS };
+import { PROVIDER_METHODS as SDK_PROVIDER_METHODS } from '@nockbox/iris-sdk';
+
+/**
+ * Provider methods: SDK methods plus methods added locally ahead of the next SDK release.
+ * TODO: drop the local BUILD_SIMPLE_TRANSACTION entry once @nockbox/iris-sdk >= 0.3.0
+ * (which owns this public API) is published and the dependency is upgraded.
+ */
+export const PROVIDER_METHODS = {
+  ...SDK_PROVIDER_METHODS,
+  /** Build an exact unsigned dApp payment intent (read-only, no approval popup) */
+  BUILD_SIMPLE_TRANSACTION: 'nock_buildSimpleTransaction',
+} as const;
 
 /**
  * Internal Extension Methods - Called by popup UI and other extension components
@@ -112,8 +122,8 @@ export const INTERNAL_METHODS = {
   /** Sign a transaction (internal popup-initiated transactions) */
   SIGN_TRANSACTION: 'wallet:signTransaction',
 
-  /** Estimate transaction fee for a given recipient and amount */
-  ESTIMATE_TRANSACTION_FEE: 'wallet:estimateTransactionFee',
+  /** Estimate transaction fee for a wallet-initiated send. Keep the wire value for compatibility. */
+  ESTIMATE_SEND_FEE: 'wallet:estimateTransactionFee',
 
   /** Estimate max sendable amount (for "send max" feature) */
   ESTIMATE_MAX_SEND: 'wallet:estimateMaxSend',
@@ -165,6 +175,15 @@ export const INTERNAL_METHODS = {
 
   /** Force resync an account's UTXOs */
   FORCE_RESYNC_ACCOUNT: 'wallet:forceResyncAccount',
+
+  /** Get wallet display mode (popup or side panel) */
+  GET_DISPLAY_MODE: 'wallet:getDisplayMode',
+
+  /** Set wallet display mode (popup or side panel) */
+  SET_DISPLAY_MODE: 'wallet:setDisplayMode',
+
+  /** Get the currently active pending approval (side panel) */
+  GET_PENDING_APPROVAL: 'wallet:getPendingApproval',
 } as const;
 
 /**
@@ -282,6 +301,9 @@ export const STORAGE_KEYS = {
 
   /** User RPC/network config (endpoint, network name, block explorer); falls back to defaults if unset */
   RPC_CONFIG: 'rpcConfig',
+
+  /** Wallet UI display mode: 'popup' | 'sidepanel' */
+  DISPLAY_MODE: 'displayMode',
 } as const;
 
 /**
@@ -290,6 +312,9 @@ export const STORAGE_KEYS = {
 export const SESSION_STORAGE_KEYS = {
   /** Cached encryption key to restore unlock state after SW restarts */
   UNLOCK_CACHE: 'unlockCache',
+
+  /** Pending dApp approval state (survives service worker restarts) */
+  PENDING_APPROVALS: 'pendingApprovals',
 } as const;
 
 /** Current storage schema version - increment when making breaking changes */
@@ -314,8 +339,11 @@ export const MESSAGE_TARGETS = {
 /**
  * Configuration - Default settings
  */
-/** Default auto-lock timeout in minutes (0 = never) */
-export const AUTOLOCK_MINUTES = 0;
+/** Default auto-lock timeout in minutes. */
+export const AUTOLOCK_MINUTES = 10;
+
+/** Supported auto-lock choices. Zero preserves the explicit "Never" preference. */
+export const AUTOLOCK_ALLOWED_MINUTES = [0, 1, 5, 10, 15, 30, 60, 240] as const;
 
 /** Default RPC endpoint URL */
 export const RPC_ENDPOINT = 'rpc.nockbox.org';
@@ -345,12 +373,6 @@ export const DEFAULT_TRANSACTION_FEE = 3_407_872;
  * (like GET_STATE, GET_ACCOUNTS, etc.) do NOT reset the timer.
  */
 export const USER_ACTIVITY_METHODS = new Set([
-  // Provider methods (user-initiated actions from dApps)
-  PROVIDER_METHODS.CONNECT,
-  PROVIDER_METHODS.SIGN_MESSAGE,
-  PROVIDER_METHODS.SEND_TRANSACTION,
-  PROVIDER_METHODS.SIGN_TX,
-
   // Internal methods (user actions in the UI)
   INTERNAL_METHODS.UNLOCK,
   INTERNAL_METHODS.SWITCH_ACCOUNT,
@@ -364,8 +386,12 @@ export const USER_ACTIVITY_METHODS = new Set([
   INTERNAL_METHODS.GET_MNEMONIC, // Viewing secret phrase is user activity
   INTERNAL_METHODS.SEND_TRANSACTION_V2,
   INTERNAL_METHODS.SEND_BRIDGE_TRANSACTION,
-  INTERNAL_METHODS.ESTIMATE_TRANSACTION_FEE,
+  INTERNAL_METHODS.ESTIMATE_SEND_FEE,
   INTERNAL_METHODS.ESTIMATE_MAX_SEND,
+  INTERNAL_METHODS.APPROVE_CONNECTION,
+  INTERNAL_METHODS.APPROVE_TRANSACTION,
+  INTERNAL_METHODS.APPROVE_SIGN_MESSAGE,
+  INTERNAL_METHODS.APPROVE_SIGN_RAW_TX,
   INTERNAL_METHODS.REPORT_ACTIVITY,
 ]);
 
@@ -390,48 +416,6 @@ export const UI_CONSTANTS = {
 } as const;
 
 /**
- * Account Icon Colors - Available colors for account customization
- */
-export const ACCOUNT_COLORS = [
-  '#2C9AEF', // blue
-  '#EF2C2F', // red
-  '#FFC413', // yellow (primary)
-  '#96B839', // green
-  '#3C2CEF', // purple
-  '#EF2CB1', // pink/magenta
-  '#2C6AEF', // darker blue
-] as const;
-
-/**
- * Preset Wallet Styles - Predetermined icon/color combinations for first 21 wallets
- * Ensures visual variety without repeating until all presets are used
- * After preset limit, random combinations are used
- */
-export const PRESET_WALLET_STYLES = [
-  { iconStyleId: 1, iconColor: '#FFC413' }, // Wallet 1: yellow, style 1
-  { iconStyleId: 5, iconColor: '#2C9AEF' }, // Wallet 2: blue, style 5
-  { iconStyleId: 9, iconColor: '#EF2C2F' }, // Wallet 3: red, style 9
-  { iconStyleId: 3, iconColor: '#96B839' }, // Wallet 4: green, style 3
-  { iconStyleId: 12, iconColor: '#3C2CEF' }, // Wallet 5: purple, style 12
-  { iconStyleId: 7, iconColor: '#EF2CB1' }, // Wallet 6: pink, style 7
-  { iconStyleId: 15, iconColor: '#2C6AEF' }, // Wallet 7: dark blue, style 15
-  { iconStyleId: 2, iconColor: '#EF2C2F' }, // Wallet 8: red, style 2
-  { iconStyleId: 6, iconColor: '#FFC413' }, // Wallet 9: yellow, style 6
-  { iconStyleId: 10, iconColor: '#96B839' }, // Wallet 10: green, style 10
-  { iconStyleId: 4, iconColor: '#2C9AEF' }, // Wallet 11: blue, style 4
-  { iconStyleId: 13, iconColor: '#EF2CB1' }, // Wallet 12: pink, style 13
-  { iconStyleId: 8, iconColor: '#3C2CEF' }, // Wallet 13: purple, style 8
-  { iconStyleId: 14, iconColor: '#2C6AEF' }, // Wallet 14: dark blue, style 14
-  { iconStyleId: 11, iconColor: '#EF2C2F' }, // Wallet 15: red, style 11
-  { iconStyleId: 1, iconColor: '#96B839' }, // Wallet 16: green, style 1
-  { iconStyleId: 5, iconColor: '#FFC413' }, // Wallet 17: yellow, style 5
-  { iconStyleId: 9, iconColor: '#2C9AEF' }, // Wallet 18: blue, style 9
-  { iconStyleId: 3, iconColor: '#3C2CEF' }, // Wallet 19: purple, style 3
-  { iconStyleId: 12, iconColor: '#EF2CB1' }, // Wallet 20: pink, style 12
-  { iconStyleId: 7, iconColor: '#2C6AEF' }, // Wallet 21: dark blue, style 7
-] as const;
-
-/**
  * Approval Request Constants - URL hash prefixes for approval flows
  */
 export const APPROVAL_CONSTANTS = {
@@ -444,3 +428,25 @@ export const APPROVAL_CONSTANTS = {
   /** Hash prefix for sign raw transaction approval requests */
   SIGN_RAW_TX_HASH_PREFIX: 'sign-raw-tx-approval-',
 } as const;
+
+/** Wallet display mode options */
+export type DisplayMode = 'popup' | 'sidepanel';
+
+export const DISPLAY_MODES = {
+  POPUP: 'popup',
+  SIDE_PANEL: 'sidepanel',
+} as const satisfies Record<string, DisplayMode>;
+
+/** Default for new installs and users without a persisted display-mode preference. */
+export const DEFAULT_DISPLAY_MODE: DisplayMode = DISPLAY_MODES.SIDE_PANEL;
+
+/** Runtime message types (chrome.runtime.sendMessage) */
+export const RUNTIME_MESSAGE_TYPES = {
+  /** Side panel should navigate to a pending approval */
+  APPROVAL_PENDING: 'APPROVAL_PENDING',
+
+  /** Background verifies that the document which opened an approval is still active. */
+  REQUESTER_PING: 'REQUESTER_PING',
+} as const;
+
+export type ApprovalType = 'connect' | 'transaction' | 'sign-message' | 'sign-raw-tx';

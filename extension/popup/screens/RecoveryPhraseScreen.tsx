@@ -52,7 +52,7 @@ export function RecoveryPhraseScreen() {
   if (!isRevealed) {
     return (
       <div
-        className="w-[357px] h-[600px] flex flex-col p-4"
+        className="w-full h-full flex flex-col p-4"
         style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
       >
         {/* Header */}
@@ -133,7 +133,7 @@ export function RecoveryPhraseScreen() {
   // Secret phrase display view
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col p-4"
+      className="w-full h-full flex flex-col p-4"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}

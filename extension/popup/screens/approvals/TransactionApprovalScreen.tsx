@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { useStore } from '../../store';
 import { ChevronRightIcon } from '../../components/icons/ChevronRightIcon';
 import { AccountIcon } from '../../components/AccountIcon';
@@ -5,36 +6,68 @@ import { SiteIcon } from '../../components/SiteIcon';
 import { truncateAddress } from '../../utils/format';
 import { send } from '../../utils/messaging';
 import { INTERNAL_METHODS, NOCK_TO_NICKS } from '../../../shared/constants';
-import { formatNock, formatNick } from '../../../shared/currency';
+import {
+  formatNicks,
+  formatNicksAsNock,
+  formatNock,
+  nicksToBigInt,
+} from '../../../shared/currency';
 import { useAutoRejectOnClose } from '../../hooks/useAutoRejectOnClose';
+import { closeAfterApproval } from '../../utils/displayContext';
 
 export function TransactionApprovalScreen() {
   const { navigate, pendingTransactionRequest, setPendingTransactionRequest, wallet } = useStore();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [approvalError, setApprovalError] = useState('');
+
+  useAutoRejectOnClose(pendingTransactionRequest?.id ?? null, INTERNAL_METHODS.REJECT_TRANSACTION);
+
+  useEffect(() => {
+    if (!pendingTransactionRequest) {
+      navigate('home');
+    }
+  }, [navigate, pendingTransactionRequest]);
 
   if (!pendingTransactionRequest) {
-    navigate('home');
     return null;
   }
 
-  const { id, origin, to, amount } = pendingTransactionRequest;
+  const { id, origin, to, amount, accountAddress } = pendingTransactionRequest;
   const fee = pendingTransactionRequest.fee;
-  const amountNum = Number(amount);
-  const feeNum = Number(fee);
-  const totalNum = amountNum + feeNum;
+  const isFeeEstimated = Boolean(pendingTransactionRequest.feeEstimated);
+  const totalNicks = nicksToBigInt(amount) + nicksToBigInt(fee);
+  const totalNicksString = totalNicks.toString();
   const displayOrigin = origin.includes('://') ? new URL(origin).hostname : origin;
-
-  useAutoRejectOnClose(id, INTERNAL_METHODS.REJECT_TRANSACTION);
+  const signingAccount = wallet.accounts.find(account => account.address === accountAddress);
+  const signingAccountBalance = wallet.accountSpendableBalances[accountAddress] ?? 0;
 
   async function handleReject() {
     await send(INTERNAL_METHODS.REJECT_TRANSACTION, [id]);
     setPendingTransactionRequest(null);
-    window.close();
+    closeAfterApproval(navigate);
   }
 
   async function handleApprove() {
-    await send(INTERNAL_METHODS.APPROVE_TRANSACTION, [id]);
-    setPendingTransactionRequest(null);
-    window.close();
+    setIsSubmitting(true);
+    setApprovalError('');
+    try {
+      const result = await send<{ success?: boolean; error?: string }>(
+        INTERNAL_METHODS.APPROVE_TRANSACTION,
+        [id]
+      );
+      if (result?.error || !result?.success) {
+        setApprovalError(result?.error || 'Transaction could not be approved');
+        return;
+      }
+      setPendingTransactionRequest(null);
+      closeAfterApproval(navigate);
+    } catch (error) {
+      setApprovalError(
+        error instanceof Error ? error.message : 'Transaction could not be approved'
+      );
+    } finally {
+      setIsSubmitting(false);
+    }
   }
 
   const bg = 'var(--color-bg)';
@@ -45,10 +78,7 @@ export function TransactionApprovalScreen() {
 
   return (
     <div className="h-screen flex items-center justify-center" style={{ backgroundColor: bg }}>
-      <div
-        className="w-full h-full flex flex-col"
-        style={{ backgroundColor: bg, maxWidth: '357px', maxHeight: '600px' }}
-      >
+      <div className="w-full h-full flex flex-col" style={{ backgroundColor: bg }}>
         {/* Header */}
         <div className="flex items-center justify-center px-4 py-4 shrink-0">
           <h2 className="text-xl font-semibold" style={{ color: textPrimary }}>
@@ -79,11 +109,10 @@ export function TransactionApprovalScreen() {
             {/* Amount */}
             <div className="text-center mb-4">
               <div className="font-display text-[32px] font-semibold leading-none">
-                {formatNock(amountNum / NOCK_TO_NICKS)}{' '}
-                <span style={{ color: textMuted }}>NOCK</span>
+                {formatNicksAsNock(amount)} <span style={{ color: textMuted }}>NOCK</span>
               </div>
               <div className="text-[10px] mt-1" style={{ color: textMuted }}>
-                {formatNick(amountNum)} nicks
+                {formatNicks(amount)} nicks
               </div>
             </div>
 
@@ -99,13 +128,11 @@ export function TransactionApprovalScreen() {
                   </div>
                   <div className="flex items-center gap-1.5">
                     <AccountIcon
-                      styleId={wallet.currentAccount?.iconStyleId}
-                      color={wallet.currentAccount?.iconColor}
+                      styleId={signingAccount?.iconStyleId}
+                      color={signingAccount?.iconColor}
                       className="w-4 h-4"
                     />
-                    <span className="text-sm">
-                      {truncateAddress(wallet.currentAccount?.address)}
-                    </span>
+                    <span className="text-sm">{truncateAddress(accountAddress)}</span>
                   </div>
                 </div>
                 <ChevronRightIcon className="w-4 h-4 shrink-0" />
@@ -120,30 +147,59 @@ export function TransactionApprovalScreen() {
               {/* Fee & Total */}
               <div className="rounded-lg p-3 space-y-2" style={{ backgroundColor: surface }}>
                 <div className="flex justify-between text-sm">
-                  <span>Network fee</span>
+                  <span>Network fee{isFeeEstimated ? ' (estimated)' : ''}</span>
                   <div className="text-right">
-                    <div>{formatNock(feeNum / NOCK_TO_NICKS)} NOCK</div>
+                    <div>
+                      {isFeeEstimated ? '~' : ''}
+                      {formatNicksAsNock(fee)} NOCK
+                    </div>
                     <div className="text-[10px]" style={{ color: textMuted }}>
-                      {formatNick(feeNum)} nicks
+                      {isFeeEstimated ? '~' : ''}
+                      {formatNicks(fee)} nicks
                     </div>
                   </div>
                 </div>
                 <div className="h-px" style={{ backgroundColor: 'var(--color-surface-700)' }} />
                 <div className="flex justify-between text-sm font-semibold">
-                  <span>Total</span>
+                  <span>Total{isFeeEstimated ? ' (estimated)' : ''}</span>
                   <div className="text-right">
-                    <div>{formatNock(totalNum / NOCK_TO_NICKS)} NOCK</div>
+                    <div>
+                      {isFeeEstimated ? '~' : ''}
+                      {formatNicksAsNock(totalNicksString)} NOCK
+                    </div>
                     <div className="text-[10px] font-normal" style={{ color: textMuted }}>
-                      {formatNick(totalNum)} nicks
+                      {isFeeEstimated ? '~' : ''}
+                      {formatNicks(totalNicksString)} nicks
                     </div>
                   </div>
                 </div>
               </div>
 
+              {isFeeEstimated && (
+                <div className="text-center text-xs px-2" style={{ color: textMuted }}>
+                  The final network fee is calculated when the transaction is built and may differ
+                  from this estimate.
+                </div>
+              )}
+
               {/* Balance After */}
               <div className="text-center text-xs py-2" style={{ color: textMuted }}>
-                Balance after: {formatNock(wallet.spendableBalance - totalNum / NOCK_TO_NICKS)} NOCK
+                {isFeeEstimated ? 'Estimated balance after' : 'Balance after'}:{' '}
+                {formatNock(signingAccountBalance - Number(totalNicks) / NOCK_TO_NICKS)} NOCK
               </div>
+
+              {approvalError && (
+                <div
+                  className="rounded-lg p-3 text-xs"
+                  style={{
+                    backgroundColor: 'var(--color-red-light)',
+                    color: 'var(--color-red)',
+                  }}
+                  role="alert"
+                >
+                  {approvalError}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -153,11 +209,21 @@ export function TransactionApprovalScreen() {
           className="px-4 py-2.5 shrink-0 flex gap-3"
           style={{ borderTop: `1px solid ${divider}` }}
         >
-          <button onClick={handleReject} className="btn-secondary flex-1">
+          <button
+            type="button"
+            onClick={handleReject}
+            disabled={isSubmitting}
+            className="btn-secondary flex-1"
+          >
             Reject
           </button>
-          <button onClick={handleApprove} className="btn-primary flex-1">
-            Approve
+          <button
+            type="button"
+            onClick={handleApprove}
+            disabled={isSubmitting}
+            className="btn-primary flex-1 disabled:opacity-50"
+          >
+            {isSubmitting ? 'Verifying...' : 'Approve'}
           </button>
         </div>
       </div>

@@ -10,7 +10,7 @@ export function AddWalletStartScreen() {
   const { navigate } = useStore();
 
   return (
-    <div className="relative w-[357px] h-[600px] bg-[var(--color-bg)] overflow-hidden">
+    <div className="relative w-full h-full bg-[var(--color-bg)] overflow-hidden">
       <img
         src={vectorLeft}
         alt=""
@@ -48,7 +48,7 @@ export function AddWalletStartScreen() {
         aria-hidden="true"
       />
 
-      <div className="flex flex-col items-center justify-between h-[600px] px-4 pt-[104px] pb-3">
+      <div className="flex flex-col items-center justify-between h-full px-4 pt-[104px] pb-3">
         <div className="flex flex-col items-center gap-8 w-full">
           <div className="w-[104px] h-[104px] flex items-center justify-center">
             <AnimatedLogo />

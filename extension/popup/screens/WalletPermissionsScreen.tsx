@@ -45,7 +45,7 @@ export function WalletPermissionsScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col overflow-hidden"
+      className="w-full h-full flex flex-col overflow-hidden"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}

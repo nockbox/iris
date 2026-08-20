@@ -10,7 +10,10 @@ export interface Keyfile {
 }
 
 /**
- * Export mnemonic to plain JSON keyfile
+ * Export mnemonic to plain JSON keyfile.
+ *
+ * This legacy format is intentionally retained for backwards compatibility.
+ * Callers must only expose it through an explicit user action.
  */
 export function exportKeyfile(mnemonic: string): Keyfile {
   return {
