@@ -55,5 +55,10 @@ describe('side panel gesture routing', () => {
     expect(
       isSidePanelGestureRequest(request(PROVIDER_METHODS.GET_WALLET_INFO, DISPLAY_MODES.SIDE_PANEL))
     ).toBe(false);
+    expect(
+      isSidePanelGestureRequest(
+        request(PROVIDER_METHODS.BUILD_SIMPLE_TRANSACTION, DISPLAY_MODES.SIDE_PANEL)
+      )
+    ).toBe(false);
   });
 });

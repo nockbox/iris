@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Nicks } from '@nockbox/iris-sdk/wasm';
 import {
+  assertMatchingTransactionIntent,
   buildWithAdvisoryFeeRetry,
+  resolveBuilderFeeSummary,
   resolveBuiltInputSelection,
   resolveBuiltTransactionAmounts,
   resolveTransactionFeeForBuild,
@@ -10,6 +12,28 @@ import {
 const nicks = (value: string) => value as Nicks;
 
 describe('transaction fee contract', () => {
+  it('preserves the approved witnessless intent through signing', () => {
+    expect(() =>
+      assertMatchingTransactionIntent('approved-spends', 'approved-spends')
+    ).not.toThrow();
+    expect(() => assertMatchingTransactionIntent('approved-spends', 'changed-spends')).toThrow(
+      'intent changed'
+    );
+  });
+
+  it('reports an explicit fee above the minimum as the actual transaction fee', () => {
+    expect(resolveBuilderFeeSummary(nicks('900'), nicks('700'), true)).toEqual({
+      fee: 900,
+      minimumFee: 700,
+    });
+  });
+
+  it('rejects an explicit fee below the calculated minimum', () => {
+    expect(() => resolveBuilderFeeSummary(nicks('600'), nicks('700'), true)).toThrow(
+      'below the minimum'
+    );
+  });
+
   it('keeps an explicit dApp fee as the exact WASM override', () => {
     expect(resolveTransactionFeeForBuild(nicks('500'), false)).toEqual({
       fee: nicks('500'),
@@ -114,16 +138,22 @@ describe('transaction fee contract', () => {
   });
 
   it('reconciles reserved candidates to the inputs actually built by WASM', () => {
-    expect(
-      resolveBuiltInputSelection(
-        [
-          { noteId: 'a', assets: 7_000 },
-          { noteId: 'b', assets: 3_000 },
-          { noteId: 'unused', assets: 1_000 },
-        ],
-        ['a', 'b']
-      )
-    ).toEqual({ inputNoteIds: ['a', 'b'], selectedTotal: 10_000 });
+    const candidates = [
+      { noteId: 'a', assets: 7_000, state: 'available' },
+      { noteId: 'b', assets: 3_000, state: 'available' },
+      { noteId: 'unused', assets: 1_000, state: 'available' },
+    ] as const;
+
+    expect(resolveBuiltInputSelection(candidates, ['a', 'b'])).toEqual({
+      inputNoteIds: ['a', 'b'],
+      selectedTotal: 10_000,
+    });
+    // Unsigned build reconciliation is read-only: selection alone never reserves notes.
+    expect(candidates.map(candidate => candidate.state)).toEqual([
+      'available',
+      'available',
+      'available',
+    ]);
   });
 
   it('rejects a built input that was not locally reserved', () => {

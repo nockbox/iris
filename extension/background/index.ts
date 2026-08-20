@@ -55,13 +55,16 @@ import {
   buildPendingApprovalSessionSnapshot,
   restorePendingApprovalSessionSnapshot,
   pendingApprovalOriginMatches,
+  pendingApprovalPermissionStillValid,
   pendingApprovalAccountMatches,
 } from '../shared/pending-approval-state';
 import {
-  persistPendingApprovalSession,
+  PendingApprovalSessionPersistence,
   loadPendingApprovalSession,
 } from '../shared/pending-approvals-session';
-import { resolveTransactionFeeForBuild } from '../shared/transaction-fee';
+import { BuildRequestAdmission } from '../shared/build-request-admission';
+import { LifecycleTransitionCoordinator } from '../shared/lifecycle-transition-coordinator';
+import { ApprovedOriginsState } from '../shared/approved-origins-state';
 
 const vault = new Vault();
 let lastActivity = Date.now();
@@ -76,11 +79,10 @@ let requestQueue: Array<{
   type: 'connect' | 'transaction' | 'sign-message' | 'sign-raw-tx';
 }> = []; // Queued requests
 
-/**
- * In-memory cache of approved origins
- * Loaded from storage on startup, persisted on changes
- */
-let approvedOrigins = new Set<string>();
+const approvedOrigins = new ApprovedOriginsState(async origins => {
+  await chrome.storage.local.set({ [STORAGE_KEYS.APPROVED_ORIGINS]: origins });
+});
+const pendingApprovalSession = new PendingApprovalSessionPersistence();
 
 /**
  * Request expiration time (5 minutes)
@@ -123,12 +125,46 @@ const utxoSyncInFlight = new Map<
 const subwalletDiscoveryInFlight = new Set<string>();
 const subwalletDiscoveryAfterInitialSync = new Set<string>();
 
+// Public builds are read-only but hold the account mutex during WASM work.
+// Bound them independently of the send path so one dApp cannot starve signing/sync.
+const providerBuildAdmission = new BuildRequestAdmission(1);
+const walletLifecycle = new LifecycleTransitionCoordinator();
+let activeExplicitLifecycleGeneration: number | null = null;
+
+function scheduleCurrentAccountNetworkBootstrap(isCurrent: () => boolean): void {
+  const account = vault.getCurrentAccount();
+  if (!account || !isCurrent() || vault.isLocked()) return;
+  void (async () => {
+    if (!(await vault.accountNeedsSyncForCurrentNetwork(account.address))) return;
+    if (
+      !isCurrent() ||
+      vault.isLocked() ||
+      vault.getCurrentAccount()?.address !== account.address
+    ) {
+      return;
+    }
+    const outcome = await syncAccountUTXOsWithDedupe(account.address, account.name, {
+      skipHistory: true,
+    });
+    if (!outcome.results[account.address]?.success && isCurrent()) {
+      console.warn(
+        '[Background] Post-unlock network sync failed:',
+        outcome.results[account.address]?.error
+      );
+    }
+  })().catch(error => console.warn('[Background] Post-unlock network sync failed:', error));
+}
+
 async function clearUnlockSessionCache(): Promise<void> {
   try {
-    await chrome.storage.session?.remove(SESSION_STORAGE_KEYS.UNLOCK_CACHE);
+    await removeUnlockSessionCache();
   } catch (error) {
     console.error('[Background] Failed to clear unlock cache:', error);
   }
+}
+
+async function removeUnlockSessionCache(): Promise<void> {
+  await chrome.storage.session?.remove(SESSION_STORAGE_KEYS.UNLOCK_CACHE);
 }
 
 async function persistUnlockSession(): Promise<void> {
@@ -153,49 +189,61 @@ async function persistUnlockSession(): Promise<void> {
 }
 
 async function restoreUnlockSession(): Promise<void> {
-  const sessionStorage = chrome.storage.session;
-  if (!sessionStorage) {
-    return;
-  }
+  // Polling messages must not invalidate a password/setup transition merely
+  // because the Vault intentionally stays locked until its durable work ends.
+  if (activeExplicitLifecycleGeneration !== null) return;
+  const lifecycleGeneration = walletLifecycle.begin();
+  await walletLifecycle.run(lifecycleGeneration, async isCurrent => {
+    const sessionStorage = chrome.storage.session;
+    if (!sessionStorage) {
+      return;
+    }
 
-  const stored = await sessionStorage.get([SESSION_STORAGE_KEYS.UNLOCK_CACHE]);
-  const cached = stored[SESSION_STORAGE_KEYS.UNLOCK_CACHE] as UnlockSessionCache['key'] | undefined;
+    const stored = await sessionStorage.get([SESSION_STORAGE_KEYS.UNLOCK_CACHE]);
+    const cached = stored[SESSION_STORAGE_KEYS.UNLOCK_CACHE] as
+      | UnlockSessionCache['key']
+      | undefined;
 
-  if (!cached || cached.length === 0) {
-    return;
-  }
+    if (!cached || cached.length === 0) {
+      return;
+    }
 
-  // Respect manual lock - never auto-unlock if user explicitly locked
-  if (manuallyLocked) {
-    await clearUnlockSessionCache();
-    return;
-  }
-
-  // Respect auto-lock timeout window
-  if (autoLockMinutes > 0) {
-    const idleMs = Date.now() - lastActivity;
-    if (idleMs >= autoLockMinutes * 60_000) {
+    // Respect manual lock - never auto-unlock if user explicitly locked
+    if (manuallyLocked) {
       await clearUnlockSessionCache();
       return;
     }
-  }
 
-  try {
-    const key = await crypto.subtle.importKey(
-      'raw',
-      new Uint8Array(cached),
-      { name: 'AES-GCM' },
-      false,
-      ['encrypt', 'decrypt']
-    );
-    const result = await vault.unlockWithKey(key);
-    if ('error' in result) {
+    // Respect auto-lock timeout window
+    if (autoLockMinutes > 0) {
+      const idleMs = Date.now() - lastActivity;
+      if (idleMs >= autoLockMinutes * 60_000) {
+        await clearUnlockSessionCache();
+        return;
+      }
+    }
+
+    try {
+      const key = await crypto.subtle.importKey(
+        'raw',
+        new Uint8Array(cached),
+        { name: 'AES-GCM' },
+        false,
+        ['encrypt', 'decrypt']
+      );
+      const result = await vault.unlockWithKey(key);
+      if ('error' in result) {
+        await clearUnlockSessionCache();
+        return;
+      }
+      if (isCurrent()) {
+        scheduleCurrentAccountNetworkBootstrap(isCurrent);
+      }
+    } catch (error) {
+      console.error('[Background] Failed to restore unlock session:', error);
       await clearUnlockSessionCache();
     }
-  } catch (error) {
-    console.error('[Background] Failed to restore unlock session:', error);
-    await clearUnlockSessionCache();
-  }
+  });
 }
 
 async function ensureSessionRestored(): Promise<void> {
@@ -216,7 +264,9 @@ async function ensureSessionRestored(): Promise<void> {
  * Load approved origins from storage
  */
 async function loadApprovedOrigins(): Promise<void> {
+  const generation = approvedOrigins.captureGeneration();
   const stored = await chrome.storage.local.get([STORAGE_KEYS.APPROVED_ORIGINS]);
+  if (!approvedOrigins.isCurrent(generation)) return;
   const origins = Array.isArray(stored[STORAGE_KEYS.APPROVED_ORIGINS])
     ? (stored[STORAGE_KEYS.APPROVED_ORIGINS] as unknown[])
     : [];
@@ -224,40 +274,34 @@ async function loadApprovedOrigins(): Promise<void> {
     .map(origin => normalizeWebOrigin(origin))
     .filter((origin): origin is string => Boolean(origin));
 
-  approvedOrigins = new Set(normalizedOrigins);
+  approvedOrigins.replace(normalizedOrigins, generation);
 
   // Older versions stored full page URLs. Persist the least-privilege origin form.
   if (
-    origins.length !== approvedOrigins.size ||
+    origins.length !== approvedOrigins.values().size ||
     origins.some(origin => typeof origin !== 'string' || !approvedOrigins.has(origin))
   ) {
-    await saveApprovedOrigins();
+    try {
+      await approvedOrigins.persist(generation);
+    } catch (error) {
+      if (!approvedOrigins.isCurrent(generation)) return;
+      throw error;
+    }
   }
-}
-
-/**
- * Save approved origins to storage
- */
-async function saveApprovedOrigins(): Promise<void> {
-  await chrome.storage.local.set({
-    [STORAGE_KEYS.APPROVED_ORIGINS]: Array.from(approvedOrigins),
-  });
 }
 
 /**
  * Add an origin to the approved list
  */
-async function approveOrigin(origin: string): Promise<void> {
-  approvedOrigins.add(origin);
-  await saveApprovedOrigins();
+async function approveOrigin(origin: string, generation?: number): Promise<void> {
+  await approvedOrigins.approve(origin, generation);
 }
 
 /**
  * Remove an origin from the approved list
  */
 async function revokeOrigin(origin: string): Promise<void> {
-  approvedOrigins.delete(origin);
-  await saveApprovedOrigins();
+  await approvedOrigins.revoke(origin);
 }
 
 /**
@@ -325,12 +369,13 @@ async function syncPendingApprovalsSession(): Promise<void> {
     requestQueue,
     isRequestExpired
   );
-  await persistPendingApprovalSession(snapshot);
+  await pendingApprovalSession.persist(snapshot);
 }
 
 async function restorePendingApprovalsSession(): Promise<void> {
+  const generation = approvedOrigins.captureGeneration();
   const snapshot = await loadPendingApprovalSession();
-  if (!snapshot) {
+  if (!snapshot || !approvedOrigins.isCurrent(generation) || pendingApprovalSession.isResetting()) {
     return;
   }
 
@@ -359,6 +404,13 @@ async function restorePendingApprovalsSession(): Promise<void> {
     currentRequestType &&
     (await getDisplayMode()) === DISPLAY_MODES.SIDE_PANEL
   ) {
+    if (
+      !approvedOrigins.isCurrent(generation) ||
+      pendingApprovalSession.isResetting() ||
+      !pendingRequests.has(currentRequestId)
+    ) {
+      return;
+    }
     await notifyApprovalPending(currentRequestId, currentRequestType);
   }
 }
@@ -408,6 +460,15 @@ async function validatePendingApproval(
   pending: PendingRequest,
   sendResponse: (response: unknown) => void
 ): Promise<boolean> {
+  const approvalGeneration = approvedOrigins.captureGeneration();
+  const approvalIsCurrent = () =>
+    approvedOrigins.isCurrent(approvalGeneration) && pendingRequests.get(requestId) === pending;
+
+  if (!approvalIsCurrent()) {
+    sendResponse({ error: 'Wallet authorization changed; request the action again' });
+    return false;
+  }
+
   if (isRequestExpired(pending.request.timestamp)) {
     cancelPendingRequest(requestId, 4003, 'Request expired');
     processNextRequest();
@@ -434,10 +495,41 @@ async function validatePendingApproval(
   }
   pending.processing = true;
 
+  if (!pendingApprovalPermissionStillValid(pending.request, approvedOrigins.values())) {
+    cancelPendingRequest(
+      requestId,
+      4100,
+      'Origin permission was revoked; request the action again'
+    );
+    processNextRequest();
+    sendResponse({ error: 'Origin permission was revoked; request the action again' });
+    return false;
+  }
+
   if (!(await isPendingRequesterActive(pending))) {
+    if (!approvalIsCurrent()) {
+      sendResponse({ error: 'Wallet authorization changed; request the action again' });
+      return false;
+    }
     cancelPendingRequest(requestId, 4001, 'Requesting page is no longer active');
     processNextRequest();
     sendResponse({ error: 'Requesting page is no longer active' });
+    return false;
+  }
+
+  if (!approvalIsCurrent()) {
+    sendResponse({ error: 'Wallet authorization changed; request the action again' });
+    return false;
+  }
+
+  if (!pendingApprovalPermissionStillValid(pending.request, approvedOrigins.values())) {
+    cancelPendingRequest(
+      requestId,
+      4100,
+      'Origin permission was revoked; request the action again'
+    );
+    processNextRequest();
+    sendResponse({ error: 'Origin permission was revoked; request the action again' });
     return false;
   }
 
@@ -450,6 +542,11 @@ async function validatePendingApproval(
     cancelPendingRequest(requestId, 4001, 'Selected account changed; request the action again');
     processNextRequest();
     sendResponse({ error: 'Selected account changed; request the action again' });
+    return false;
+  }
+
+  if (!approvalIsCurrent()) {
+    sendResponse({ error: 'Wallet authorization changed; request the action again' });
     return false;
   }
 
@@ -514,7 +611,7 @@ function isProviderMethod(method: unknown): method is string {
     method === PROVIDER_METHODS.SEND_TRANSACTION ||
     method === PROVIDER_METHODS.GET_WALLET_INFO ||
     method === PROVIDER_METHODS.SIGN_TX ||
-    method === PROVIDER_METHODS.ESTIMATE_TRANSACTION_FEE ||
+    method === PROVIDER_METHODS.BUILD_SIMPLE_TRANSACTION ||
     // Legacy v0 API method
     method === LEGACY_SIGN_RAW_TX_METHOD
   );
@@ -637,6 +734,86 @@ interface PendingRequest {
 }
 
 const pendingRequests = new Map<string, PendingRequest>();
+
+interface ApprovalResetToken {
+  authorizationGeneration: number;
+  sessionGeneration: number;
+}
+
+interface ProviderAuthorizationSnapshot {
+  generation: number;
+  origin: string;
+  accountAddress: string;
+}
+
+function clearPendingApprovalMemory(message = 'Wallet reset; request the action again'): void {
+  const pending = Array.from(pendingRequests.values());
+  pendingRequests.clear();
+  requestQueue = [];
+  currentRequestId = null;
+  currentRequestType = null;
+
+  for (const request of pending) {
+    try {
+      request.sendResponse({ error: { code: 4900, message } });
+    } catch {
+      // A service-worker-restored request may no longer have a live responder.
+    }
+  }
+}
+
+function beginApprovalStateReset(): ApprovalResetToken {
+  const token = {
+    authorizationGeneration: approvedOrigins.beginReset(),
+    sessionGeneration: pendingApprovalSession.beginReset(),
+  };
+  clearPendingApprovalMemory();
+  return token;
+}
+
+function finishApprovalStateReset(token: ApprovalResetToken): void {
+  // Catch requests that arrived while reset was clearing durable state. Session
+  // writes stayed blocked during this window, so the final empty memory state
+  // and the durable null snapshot agree.
+  clearPendingApprovalMemory();
+  pendingApprovalSession.finishReset(token.sessionGeneration);
+  approvedOrigins.finishReset(token.authorizationGeneration);
+}
+
+function captureProviderAuthorization(origin: string): ProviderAuthorizationSnapshot | null {
+  const accountAddress = vault.getCurrentAccount()?.address;
+  if (!accountAddress || vault.isLocked() || !isOriginApproved(origin)) {
+    return null;
+  }
+  return {
+    generation: approvedOrigins.captureGeneration(),
+    origin,
+    accountAddress,
+  };
+}
+
+function providerAuthorizationStillValid(snapshot: ProviderAuthorizationSnapshot): boolean {
+  return (
+    approvedOrigins.isCurrent(snapshot.generation) &&
+    isOriginApproved(snapshot.origin) &&
+    !vault.isLocked() &&
+    vault.getCurrentAccount()?.address === snapshot.accountAddress
+  );
+}
+
+function pendingApprovalStillCurrent(
+  requestId: string,
+  pending: PendingRequest,
+  generation: number,
+  accountAddress: string
+): boolean {
+  return (
+    approvedOrigins.isCurrent(generation) &&
+    pendingRequests.get(requestId) === pending &&
+    !vault.isLocked() &&
+    vault.getCurrentAccount()?.address === accountAddress
+  );
+}
 
 /**
  * Type guard to check if a request is a ConnectRequest
@@ -789,6 +966,10 @@ async function createPopupWithFallback(opts: any): Promise<any> {
  * Queues requests if user is currently viewing another request
  */
 async function createApprovalPopup(requestId: string, type: ApprovalType, tabId?: number) {
+  if (!pendingRequests.has(requestId)) {
+    return;
+  }
+
   // If user is currently viewing a different request, queue this one
   if (currentRequestId !== null && currentRequestId !== requestId) {
     // Check if already in queue to prevent duplicates
@@ -805,9 +986,18 @@ async function createApprovalPopup(requestId: string, type: ApprovalType, tabId?
   currentRequestType = type;
 
   const displayMode = await getDisplayMode();
+  if (!pendingRequests.has(requestId) || currentRequestId !== requestId) {
+    return;
+  }
   if (displayMode === DISPLAY_MODES.SIDE_PANEL) {
-    await routeApprovalToSidePanel(requestId, type, tabId);
-    void syncPendingApprovalsSession();
+    await openSidePanelForApproval(tabId);
+    if (!pendingRequests.has(requestId) || currentRequestId !== requestId) {
+      return;
+    }
+    await notifyApprovalPending(requestId, type);
+    if (pendingRequests.has(requestId) && currentRequestId === requestId) {
+      void syncPendingApprovalsSession();
+    }
     return;
   }
 
@@ -827,10 +1017,16 @@ async function createApprovalPopup(requestId: string, type: ApprovalType, tabId?
   if (approvalWindowId !== null) {
     try {
       const existingWindow = await chrome.windows.get(approvalWindowId);
+      if (!pendingRequests.has(requestId) || currentRequestId !== requestId) {
+        return;
+      }
 
       // Window still exists - update it with new request
       if (existingWindow.tabs && existingWindow.tabs[0]?.id) {
         await chrome.tabs.update(existingWindow.tabs[0].id, { url: popupUrl });
+        if (!pendingRequests.has(requestId) || currentRequestId !== requestId) {
+          return;
+        }
         await chrome.windows.update(approvalWindowId, { focused: true });
         return; // Done - reused existing window
       } else {
@@ -846,6 +1042,9 @@ async function createApprovalPopup(requestId: string, type: ApprovalType, tabId?
   // Prevent race condition: if window is being created, wait and retry
   if (isCreatingWindow) {
     await new Promise(resolve => setTimeout(resolve, 100));
+    if (!pendingRequests.has(requestId) || currentRequestId !== requestId) {
+      return;
+    }
     return createApprovalPopup(requestId, type, tabId);
   }
 
@@ -890,12 +1089,16 @@ async function createApprovalPopup(requestId: string, type: ApprovalType, tabId?
       focused: true,
     });
 
-    approvalWindowId = newWindow.id || null;
+    if (pendingRequests.has(requestId) && currentRequestId === requestId) {
+      approvalWindowId = newWindow.id || null;
+    }
   } finally {
     isCreatingWindow = false;
   }
 
-  void syncPendingApprovalsSession();
+  if (pendingRequests.has(requestId) && currentRequestId === requestId) {
+    void syncPendingApprovalsSession();
+  }
 }
 
 /**
@@ -931,10 +1134,16 @@ function processNextRequest() {
  * Emit a wallet event to all tabs
  * This notifies dApps of wallet state changes (account switches, network changes, etc.)
  */
-async function emitWalletEvent(eventType: string, data: unknown) {
+async function emitWalletEvent(
+  eventType: string,
+  data: unknown,
+  isCurrent: () => boolean = () => true
+) {
   const tabs = await chrome.tabs.query({});
+  if (!isCurrent()) return;
 
   for (const tab of tabs) {
+    if (!isCurrent()) return;
     if (tab.id) {
       try {
         await chrome.tabs.sendMessage(tab.id, {
@@ -1012,14 +1221,16 @@ function scheduleQueuedSubwalletDiscoveryAfterInitialSync(accountAddress: string
 
 async function syncAccountUTXOsWithDedupe(
   accountAddress: string,
-  accountName = accountAddress
+  accountName = accountAddress,
+  options: { skipHistory?: boolean } = {}
 ): Promise<{
   ok: boolean;
   results: Record<string, { success: boolean; error?: string }>;
 }> {
-  let inFlight = utxoSyncInFlight.get(accountAddress);
+  const syncKey = `${accountAddress}:${options.skipHistory ? 'utxo-only' : 'full'}`;
+  let inFlight = utxoSyncInFlight.get(syncKey);
   if (!inFlight) {
-    inFlight = (async () => {
+    const created = (async () => {
       const results: Record<string, { success: boolean; error?: string }> = {};
 
       if (vault.isLocked()) {
@@ -1031,7 +1242,7 @@ async function syncAccountUTXOsWithDedupe(
       }
 
       try {
-        await vault.syncAccountUTXOs(accountAddress);
+        await vault.syncAccountUTXOs(accountAddress, options);
         results[accountAddress] = { success: true };
         scheduleQueuedSubwalletDiscoveryAfterInitialSync(accountAddress);
       } catch (syncErr) {
@@ -1043,10 +1254,13 @@ async function syncAccountUTXOsWithDedupe(
       }
 
       return { ok: true, results };
-    })().finally(() => {
-      utxoSyncInFlight.delete(accountAddress);
+    })();
+    inFlight = created.finally(() => {
+      if (utxoSyncInFlight.get(syncKey) === inFlight) {
+        utxoSyncInFlight.delete(syncKey);
+      }
     });
-    utxoSyncInFlight.set(accountAddress, inFlight);
+    utxoSyncInFlight.set(syncKey, inFlight);
   }
 
   return inFlight;
@@ -1089,8 +1303,6 @@ const initPromise = (async () => {
   await loadApprovedOrigins();
   await vault.init(); // Load encrypted vault header to detect vault existence
   await restorePendingApprovalsSession();
-  await restoreUnlockSession(); // Rehydrate unlock state if still within auto-lock window
-
   await applyDisplayMode(await getDisplayMode());
 
   if (autoLockMinutes === 0) {
@@ -1165,19 +1377,47 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   maybeOpenSidePanelOnGesture(msg, _sender);
 
   (async () => {
-    await initPromise;
-    await ensureSessionRestored();
     const sourcePayload = ((msg || {}).payload || {}) as IncomingRpcRequest;
+    const requestedMethod = sourcePayload.method;
+    const shouldPreemptSessionRestore =
+      isFromPopup(_sender) &&
+      (requestedMethod === INTERNAL_METHODS.LOCK ||
+        requestedMethod === INTERNAL_METHODS.RESET_WALLET);
+    let preemptiveLock:
+      | {
+          generation: number;
+          lockPromise: Promise<{ ok: boolean }>;
+          approvalReset?: ApprovalResetToken;
+        }
+      | undefined;
+    if (shouldPreemptSessionRestore) {
+      manuallyLocked = true;
+      const generation = walletLifecycle.begin();
+      activeExplicitLifecycleGeneration = generation;
+      preemptiveLock = {
+        generation,
+        lockPromise: vault.lock(),
+        ...(requestedMethod === INTERNAL_METHODS.RESET_WALLET
+          ? { approvalReset: beginApprovalStateReset() }
+          : {}),
+      };
+    }
+    await initPromise;
+    if (!preemptiveLock) {
+      await ensureSessionRestored();
+    }
     let payload: any;
     try {
-      payload = await bridgeIncomingProviderPayload(sourcePayload);
+      payload = preemptiveLock ? sourcePayload : await bridgeIncomingProviderPayload(sourcePayload);
     } catch (err) {
       sendResponse(toInvalidParamsError(err));
       return;
     }
-    const sendBridgedResponse = async (response: unknown): Promise<void> => {
+    const sendBridgedResponse = (response: unknown): void => {
       try {
-        sendResponse(await bridgeOutgoingProviderResponse(sourcePayload, response));
+        // Provider mapping is synchronous. Keep mapping + sendResponse in one
+        // turn so a final authorization guard cannot be invalidated between them.
+        sendResponse(bridgeOutgoingProviderResponse(sourcePayload, response));
       } catch (err) {
         console.error('[Background] Failed to bridge provider response:', err);
         sendResponse(toInternalProviderError(err));
@@ -1197,7 +1437,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
     // Only authorized extension-page methods can extend the unlock window.
     // Page-originated provider traffic is not proof of user activity.
-    await touchActivity(payload?.method);
+    if (!preemptiveLock) {
+      await touchActivity(payload?.method);
+    }
 
     switch (payload?.method) {
       // Provider methods (called from injected provider via content script)
@@ -1246,17 +1488,35 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
+        const connectAuthorization = captureProviderAuthorization(connectOrigin);
+        if (!connectAuthorization) {
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
         try {
           const connectRpcConfig = await getEffectiveRpcConfig();
-          await sendBridgedResponse(buildConnectResponse(vault.getAddress(), connectRpcConfig));
+          if (!providerAuthorizationStillValid(connectAuthorization)) {
+            await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+            return;
+          }
+          await sendBridgedResponse(
+            buildConnectResponse(connectAuthorization.accountAddress, connectRpcConfig)
+          );
         } catch (err) {
           console.error('[Background] Failed to build connect response:', err);
-          await sendBridgedResponse(toInternalProviderError(err));
+          await sendBridgedResponse(
+            providerAuthorizationStillValid(connectAuthorization)
+              ? toInternalProviderError(err)
+              : { error: { code: 4100, message: 'Unauthorized origin' } }
+          );
           return;
         }
 
         // Emit connect event when dApp connects successfully
-        await emitWalletEvent('connect', { chainId: CHAIN_ID });
+        await emitWalletEvent('connect', { chainId: CHAIN_ID }, () =>
+          providerAuthorizationStillValid(connectAuthorization)
+        );
         return;
 
       case PROVIDER_METHODS.SIGN_MESSAGE:
@@ -1340,6 +1600,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         let review: Awaited<ReturnType<Vault['describeRawTxForApproval']>>;
         try {
           await ensureWasmInitialized();
+          // `notes` is an untrusted compatibility sidecar. Approval inputs and
+          // display data are always recomputed from tx + the encrypted UTXO store.
           nativeRawTx = wasm.nockchainTxToRawTx(signTxParams.tx);
           assertNativeRawTx(nativeRawTx);
           review = await vault.describeRawTxForApproval(nativeRawTx);
@@ -1369,6 +1631,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           totalFee: review.totalFee,
           reviewBlockHeight: review.blockHeight,
           accountAddress: review.accountAddress,
+          transactionContext: review.transactionContext,
           timestamp: Date.now(),
         };
 
@@ -1403,6 +1666,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
           return;
         }
+        if (!vault.canCurrentAccountSignLocally()) {
+          await sendBridgedResponse({
+            error: { code: 4200, message: 'Current account is external and cannot sign locally' },
+          });
+          return;
+        }
         const sendTxParams =
           payload.params && typeof payload.params === 'object' ? payload.params : {};
         const { to, amount, fee } = sendTxParams;
@@ -1423,29 +1692,60 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        // Fee omitted: estimate it now so the approval popup can display it.
-        // Estimation failure rejects the request up front (better than a popup
-        // with no fee or a guaranteed-to-fail broadcast).
-        let displayFeeNicks: Nicks;
-        if (feeNicks === undefined) {
-          try {
-            const sendTxEstimate = await vault.estimateTransactionFee(to, amountNicks);
-            if ('error' in sendTxEstimate) {
-              await sendBridgedResponse({
-                error: { code: -32603, message: `Fee estimation failed: ${sendTxEstimate.error}` },
-              });
-              return;
-            }
-            displayFeeNicks = String(sendTxEstimate.fee) as Nicks;
-          } catch (err) {
-            console.error('[Background] Fee estimation for sendTransaction failed:', err);
-            await sendBridgedResponse(toInternalProviderError(err));
-            return;
-          }
-        } else {
-          displayFeeNicks = feeNicks;
+        // Build once before approval so the UI reviews the exact fee and input
+        // intent that will later be signed. This read-only step does not reserve
+        // notes, write history, or derive private key material.
+        const releaseSendBuildAdmission = providerBuildAdmission.tryAcquire(sendTxOrigin);
+        if (!releaseSendBuildAdmission) {
+          await sendBridgedResponse({
+            error: { code: -32005, message: 'Another transaction build is already in progress' },
+          });
+          return;
         }
-        if (BigInt(amountNicks) + BigInt(displayFeeNicks) > BigInt(Number.MAX_SAFE_INTEGER)) {
+        const sendBuildAccountAddress = vault.getCurrentAccount()?.address;
+        let builtSendTransaction: Awaited<ReturnType<Vault['buildSimpleTransaction']>>;
+        try {
+          builtSendTransaction = await vault.buildSimpleTransaction(to, amountNicks, feeNicks);
+        } finally {
+          releaseSendBuildAdmission();
+        }
+
+        // Authorization and account selection can change while WASM is building.
+        // Recheck before inspecting success/error so a revoked caller cannot
+        // learn wallet-specific build failure details.
+        if (!isOriginApproved(sendTxOrigin)) {
+          await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+          return;
+        }
+        if (
+          vault.isLocked() ||
+          !sendBuildAccountAddress ||
+          vault.getCurrentAccount()?.address !== sendBuildAccountAddress
+        ) {
+          await sendBridgedResponse({
+            error: { code: 4001, message: 'Selected account changed; request the action again' },
+          });
+          return;
+        }
+        if ('error' in builtSendTransaction) {
+          await sendBridgedResponse({
+            error: { code: -32603, message: builtSendTransaction.error },
+          });
+          return;
+        }
+        if (builtSendTransaction.accountAddress !== sendBuildAccountAddress) {
+          await sendBridgedResponse({
+            error: { code: 4001, message: 'Selected account changed; request the action again' },
+          });
+          return;
+        }
+
+        const { transactionContext, ...reviewedTransaction } = builtSendTransaction;
+
+        if (
+          BigInt(amountNicks) + BigInt(builtSendTransaction.fee) >
+          BigInt(Number.MAX_SAFE_INTEGER)
+        ) {
           await sendBridgedResponse(
             toInvalidParamsError(new Error('Amount plus fee exceeds the supported range'))
           );
@@ -1459,9 +1759,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           origin: sendTxOrigin,
           to,
           amount: amountNicks,
-          fee: displayFeeNicks,
-          feeEstimated: feeNicks === undefined,
-          accountAddress: vault.getAddress(),
+          fee: builtSendTransaction.fee,
+          accountAddress: builtSendTransaction.accountAddress,
+          builtTransaction: reviewedTransaction,
+          transactionContext,
           timestamp: Date.now(),
         };
 
@@ -1497,19 +1798,35 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
+        const walletInfoAuthorization = captureProviderAuthorization(getInfoOrigin);
+        if (!walletInfoAuthorization) {
+          await sendBridgedResponse({ error: ERROR_CODES.LOCKED });
+          return;
+        }
+
         try {
           const walletInfoRpcConfig = await getEffectiveRpcConfig();
-          await sendBridgedResponse(buildConnectResponse(vault.getAddress(), walletInfoRpcConfig));
+          if (!providerAuthorizationStillValid(walletInfoAuthorization)) {
+            await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+            return;
+          }
+          await sendBridgedResponse(
+            buildConnectResponse(walletInfoAuthorization.accountAddress, walletInfoRpcConfig)
+          );
         } catch (err) {
           console.error('[Background] Failed to build wallet info response:', err);
-          await sendBridgedResponse(toInternalProviderError(err));
+          await sendBridgedResponse(
+            providerAuthorizationStillValid(walletInfoAuthorization)
+              ? toInternalProviderError(err)
+              : { error: { code: 4100, message: 'Unauthorized origin' } }
+          );
         }
         return;
 
-      case PROVIDER_METHODS.ESTIMATE_TRANSACTION_FEE: {
-        // Read-only like GET_WALLET_INFO: approved origin + unlocked vault, no approval popup
-        const estimateFeeOrigin = senderOrigin!;
-        if (!isOriginApproved(estimateFeeOrigin)) {
+      case PROVIDER_METHODS.BUILD_SIMPLE_TRANSACTION: {
+        // Read-only like GET_WALLET_INFO: approved origin + unlocked vault, no approval popup.
+        const buildSimpleOrigin = senderOrigin!;
+        if (!isOriginApproved(buildSimpleOrigin)) {
           await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
           return;
         }
@@ -1519,37 +1836,83 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           return;
         }
 
-        const estimateFeeParams =
+        const buildSimpleParams =
           payload.params && typeof payload.params === 'object' ? payload.params : {};
-        const { to: estimateFeeTo, amount: estimateFeeAmount } = estimateFeeParams;
-        if (!isNockAddress(estimateFeeTo)) {
+        const {
+          to: buildSimpleTo,
+          amount: buildSimpleAmount,
+          fee: buildSimpleFee,
+        } = buildSimpleParams;
+        if (!isNockAddress(buildSimpleTo)) {
           await sendBridgedResponse({ error: ERROR_CODES.BAD_ADDRESS });
           return;
         }
-        let estimateFeeAmountNicks: Nicks;
+        let buildSimpleAmountNicks: Nicks;
+        let buildSimpleFeeNicks: Nicks | undefined;
         try {
-          estimateFeeAmountNicks = parseNicksParam(estimateFeeAmount, 'amount');
+          buildSimpleAmountNicks = parseNicksParam(buildSimpleAmount, 'amount');
+          buildSimpleFeeNicks =
+            buildSimpleFee === undefined || buildSimpleFee === null
+              ? undefined
+              : parseNicksParam(buildSimpleFee, 'fee', { allowZero: true });
         } catch (err) {
           await sendBridgedResponse(toInvalidParamsError(err));
           return;
         }
 
+        const releaseBuildAdmission = providerBuildAdmission.tryAcquire(buildSimpleOrigin);
+        if (!releaseBuildAdmission) {
+          await sendBridgedResponse({
+            error: { code: -32005, message: 'Another transaction build is already in progress' },
+          });
+          return;
+        }
+        const buildAccountAddress = vault.getCurrentAccount()?.address;
+
         try {
-          const estimateFeeResult = await vault.estimateTransactionFee(
-            estimateFeeTo,
-            estimateFeeAmountNicks
+          const buildSimpleResult = await vault.buildSimpleTransaction(
+            buildSimpleTo,
+            buildSimpleAmountNicks,
+            buildSimpleFeeNicks
           );
-          if ('error' in estimateFeeResult) {
+
+          // Recheck before inspecting success/error so revoked callers cannot
+          // learn wallet-specific build failure details.
+          if (!isOriginApproved(buildSimpleOrigin)) {
+            await sendBridgedResponse({ error: { code: 4100, message: 'Unauthorized origin' } });
+            return;
+          }
+          if (
+            vault.isLocked() ||
+            !buildAccountAddress ||
+            vault.getCurrentAccount()?.address !== buildAccountAddress
+          ) {
             await sendBridgedResponse({
-              error: { code: -32603, message: estimateFeeResult.error },
+              error: { code: 4001, message: 'Selected account changed; request the action again' },
             });
             return;
           }
-          // Vault returns a number; the public API uses canonical Nicks (string)
-          await sendBridgedResponse({ fee: String(estimateFeeResult.fee) as Nicks });
+          if ('error' in buildSimpleResult) {
+            await sendBridgedResponse({
+              error: { code: -32603, message: buildSimpleResult.error },
+            });
+            return;
+          }
+          if (buildSimpleResult.accountAddress !== buildAccountAddress) {
+            await sendBridgedResponse({
+              error: { code: 4001, message: 'Selected account changed; request the action again' },
+            });
+            return;
+          }
+
+          const { transactionContext: _transactionContext, ...publicBuildResult } =
+            buildSimpleResult;
+          await sendBridgedResponse(publicBuildResult);
         } catch (err) {
-          console.error('[Background] Public fee estimation failed:', err);
+          console.error('[Background] Public unsigned transaction build failed:', err);
           await sendBridgedResponse(toInternalProviderError(err));
+        } finally {
+          releaseBuildAdmission();
         }
         return;
       }
@@ -1607,76 +1970,197 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         }
         return;
 
-      case INTERNAL_METHODS.UNLOCK:
-        const unlockResult = await vault.unlock(payload.params?.[0]); // password
-        sendResponse(unlockResult);
-
-        // Emit connect event when unlock succeeds
-        if ('ok' in unlockResult && unlockResult.ok) {
-          // Clear manual lock flag when successfully unlocked
-          manuallyLocked = false;
-          await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
-          await persistUnlockSession();
-          await emitWalletEvent('connect', { chainId: CHAIN_ID });
+      case INTERNAL_METHODS.UNLOCK: {
+        if (activeExplicitLifecycleGeneration !== null) {
+          sendResponse({ error: 'Another wallet lifecycle action is already in progress' });
+          return;
         }
-        return;
+        const generation = walletLifecycle.begin();
+        activeExplicitLifecycleGeneration = generation;
+        try {
+          const unlockResult = await walletLifecycle.run(generation, async isCurrent => {
+            const result = await vault.unlock(payload.params?.[0]);
+            if (!isCurrent()) return { error: ERROR_CODES.LOCKED };
+            if (!('ok' in result) || !result.ok) return result;
 
-      case INTERNAL_METHODS.LOCK:
-        // Set manual lock flag - user explicitly locked, don't auto-unlock
-        manuallyLocked = true;
-        await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: true });
-        await vault.lock();
-        await clearUnlockSessionCache();
-        sendResponse({ ok: true });
-
-        // Emit disconnect event when wallet locks
-        await emitWalletEvent('disconnect', { code: 1013, message: 'Wallet locked' });
-        return;
-
-      case INTERNAL_METHODS.RESET_WALLET:
-        // Reset the wallet completely - clears all data
-        await vault.reset();
-        await clearUnlockSessionCache();
-        subwalletDiscoveryAfterInitialSync.clear();
-        subwalletDiscoveryInFlight.clear();
-        manuallyLocked = false;
-        sendResponse({ ok: true });
-
-        // Emit disconnect event
-        await emitWalletEvent('disconnect', { code: 1013, message: 'Wallet reset' });
-        return;
-
-      case INTERNAL_METHODS.SETUP:
-        // params: password, mnemonic (optional). If no mnemonic, generates one automatically.
-        const setupResult = await vault.setup(payload.params?.[0], payload.params?.[1]);
-
-        if ('ok' in setupResult && setupResult.ok) {
-          manuallyLocked = false;
-        }
-        // Respond as soon as setup completes — do not await session/local persistence or discovery.
-        sendResponse(setupResult);
-
-        if ('ok' in setupResult && setupResult.ok) {
-          void (async () => {
+            scheduleCurrentAccountNetworkBootstrap(isCurrent);
+            if (!isCurrent() || vault.isLocked()) return { error: ERROR_CODES.LOCKED };
+            manuallyLocked = false;
             await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
+            if (!isCurrent() || vault.isLocked()) return { error: ERROR_CODES.LOCKED };
             await persistUnlockSession();
-          })().catch(err => console.error('[Background] Post-SETUP persistence failed:', err));
-          // Only scan for existing on-chain sub-wallets when importing a phrase (not brand-new generation).
-          const importedExistingPhrase = payload.params?.[2] === true;
-          if (importedExistingPhrase) {
-            const firstSeedId = vault.getSeedSources()[0]?.id;
-            if (firstSeedId) {
-              queueSubwalletDiscoveryAfterInitialSync(firstSeedId);
-            }
-            const currentAccount = vault.getCurrentAccount();
-            if (currentAccount) {
-              void syncAccountUTXOsWithDedupe(currentAccount.address, currentAccount.name).catch(
-                err => console.warn('[Background] Initial imported wallet sync failed:', err)
-              );
-            }
+            if (!isCurrent() || vault.isLocked()) return { error: ERROR_CODES.LOCKED };
+            await emitWalletEvent('connect', { chainId: CHAIN_ID }, isCurrent);
+            return result;
+          });
+          sendResponse(unlockResult ?? { error: ERROR_CODES.LOCKED });
+        } finally {
+          if (activeExplicitLifecycleGeneration === generation) {
+            activeExplicitLifecycleGeneration = null;
           }
         }
         return;
+      }
+
+      case INTERNAL_METHODS.LOCK: {
+        manuallyLocked = true;
+        const generation = preemptiveLock?.generation ?? walletLifecycle.begin();
+        activeExplicitLifecycleGeneration = generation;
+        // The synchronous prefix invalidates signing immediately; durable and
+        // externally visible effects remain ordered behind older transitions.
+        const lockPromise = preemptiveLock?.lockPromise ?? vault.lock();
+        try {
+          const lockResult = await walletLifecycle.run(generation, async isCurrent => {
+            await lockPromise;
+            if (!isCurrent()) return { error: ERROR_CODES.LOCKED };
+            subwalletDiscoveryAfterInitialSync.clear();
+            await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: true });
+            await clearUnlockSessionCache();
+            if (!isCurrent()) return { error: ERROR_CODES.LOCKED };
+            await emitWalletEvent(
+              'disconnect',
+              { code: 1013, message: 'Wallet locked' },
+              isCurrent
+            );
+            return { ok: true };
+          });
+          sendResponse(lockResult ?? { error: ERROR_CODES.LOCKED });
+        } finally {
+          if (activeExplicitLifecycleGeneration === generation) {
+            activeExplicitLifecycleGeneration = null;
+          }
+        }
+        return;
+      }
+
+      case INTERNAL_METHODS.RESET_WALLET: {
+        manuallyLocked = true;
+        const generation = preemptiveLock?.generation ?? walletLifecycle.begin();
+        activeExplicitLifecycleGeneration = generation;
+        const lockPromise = preemptiveLock?.lockPromise ?? vault.lock();
+        const approvalReset = preemptiveLock?.approvalReset ?? beginApprovalStateReset();
+        let localStorageResetCompleted = false;
+        let pendingSessionResetCompleted = false;
+        let unlockSessionResetCompleted = false;
+        let resetResult: { ok: true } | { error: string } | undefined;
+        let resetFailure: unknown;
+        try {
+          resetResult = await walletLifecycle.run(generation, async isCurrent => {
+            await lockPromise;
+            if (!isCurrent()) return { error: ERROR_CODES.LOCKED };
+            await approvedOrigins.runReset(approvalReset.authorizationGeneration, async () => {
+              await vault.reset();
+            });
+            localStorageResetCompleted = true;
+            pendingSessionResetCompleted = await pendingApprovalSession.clearForReset(
+              approvalReset.sessionGeneration
+            );
+            if (!pendingSessionResetCompleted) {
+              throw new Error('Approval-session reset was superseded');
+            }
+            await removeUnlockSessionCache();
+            unlockSessionResetCompleted = true;
+            if (!isCurrent()) return { error: ERROR_CODES.LOCKED };
+            subwalletDiscoveryAfterInitialSync.clear();
+            subwalletDiscoveryInFlight.clear();
+            utxoSyncInFlight.clear();
+            manuallyLocked = false;
+            await emitWalletEvent('disconnect', { code: 1013, message: 'Wallet reset' }, isCurrent);
+            return { ok: true };
+          });
+        } catch (error) {
+          resetFailure = error;
+        } finally {
+          if (!localStorageResetCompleted) {
+            // Even if the broader vault reset fails or is superseded, never
+            // leave the old origin permission behind after reset was requested.
+            try {
+              await approvedOrigins.runReset(approvalReset.authorizationGeneration, async () => {
+                await chrome.storage.local.remove(STORAGE_KEYS.APPROVED_ORIGINS);
+              });
+              localStorageResetCompleted = true;
+            } catch (error) {
+              resetFailure ??= error;
+            }
+          }
+          if (!pendingSessionResetCompleted) {
+            try {
+              pendingSessionResetCompleted = await pendingApprovalSession.clearForReset(
+                approvalReset.sessionGeneration
+              );
+              if (!pendingSessionResetCompleted) {
+                throw new Error('Approval-session reset was superseded');
+              }
+            } catch (error) {
+              resetFailure ??= error;
+            }
+          }
+          if (!unlockSessionResetCompleted) {
+            try {
+              await removeUnlockSessionCache();
+              unlockSessionResetCompleted = true;
+            } catch (error) {
+              resetFailure ??= error;
+            }
+          }
+
+          clearPendingApprovalMemory();
+          if (
+            localStorageResetCompleted &&
+            pendingSessionResetCompleted &&
+            unlockSessionResetCompleted
+          ) {
+            finishApprovalStateReset(approvalReset);
+          }
+          if (activeExplicitLifecycleGeneration === generation) {
+            activeExplicitLifecycleGeneration = null;
+          }
+        }
+        if (resetFailure) {
+          console.error('[Background] Wallet reset failed:', resetFailure);
+          sendResponse({
+            error: resetFailure instanceof Error ? resetFailure.message : 'Wallet reset failed',
+          });
+        } else {
+          sendResponse(resetResult ?? { error: ERROR_CODES.LOCKED });
+        }
+        return;
+      }
+
+      case INTERNAL_METHODS.SETUP: {
+        if (activeExplicitLifecycleGeneration !== null) {
+          sendResponse({ error: 'Another wallet lifecycle action is already in progress' });
+          return;
+        }
+        const generation = walletLifecycle.begin();
+        activeExplicitLifecycleGeneration = generation;
+        try {
+          const setupResult = await walletLifecycle.run(generation, async isCurrent => {
+            const result = await vault.setup(payload.params?.[0], payload.params?.[1]);
+            if (!isCurrent()) return { error: ERROR_CODES.LOCKED };
+            if (!('ok' in result) || !result.ok) return result;
+
+            manuallyLocked = false;
+            await chrome.storage.local.set({ [STORAGE_KEYS.MANUALLY_LOCKED]: false });
+            if (!isCurrent() || vault.isLocked()) return { error: ERROR_CODES.LOCKED };
+            await persistUnlockSession();
+            if (!isCurrent() || vault.isLocked()) return { error: ERROR_CODES.LOCKED };
+
+            if (payload.params?.[2] === true) {
+              const firstSeedId = vault.getSeedSources()[0]?.id;
+              if (firstSeedId) queueSubwalletDiscoveryAfterInitialSync(firstSeedId);
+            }
+            scheduleCurrentAccountNetworkBootstrap(isCurrent);
+            return isCurrent() && !vault.isLocked() ? result : { error: ERROR_CODES.LOCKED };
+          });
+          sendResponse(setupResult ?? { error: ERROR_CODES.LOCKED });
+        } finally {
+          if (activeExplicitLifecycleGeneration === generation) {
+            activeExplicitLifecycleGeneration = null;
+          }
+        }
+        return;
+      }
 
       case INTERNAL_METHODS.GET_STATE:
         // Initialize vault state from storage before checking status
@@ -2071,22 +2555,31 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
 
           try {
-            const feeBuildOptions = resolveTransactionFeeForBuild(
-              txRequest.fee,
-              txRequest.feeEstimated
-            );
-            const v2Result = await vault.sendTransactionV2(
-              txRequest.to,
-              txRequest.amount,
-              feeBuildOptions.fee,
-              false,
-              undefined,
-              'provider_send',
-              {
-                accountAddress: txRequest.accountAddress,
-                feeSelectionHint: feeBuildOptions.feeSelectionHint,
+            let v2Result;
+            if (txRequest.builtTransaction) {
+              if (!txRequest.transactionContext) {
+                throw new Error('Transaction context unavailable; request the action again');
               }
-            );
+              if (
+                txRequest.builtTransaction.accountAddress !== txRequest.accountAddress ||
+                txRequest.builtTransaction.to !== txRequest.to ||
+                txRequest.builtTransaction.amount !== txRequest.amount ||
+                txRequest.builtTransaction.fee !== txRequest.fee
+              ) {
+                throw new Error('Transaction review changed after approval was requested');
+              }
+              v2Result = await vault.sendBuiltSimpleTransaction(
+                txRequest.builtTransaction,
+                txRequest.to,
+                txRequest.transactionContext,
+                'provider_send',
+                () => isOriginApproved(txRequest.origin)
+              );
+            } else {
+              // A restored pre-snapshot provider approval cannot be bound to
+              // exact inputs or re-authorized at the final broadcast boundary.
+              throw new Error('Transaction review is outdated; request the transaction again');
+            }
 
             if ('error' in v2Result) {
               throw new Error(v2Result.error);
@@ -2151,6 +2644,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               [signRequest.message],
               signRequest.accountAddress
             );
+            if (!isOriginApproved(signRequest.origin)) {
+              throw new Error('Request authorization changed after approval');
+            }
             approveSignPending.sendResponse(signMessageResponse);
             cancelPendingRequest(approveSignId);
             processNextRequest();
@@ -2202,11 +2698,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           try {
             assertNativeRawTx(signRawTxRequest.rawTx);
             const currentReview = await vault.describeRawTxForApproval(signRawTxRequest.rawTx);
+            if (!signRawTxRequest.transactionContext) {
+              throw new Error('Transaction review context is unavailable; request approval again');
+            }
             if (
               currentReview.transactionId !== signRawTxRequest.transactionId ||
               currentReview.signingIntentId !== signRawTxRequest.signingIntentId ||
               currentReview.blockHeight !== signRawTxRequest.reviewBlockHeight ||
               currentReview.accountAddress !== signRawTxRequest.accountAddress ||
+              currentReview.transactionContext.fingerprint !==
+                signRawTxRequest.transactionContext.fingerprint ||
               (signRawTxRequest.inputsVerified && !currentReview.inputsVerified)
             ) {
               throw new Error('Transaction review changed after approval was requested');
@@ -2216,10 +2717,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               rawTx: signRawTxRequest.rawTx,
               blockHeight: signRawTxRequest.reviewBlockHeight,
               accountAddress: signRawTxRequest.accountAddress,
+              txEngineSettings: signRawTxRequest.transactionContext.txEngineSettings,
+              transactionContextFingerprint: signRawTxRequest.transactionContext.fingerprint,
+              authorizationStillValid: () => isOriginApproved(signRawTxRequest.origin),
             });
             const signedIntentId = String(wasm.spendsV1Hash(signedTx.spends));
             if (signedIntentId !== signRawTxRequest.signingIntentId) {
               throw new Error('Signed transaction does not match the approved transaction');
+            }
+            if (
+              vault.isLocked() ||
+              vault.getCurrentAccount()?.address !== signRawTxRequest.accountAddress ||
+              !isOriginApproved(signRawTxRequest.origin)
+            ) {
+              throw new Error('Signing account or authorization changed after approval');
             }
 
             approveSignRawTxPending.sendResponse({ tx: signedTx });
@@ -2274,6 +2785,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const approveConnectPending = pendingRequests.get(approveConnectId);
         if (approveConnectPending && isConnectRequest(approveConnectPending.request)) {
           const connectRequest = approveConnectPending.request;
+          const connectApprovalGeneration = approvedOrigins.captureGeneration();
 
           if (
             !(await validatePendingApproval(approveConnectId, approveConnectPending, sendResponse))
@@ -2282,27 +2794,66 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
 
           try {
+            const approvedAccountAddress = connectRequest.accountAddress;
+            if (
+              !approvedAccountAddress ||
+              !pendingApprovalStillCurrent(
+                approveConnectId,
+                approveConnectPending,
+                connectApprovalGeneration,
+                approvedAccountAddress
+              )
+            ) {
+              throw new Error('Wallet authorization changed; request the action again');
+            }
+
             const approveRpcConfig = await getEffectiveRpcConfig();
-            const connectResponse = buildConnectResponse(
-              connectRequest.accountAddress!,
-              approveRpcConfig
-            );
+            if (
+              !pendingApprovalStillCurrent(
+                approveConnectId,
+                approveConnectPending,
+                connectApprovalGeneration,
+                approvedAccountAddress
+              )
+            ) {
+              throw new Error('Wallet authorization changed; request the action again');
+            }
+            const connectResponse = buildConnectResponse(approvedAccountAddress, approveRpcConfig);
 
             // Add origin only after the response can be built.
-            await approveOrigin(connectRequest.origin);
+            await approveOrigin(connectRequest.origin, connectApprovalGeneration);
+            if (
+              !pendingApprovalStillCurrent(
+                approveConnectId,
+                approveConnectPending,
+                connectApprovalGeneration,
+                approvedAccountAddress
+              ) ||
+              !isOriginApproved(connectRequest.origin)
+            ) {
+              throw new Error('Wallet authorization changed; request the action again');
+            }
             approveConnectPending.sendResponse(connectResponse);
             cancelPendingRequest(approveConnectId);
             processNextRequest();
             sendResponse({ success: true });
 
             // Emit connect event
-            await emitWalletEvent('connect', { chainId: CHAIN_ID });
+            await emitWalletEvent('connect', { chainId: CHAIN_ID }, () =>
+              providerAuthorizationStillValid({
+                generation: connectApprovalGeneration,
+                origin: connectRequest.origin,
+                accountAddress: approvedAccountAddress,
+              })
+            );
           } catch (err) {
             console.error('[Background] Failed to approve connection:', err);
             const errorMessage =
               err instanceof Error ? err.message : 'Failed to approve connection';
-            cancelPendingRequest(approveConnectId, -32603, errorMessage);
-            processNextRequest();
+            if (pendingRequests.get(approveConnectId) === approveConnectPending) {
+              cancelPendingRequest(approveConnectId, -32603, errorMessage);
+              processNextRequest();
+            }
             sendResponse({ error: errorMessage });
           }
         } else {
@@ -2712,10 +3263,24 @@ chrome.alarms.onAlarm.addListener(async alarm => {
   const idleMs = Date.now() - lastActivity;
   if (idleMs >= autoLockMinutes * 60_000) {
     try {
-      await vault.lock();
-      await clearUnlockSessionCache();
-      // Notify popup to update UI immediately
-      await emitWalletEvent('LOCKED', { reason: 'auto-lock' });
+      const generation = walletLifecycle.begin();
+      activeExplicitLifecycleGeneration = generation;
+      const lockPromise = vault.lock();
+      try {
+        await walletLifecycle.run(generation, async isCurrent => {
+          await lockPromise;
+          if (!isCurrent()) return;
+          subwalletDiscoveryAfterInitialSync.clear();
+          await clearUnlockSessionCache();
+          if (!isCurrent()) return;
+          // Notify popup to update UI immediately.
+          await emitWalletEvent('LOCKED', { reason: 'auto-lock' }, isCurrent);
+        });
+      } finally {
+        if (activeExplicitLifecycleGeneration === generation) {
+          activeExplicitLifecycleGeneration = null;
+        }
+      }
     } catch (error) {
       console.error('Auto-lock failed:', error);
     }

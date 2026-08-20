@@ -127,6 +127,16 @@ export function pendingApprovalOriginMatches(
   return currentOrigin !== null && request.origin === currentOrigin;
 }
 
+/** Connection requests establish permission; every other approval must retain it. */
+export function pendingApprovalPermissionStillValid(
+  request: PendingRequestLike['request'],
+  approvedOrigins: ReadonlySet<string>
+): boolean {
+  const isConnectionRequest =
+    !('to' in request) && !('message' in request) && !('rawTx' in request);
+  return isConnectionRequest || approvedOrigins.has(request.origin);
+}
+
 export function pendingApprovalAccountMatches(
   request: PendingRequestLike['request'],
   currentAccountAddress: string | null

@@ -27,6 +27,24 @@ export interface RpcConfig {
   coinbaseTimelockBlocks?: number;
 }
 
+/**
+ * Effective transaction semantics captured from one storage read. The
+ * fingerprint intentionally excludes the current block height itself so an
+ * approval remains valid while the chain advances within the same activation
+ * band. Crossing an activation boundary changes the fingerprint.
+ */
+export type TransactionContextSnapshot = Readonly<{
+  fingerprint: string;
+  /** Stable endpoint + logical-network identity used to source cached UTXOs. */
+  networkIdentity: string;
+  rpcUrl: string;
+  networkName: string;
+  coinbaseTimelockBlocks: number;
+  txEngineActivationHeight: number;
+  nextTxEngineActivationHeight?: number;
+  txEngineSettings: TxEngineSettings;
+}>;
+
 /** Stored config is partial; unset keys fall back to defaults */
 export type StoredRpcConfig = Partial<RpcConfig>;
 
@@ -175,6 +193,109 @@ export async function clearRpcConfig(): Promise<void> {
   await chrome.storage.local.remove(STORAGE_KEYS.RPC_CONFIG);
 }
 
+function txEngineActivationEntries(config: RpcConfig): Array<readonly [number, TxEngineSettings]> {
+  const heights =
+    config.txEngineActivationHeights ??
+    defaultRpcConfig.txEngineActivationHeights ??
+    DEFAULT_WALLET_TX_ENGINE_ACTIVATION_HEIGHTS;
+
+  return Object.entries(heights)
+    .map(([height, settings]) => [Number(height), settings] as const)
+    .filter(([height]) => Number.isFinite(height))
+    .sort(([a], [b]) => a - b);
+}
+
+function activeTxEngineContext(
+  config: RpcConfig,
+  blockHeight: number
+): { activationHeight: number; settings: TxEngineSettings } {
+  const eligible = txEngineActivationEntries(config).filter(([height]) => height <= blockHeight);
+  const active = eligible[eligible.length - 1];
+  if (!active) {
+    throw new Error(`No tx engine available for height ${blockHeight}`);
+  }
+  return { activationHeight: active[0], settings: active[1] };
+}
+
+function canonicalizeContextValue(value: unknown): unknown {
+  if (typeof value === 'bigint') return value.toString();
+  if (Array.isArray(value)) return value.map(canonicalizeContextValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([key, entry]) => [key, canonicalizeContextValue(entry)])
+    );
+  }
+  return value;
+}
+
+/**
+ * Stable identity for chain-derived wallet data. A successful account sync is
+ * tagged with this value; transaction builders reject untagged or mismatched
+ * caches so changing RPC/network settings cannot mix notes from two chains.
+ */
+export function getRpcNetworkIdentity(config: RpcConfig): string {
+  return JSON.stringify({
+    schema: 1,
+    rpcUrl: normalizeRpcUrl(config.rpcUrl || RPC_ENDPOINT),
+    // The configured name is a user-editable label, not chain identity. A
+    // future RPC chain/genesis ID can be added here without treating renames as
+    // a destructive network switch.
+  });
+}
+
+export function assertRpcNetworkIdentity(
+  syncedIdentity: string | undefined,
+  currentIdentity: string
+): void {
+  if (!syncedIdentity || syncedIdentity !== currentIdentity) {
+    throw new Error('Wallet data must be synced with the current network before transacting');
+  }
+}
+
+/**
+ * Stable, collision-free canonical representation of the configuration that
+ * can change how a transaction is built, signed, or submitted.
+ */
+export function getTransactionContextFingerprint(config: RpcConfig, blockHeight: number): string {
+  const active = activeTxEngineContext(config, blockHeight);
+  const descriptor = {
+    schema: 1,
+    rpcUrl: normalizeRpcUrl(config.rpcUrl || RPC_ENDPOINT),
+    networkName: config.networkName,
+    coinbaseTimelockBlocks: config.coinbaseTimelockBlocks ?? DEFAULT_COINBASE_TIMELOCK_BLOCKS,
+    txEngineActivationHeights: txEngineActivationEntries(config).map(([height, settings]) => ({
+      height,
+      settings,
+    })),
+    activeTxEngineActivationHeight: active.activationHeight,
+    activeTxEngineSettings: active.settings,
+  };
+  return JSON.stringify(canonicalizeContextValue(descriptor));
+}
+
+/** Capture every transaction-context value from one effective config read. */
+export async function getTransactionContextSnapshot(
+  blockHeight: number
+): Promise<TransactionContextSnapshot> {
+  const config = await getEffectiveRpcConfig();
+  const active = activeTxEngineContext(config, blockHeight);
+  const nextActivation = txEngineActivationEntries(config).find(([height]) => height > blockHeight);
+  const txEngineSettings = Object.freeze({ ...active.settings });
+
+  return Object.freeze({
+    fingerprint: getTransactionContextFingerprint(config, blockHeight),
+    networkIdentity: getRpcNetworkIdentity(config),
+    rpcUrl: config.rpcUrl,
+    networkName: config.networkName,
+    coinbaseTimelockBlocks: config.coinbaseTimelockBlocks ?? DEFAULT_COINBASE_TIMELOCK_BLOCKS,
+    txEngineActivationHeight: active.activationHeight,
+    nextTxEngineActivationHeight: nextActivation?.[0],
+    txEngineSettings,
+  });
+}
+
 /**
  * Resolve TxEngineSettings for a given block height.
  * Returns the settings for the largest activation height <= blockHeight.
@@ -182,17 +303,5 @@ export async function clearRpcConfig(): Promise<void> {
  */
 export async function getTxEngineSettingsForHeight(blockHeight: number): Promise<TxEngineSettings> {
   const config = await getEffectiveRpcConfig();
-  const heights =
-    config.txEngineActivationHeights ??
-    defaultRpcConfig.txEngineActivationHeights ??
-    DEFAULT_WALLET_TX_ENGINE_ACTIVATION_HEIGHTS;
-  const sorted = Object.keys(heights)
-    .map(Number)
-    .filter(h => h <= blockHeight)
-    .sort((a, b) => b - a);
-  const best = sorted[0];
-  if (best === undefined) {
-    throw new Error(`No tx engine available for height ${blockHeight}`);
-  }
-  return heights[best];
+  return activeTxEngineContext(config, blockHeight).settings;
 }

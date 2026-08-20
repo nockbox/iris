@@ -13,14 +13,14 @@ vi.mock('@nockbox/iris-sdk', () => ({
 import { INTERNAL_METHODS, PROVIDER_METHODS, RPC_METHODS } from './constants';
 import type { RPCMethod } from './types';
 
-const publicFeeMethod: RPCMethod = 'nock_estimateTransactionFee';
+const publicBuildMethod: RPCMethod = 'nock_buildSimpleTransaction';
 const internalFeeMethod: RPCMethod = 'wallet:estimateTransactionFee';
 
-describe('fee RPC method constants', () => {
-  it('keeps the public and internal wire methods in the combined method contract', () => {
-    expect(PROVIDER_METHODS.ESTIMATE_TRANSACTION_FEE).toBe(publicFeeMethod);
+describe('transaction build RPC method constants', () => {
+  it('keeps the public build and internal fee methods in the combined contract', () => {
+    expect(PROVIDER_METHODS.BUILD_SIMPLE_TRANSACTION).toBe(publicBuildMethod);
     expect(INTERNAL_METHODS.ESTIMATE_SEND_FEE).toBe(internalFeeMethod);
-    expect(RPC_METHODS.ESTIMATE_TRANSACTION_FEE).toBe(publicFeeMethod);
+    expect(RPC_METHODS.BUILD_SIMPLE_TRANSACTION).toBe(publicBuildMethod);
     expect(RPC_METHODS.ESTIMATE_SEND_FEE).toBe(internalFeeMethod);
   });
 });

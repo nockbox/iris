@@ -9,13 +9,13 @@ import { PROVIDER_METHODS as SDK_PROVIDER_METHODS } from '@nockbox/iris-sdk';
 
 /**
  * Provider methods: SDK methods plus methods added locally ahead of the next SDK release.
- * TODO: drop the local ESTIMATE_TRANSACTION_FEE entry once @nockbox/iris-sdk >= 0.3.0
- * (which defines it) is published and the dependency is upgraded.
+ * TODO: drop the local BUILD_SIMPLE_TRANSACTION entry once @nockbox/iris-sdk >= 0.3.0
+ * (which owns this public API) is published and the dependency is upgraded.
  */
 export const PROVIDER_METHODS = {
   ...SDK_PROVIDER_METHODS,
-  /** Estimate transaction fee for a dApp send (read-only, no approval popup) */
-  ESTIMATE_TRANSACTION_FEE: 'nock_estimateTransactionFee',
+  /** Build an exact unsigned dApp payment intent (read-only, no approval popup) */
+  BUILD_SIMPLE_TRANSACTION: 'nock_buildSimpleTransaction',
 } as const;
 
 /**

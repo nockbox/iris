@@ -7,6 +7,34 @@ export type TransactionFeeBuildOptions = {
   feeSelectionHint?: Nicks;
 };
 
+/** Keep the fee assigned to the transaction distinct from the minimum required fee. */
+export function resolveBuilderFeeSummary(
+  currentFee: Nicks | number,
+  minimumFee: Nicks | number,
+  hasExplicitFee: boolean
+): { fee: number; minimumFee: number } {
+  const fee = Number(currentFee);
+  const minimum = Number(minimumFee);
+  if (!Number.isSafeInteger(fee) || fee < 0 || !Number.isSafeInteger(minimum) || minimum < 0) {
+    throw new Error('Transaction fee exceeds the supported Nicks range');
+  }
+  if (fee < minimum) {
+    throw new Error(
+      hasExplicitFee
+        ? `Explicit fee is below the minimum required fee of ${minimum} nicks`
+        : `Calculated fee is below the minimum required fee of ${minimum} nicks`
+    );
+  }
+  return { fee, minimumFee: minimum };
+}
+
+/** Reject signing/broadcast if witness insertion changed the approved spends intent. */
+export function assertMatchingTransactionIntent(expected: string, actual: string): void {
+  if (!expected || expected !== actual) {
+    throw new Error('Transaction intent changed after approval');
+  }
+}
+
 /**
  * Preserve the distinction between a dApp fee override and a wallet-generated estimate.
  * Requests created before `feeEstimated` existed are treated as explicit-fee requests.

@@ -3,7 +3,13 @@
  */
 
 import { PROVIDER_METHODS, INTERNAL_METHODS, RPC_METHODS, ERROR_CODES } from './constants';
-import type { Nicks } from '@nockbox/iris-sdk/wasm';
+import type {
+  Digest,
+  Nicks,
+  NockchainTx,
+  Note as NativeNote,
+  TxEngineSettings,
+} from '@nockbox/iris-sdk/wasm';
 
 /**
  * Child wallet account, always nested under a SeedAccount.
@@ -171,10 +177,55 @@ export interface TransactionRequest {
    * on approval the exact fee is auto-calculated by WASM at build time.
    */
   feeEstimated?: boolean;
+  /**
+   * Exact unsigned intent built before approval. Optional so transaction
+   * approvals created by older extension versions remain readable.
+   */
+  builtTransaction?: BuiltSimpleTransaction;
+  /**
+   * Wallet-internal context bound to `builtTransaction`. Optional for approval
+   * snapshots created by older extension versions; never exposed by the public
+   * build RPC.
+   */
+  transactionContext?: TransactionApprovalContext;
   /** Account selected when the transaction request was created. */
   accountAddress: string;
   /** Request timestamp */
   timestamp: number;
+}
+
+/** Internal build/sign/broadcast context persisted with an exact approval. */
+export interface TransactionApprovalContext {
+  fingerprint: string;
+  /** Endpoint/network identity of the account data used by this build. */
+  networkIdentity: string;
+  rpcUrl: string;
+  networkName: string;
+  coinbaseTimelockBlocks: number;
+  txEngineActivationHeight: number;
+  nextTxEngineActivationHeight?: number;
+  txEngineSettings: TxEngineSettings;
+}
+
+/**
+ * Canonical result of nock_buildSimpleTransaction. Native notes are sidecars:
+ * signers must resolve transaction input names against their own trusted store.
+ */
+export interface BuiltSimpleTransaction {
+  tx: NockchainTx;
+  /** Exact native inputs committed by tx, ordered by the transaction's input names. */
+  notes: NativeNote[];
+  /** Output notes projected from tx's seeds using `blockHeight` and its engine settings. */
+  outputs: NativeNote[];
+  intentId: Digest;
+  accountAddress: Digest;
+  blockHeight: number;
+  to: Digest;
+  amount: Nicks;
+  inputTotal: Nicks;
+  fee: Nicks;
+  minimumFee: Nicks;
+  change: Nicks;
 }
 
 /** Pending signTx approval request stored in native wasm form. */
@@ -196,6 +247,8 @@ export interface SignRawTxRequest {
   reviewBlockHeight: number;
   /** Account whose available notes were used to verify the transaction inputs. */
   accountAddress: string;
+  /** Internal network/engine context used to render and later sign the review. */
+  transactionContext?: TransactionApprovalContext;
   id: string;
   origin: string;
   outputs?: unknown[];
@@ -367,6 +420,11 @@ export interface WalletTransaction {
   /** Tx id used for Nockblocks tracking when available */
   trackingTxId?: string;
 
+  /** Reviewed spends intent for the exact pre-approval send path. */
+  exactIntentId?: string;
+  /** Wallet-owned local flow with a durable pre-broadcast recovery boundary. */
+  locallyManagedSubmission?: boolean;
+
   // For outgoing transactions
   /** Note IDs used as inputs (spent) */
   inputNoteIds?: string[];
@@ -424,6 +482,12 @@ export interface WalletTxStore {
  */
 export interface AccountSyncState {
   accountAddress: string;
+  /** Endpoint/network identity that produced the cached account UTXOs. */
+  rpcNetworkIdentity?: string;
+  /** A persisted sync began mutating this snapshot but did not commit a new tip. */
+  utxoSyncInProgress?: boolean;
+  /** Terminal history predating a network switch must not classify new-chain change. */
+  excludeTerminalHistoryFromChangeDetection?: boolean;
   /** Last block height that was fully synced (inclusive) */
   lastSyncedHeight: number;
   /** Timestamp of last successful sync */
