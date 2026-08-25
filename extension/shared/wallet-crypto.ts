@@ -12,6 +12,8 @@ import wasm from './sdk-wasm.js';
 import { publicKeyToPKH } from './address-encoding';
 import { ensureWasmInitialized as ensureWasmInit } from './wasm-utils';
 
+const englishWords = new Set(wordlist);
+
 /**
  * Generates a BIP-39 mnemonic (24 words)
  * Uses 256 bits of entropy for maximum security
@@ -27,6 +29,39 @@ export function generateMnemonic(): string {
  */
 export function validateMnemonic(mnemonic: string): boolean {
   return validateMnemonicScure(mnemonic, wordlist);
+}
+
+export function normalizeAndValidateMnemonic(mnemonic: string): string | null {
+  const trimmed = mnemonic.trim();
+  if (!trimmed) return null;
+
+  const canonicalWords: string[] = [];
+  for (const rawToken of trimmed.split(/\s+/)) {
+    if (!/^[A-Za-z]+$/.test(rawToken)) return null;
+
+    const token = rawToken.toLowerCase();
+
+    // Exact words take precedence over four-character prefix expansion.
+    if (englishWords.has(token)) {
+      canonicalWords.push(token);
+      continue;
+    }
+
+    if (token.length !== 4) return null;
+
+    let prefixMatch: string | null = null;
+    for (const word of wordlist) {
+      if (!word.startsWith(token)) continue;
+      if (prefixMatch !== null) return null;
+      prefixMatch = word;
+    }
+
+    if (prefixMatch === null) return null;
+    canonicalWords.push(prefixMatch);
+  }
+
+  const canonicalMnemonic = canonicalWords.join(' ');
+  return validateMnemonic(canonicalMnemonic) ? canonicalMnemonic : null;
 }
 
 /**
