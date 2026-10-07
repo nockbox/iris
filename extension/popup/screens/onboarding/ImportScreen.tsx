@@ -14,7 +14,11 @@ import { EyeIcon } from '../../components/icons/EyeIcon';
 import { EyeOffIcon } from '../../components/icons/EyeOffIcon';
 import { InfoIcon } from '../../components/icons/InfoIcon';
 import { importKeyfile, type Keyfile } from '../../../shared/keyfile';
-import { validateMnemonic } from '../../../shared/wallet-crypto';
+import { normalizeAndValidateMnemonic } from '../../../shared/wallet-crypto';
+
+function lowercaseAscii(value: string): string {
+  return value.replace(/[A-Z]/g, character => character.toLowerCase());
+}
 
 export function ImportScreen() {
   const {
@@ -51,7 +55,7 @@ export function ImportScreen() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   function handleWordChange(index: number, value: string) {
-    const trimmedValue = value.trim().toLowerCase();
+    const trimmedValue = lowercaseAscii(value.trim());
     const newWords = [...words];
     newWords[index] = trimmedValue;
     setWords(newWords);
@@ -70,7 +74,7 @@ export function ImportScreen() {
   function handlePaste(index: number, e: React.ClipboardEvent<HTMLInputElement>) {
     if (index === 0) {
       const pasteData = e.clipboardData.getData('text');
-      const pastedWords = pasteData.trim().toLowerCase().split(/\s+/);
+      const pastedWords = lowercaseAscii(pasteData.trim()).split(/\s+/);
 
       if (pastedWords.length === UI_CONSTANTS.MNEMONIC_WORD_COUNT) {
         e.preventDefault();
@@ -117,7 +121,7 @@ export function ImportScreen() {
 
   async function handleImport(mnemonicOverride?: string) {
     // Use stored mnemonic (set either by manual entry or keyfile import)
-    const mnemonic = mnemonicOverride || onboardingMnemonic || words.join(' ').trim();
+    const mnemonicCandidate = mnemonicOverride || onboardingMnemonic || words.join(' ').trim();
 
     if (!isAddSeedFlow) {
       // Validate password
@@ -137,11 +141,14 @@ export function ImportScreen() {
       }
     }
 
+    const mnemonic = normalizeAndValidateMnemonic(mnemonicCandidate);
+    if (!mnemonic) {
+      setIsSubmitting(false);
+      setError('Invalid secret phrase. Please check your words and try again.');
+      return;
+    }
+
     if (isAddSeedFlow) {
-      if (!validateMnemonic(mnemonic)) {
-        setError('Invalid secret phrase. Please check your words and try again.');
-        return;
-      }
       setIsSubmitting(true);
       try {
         const result = await createMnemonicSeedSource(mnemonic, undefined, true);

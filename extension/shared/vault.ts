@@ -8,7 +8,7 @@ import {
   generateMnemonic,
   deriveAddress,
   deriveAddressFromMaster,
-  validateMnemonic,
+  normalizeAndValidateMnemonic,
 } from './wallet-crypto';
 import {
   ERROR_CODES,
@@ -644,8 +644,9 @@ export class Vault {
   ): Promise<{ ok: boolean; address: string; mnemonic: string } | { error: string }> {
     const setupLifecycleEpoch = this.accountDataEpoch;
     // Generate or validate mnemonic
-    const words = mnemonic ? mnemonic.trim() : generateMnemonic();
-    if (mnemonic && !validateMnemonic(words)) {
+    const mnemonicCandidate = mnemonic ? mnemonic : generateMnemonic();
+    const words = normalizeAndValidateMnemonic(mnemonicCandidate);
+    if (!words) {
       return { error: ERROR_CODES.INVALID_MNEMONIC };
     }
 
@@ -1274,8 +1275,9 @@ export class Vault {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    const words = mnemonic ? mnemonic.trim() : generateMnemonic();
-    if (mnemonic && !validateMnemonic(words)) {
+    const mnemonicCandidate = mnemonic ? mnemonic : generateMnemonic();
+    const words = normalizeAndValidateMnemonic(mnemonicCandidate);
+    if (!words) {
       return { error: ERROR_CODES.INVALID_MNEMONIC };
     }
 
