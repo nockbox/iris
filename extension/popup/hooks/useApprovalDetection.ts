@@ -24,6 +24,7 @@ import type { Screen } from '../store';
 import { isSidePanel } from '../utils/displayContext';
 
 interface UseApprovalDetectionProps {
+  currentScreen: Screen;
   walletAddress: string | null;
   walletLocked: boolean;
   setPendingConnectRequest: (request: ConnectRequest | null) => void;
@@ -32,6 +33,13 @@ interface UseApprovalDetectionProps {
   setPendingSignRawTxRequest: (request: SignRawTxRequest | null) => void;
   navigate: (screen: Screen) => void;
 }
+
+const APPROVAL_SCREENS = new Set<Screen>([
+  'connect-approval',
+  'approve-transaction',
+  'sign-message',
+  'approve-sign-raw-tx',
+]);
 
 function getApprovalScreen(type: ApprovalType): Screen {
   switch (type) {
@@ -47,6 +55,7 @@ function getApprovalScreen(type: ApprovalType): Screen {
 }
 
 export function useApprovalDetection({
+  currentScreen,
   walletAddress,
   walletLocked,
   setPendingConnectRequest,
@@ -56,12 +65,35 @@ export function useApprovalDetection({
   navigate,
 }: UseApprovalDetectionProps) {
   const walletReady = walletAddress !== null;
-  const pendingSidePanelApproval = useRef<{ requestId: string; type: ApprovalType } | null>(null);
   const walletReadyRef = useRef(walletReady);
   walletReadyRef.current = walletReady;
+  const currentScreenRef = useRef(currentScreen);
+  currentScreenRef.current = currentScreen;
+  const approvalVersion = useRef(0);
+
+  const clearPendingApproval = useCallback(() => {
+    setPendingConnectRequest(null);
+    setPendingTransactionRequest(null);
+    setPendingSignRequest(null);
+    setPendingSignRawTxRequest(null);
+
+    // An empty approval queue should dismiss stale confirmations, without
+    // interrupting settings, drafts, or a wallet waiting to be unlocked.
+    if (APPROVAL_SCREENS.has(currentScreenRef.current)) {
+      navigate(walletLocked ? 'locked' : 'home');
+    }
+  }, [
+    walletLocked,
+    setPendingConnectRequest,
+    setPendingTransactionRequest,
+    setPendingSignRequest,
+    setPendingSignRawTxRequest,
+    navigate,
+  ]);
 
   const handleApproval = useCallback(
     async (requestId: string, type: ApprovalType) => {
+      const version = ++approvalVersion.current;
       const targetScreen = getApprovalScreen(type);
       const lockedScreen: Screen = 'locked';
 
@@ -69,7 +101,7 @@ export function useApprovalDetection({
         const request = await send<ConnectRequest>(INTERNAL_METHODS.GET_PENDING_CONNECTION, [
           requestId,
         ]);
-        if (request && !('error' in request)) {
+        if (version === approvalVersion.current && request && !('error' in request)) {
           setPendingConnectRequest(request);
           navigate(walletLocked ? lockedScreen : targetScreen);
         }
@@ -80,7 +112,7 @@ export function useApprovalDetection({
         const request = await send<TransactionRequest>(INTERNAL_METHODS.GET_PENDING_TRANSACTION, [
           requestId,
         ]);
-        if (request && !('error' in request)) {
+        if (version === approvalVersion.current && request && !('error' in request)) {
           setPendingTransactionRequest(request);
           navigate(walletLocked ? lockedScreen : targetScreen);
         }
@@ -91,7 +123,7 @@ export function useApprovalDetection({
         const request = await send<SignRequest>(INTERNAL_METHODS.GET_PENDING_SIGN_REQUEST, [
           requestId,
         ]);
-        if (request && !('error' in request)) {
+        if (version === approvalVersion.current && request && !('error' in request)) {
           setPendingSignRequest(request);
           navigate(walletLocked ? lockedScreen : targetScreen);
         }
@@ -102,7 +134,7 @@ export function useApprovalDetection({
         INTERNAL_METHODS.GET_PENDING_SIGN_RAW_TX_REQUEST,
         [requestId]
       );
-      if (request && !('error' in request)) {
+      if (version === approvalVersion.current && request && !('error' in request)) {
         setPendingSignRawTxRequest(request);
         navigate(walletLocked ? lockedScreen : targetScreen);
       }
@@ -119,6 +151,22 @@ export function useApprovalDetection({
 
   const handleApprovalRef = useRef(handleApproval);
   handleApprovalRef.current = handleApproval;
+
+  const fetchPendingApproval = useCallback(async () => {
+    const version = ++approvalVersion.current;
+    const pending = await send<{ requestId: string; approvalType: ApprovalType } | null>(
+      INTERNAL_METHODS.GET_PENDING_APPROVAL
+    );
+
+    // A newer check or approval notification supersedes this response.
+    if (version !== approvalVersion.current) return;
+
+    if (pending === null) {
+      clearPendingApproval();
+    } else if (pending?.requestId && pending.approvalType) {
+      await handleApproval(pending.requestId, pending.approvalType);
+    }
+  }, [clearPendingApproval, handleApproval]);
 
   // Side panel: listen for approval messages immediately (may arrive before wallet init)
   useEffect(() => {
@@ -138,11 +186,6 @@ export function useApprovalDetection({
           void handleApprovalRef
             .current(message.requestId, message.approvalType)
             .catch(console.error);
-        } else {
-          pendingSidePanelApproval.current = {
-            requestId: message.requestId,
-            type: message.approvalType,
-          };
         }
       }
     };
@@ -151,31 +194,14 @@ export function useApprovalDetection({
     return () => chrome.runtime.onMessage.removeListener(handleRuntimeMessage);
   }, []);
 
-  // Side panel: process queued or pending approvals once wallet is ready
+  // Side panel: fetch the current approval once the wallet is ready
   useEffect(() => {
     if (!isSidePanel() || !walletReady) return;
 
-    const fetchPendingApproval = () => {
-      send<{ requestId: string; approvalType: ApprovalType } | null>(
-        INTERNAL_METHODS.GET_PENDING_APPROVAL
-      )
-        .then(pending => {
-          if (pending?.requestId && pending.approvalType) {
-            void handleApproval(pending.requestId, pending.approvalType).catch(console.error);
-          }
-        })
-        .catch(console.error);
-    };
-
-    const queued = pendingSidePanelApproval.current;
-    if (queued) {
-      pendingSidePanelApproval.current = null;
-      void handleApproval(queued.requestId, queued.type).catch(console.error);
-      return;
-    }
-
-    fetchPendingApproval();
-  }, [walletReady, handleApproval]);
+    // Re-query even if a notification arrived during initialization: that
+    // request may have been resolved by another panel before we became ready.
+    void fetchPendingApproval().catch(console.error);
+  }, [walletReady, fetchPendingApproval]);
 
   // Side panel: re-check when panel becomes visible (e.g. reopened or refocused)
   useEffect(() => {
@@ -184,20 +210,12 @@ export function useApprovalDetection({
     const handleVisibilityChange = () => {
       if (document.visibilityState !== 'visible') return;
 
-      send<{ requestId: string; approvalType: ApprovalType } | null>(
-        INTERNAL_METHODS.GET_PENDING_APPROVAL
-      )
-        .then(pending => {
-          if (pending?.requestId && pending.approvalType) {
-            void handleApproval(pending.requestId, pending.approvalType).catch(console.error);
-          }
-        })
-        .catch(console.error);
+      void fetchPendingApproval().catch(console.error);
     };
 
     document.addEventListener('visibilitychange', handleVisibilityChange);
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
-  }, [walletReady, handleApproval]);
+  }, [walletReady, fetchPendingApproval]);
 
   // Popup windows: route via URL hash
   useEffect(() => {

@@ -431,9 +431,6 @@ async function isPendingRequesterActive(request: PendingRequest): Promise<boolea
 
   try {
     const tab = await chrome.tabs.get(request.tabId);
-    if (!pendingApprovalOriginMatches(request.request, normalizeWebOrigin(tab.url))) {
-      return false;
-    }
 
     if (!request.documentId) {
       // Legacy snapshots lack a document ID. At least require the same tab origin
