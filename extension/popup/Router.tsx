@@ -30,6 +30,7 @@ import { TransactionApprovalScreen } from './screens/approvals/TransactionApprov
 import { SignRawTxScreen } from './screens/approvals/SignRawTxScreen';
 import { SettingsScreen } from './screens/SettingsScreen';
 import { ThemeSettingsScreen } from './screens/ThemeSettingsScreen';
+import { DisplayModeScreen } from './screens/DisplayModeScreen';
 import { LockTimeScreen } from './screens/LockTimeScreen';
 import { KeySettingsPasswordScreen } from './screens/KeySettingsPasswordScreen';
 import { RpcSettingsScreen } from './screens/RpcSettingsScreen';
@@ -84,6 +85,8 @@ export function Router() {
       return <SettingsScreen />;
     case 'theme-settings':
       return <ThemeSettingsScreen />;
+    case 'display-mode':
+      return <DisplayModeScreen />;
     case 'lock-time':
       return <LockTimeScreen />;
     case 'key-settings':

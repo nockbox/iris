@@ -17,7 +17,7 @@ class NockProvider implements InjectedNockchain {
    * @param args - Request arguments with method and params
    */
   request<T = unknown>(args: RpcRequest): Promise<T> {
-    const id = Math.random().toString(36).slice(2);
+    const id = crypto.randomUUID();
 
     // Post message to content script
     window.postMessage(
@@ -26,7 +26,7 @@ class NockProvider implements InjectedNockchain {
         id,
         payload: args,
       },
-      '*'
+      window.location.origin
     );
 
     // Wait for response with timeout
@@ -37,14 +37,27 @@ class NockProvider implements InjectedNockchain {
         const data = evt.data;
 
         // Check if this is our response (must have a reply field, not just the request)
-        if (data?.target === MESSAGE_TARGET && data.id === id && data.reply !== undefined) {
+        if (
+          evt.source === window &&
+          data &&
+          typeof data === 'object' &&
+          data.target === MESSAGE_TARGET &&
+          data.id === id &&
+          Object.prototype.hasOwnProperty.call(data, 'reply')
+        ) {
           window.removeEventListener('message', handler);
           if (timeoutId) {
             clearTimeout(timeoutId);
           }
 
           if (data.reply?.error) {
-            reject(new Error(data.reply.error));
+            const message =
+              typeof data.reply.error === 'string'
+                ? data.reply.error
+                : typeof data.reply.error?.message === 'string'
+                  ? data.reply.error.message
+                  : 'Wallet request failed';
+            reject(new Error(message));
           } else {
             resolve(data.reply);
           }

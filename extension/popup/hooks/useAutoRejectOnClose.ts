@@ -11,8 +11,12 @@
 import { useEffect } from 'react';
 import { send } from '../utils/messaging';
 
-export function useAutoRejectOnClose(requestId: string, rejectMethod: string) {
+export function useAutoRejectOnClose(requestId: string | null, rejectMethod: string) {
   useEffect(() => {
+    if (!requestId) {
+      return;
+    }
+
     const handleBeforeUnload = () => {
       // Reject the request when window is closing
       send(rejectMethod, [requestId]).catch(console.error);

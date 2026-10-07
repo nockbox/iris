@@ -149,7 +149,7 @@ export function WalletSettingsScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col"
+      className="w-full h-full flex flex-col"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}
@@ -182,7 +182,7 @@ export function WalletSettingsScreen() {
 
       {/* Content */}
       <div
-        className="flex flex-col justify-between h-[536px]"
+        className="flex flex-col justify-between flex-1 min-h-0"
         style={{ backgroundColor: 'var(--color-bg)' }}
       >
         <div className="flex flex-col gap-4 px-4 py-2">

@@ -16,21 +16,23 @@ export function BackupScreen() {
   const [copiedAll, setCopiedAll] = useState(false);
 
   async function handleCopyAll() {
-    if (onboardingMnemonic) {
-      try {
-        await navigator.clipboard.writeText(onboardingMnemonic);
-        setCopiedAll(true);
-        setTimeout(() => setCopiedAll(false), 2000);
-      } catch (err) {
-        console.error('Failed to copy secret phrase:', err);
-      }
+    if (!onboardingMnemonic) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(onboardingMnemonic);
+      setCopiedAll(true);
+      setTimeout(() => setCopiedAll(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy secret phrase:', error);
     }
   }
 
   if (!onboardingMnemonic) {
     // Should never happen, but handle gracefully
     return (
-      <div className="w-[357px] h-[600px] bg-[var(--color-bg)] flex items-center justify-center p-4">
+      <div className="w-full h-full bg-[var(--color-bg)] flex items-center justify-center p-4">
         <div className="w-full flex flex-col gap-4">
           <Alert type="error">No mnemonic found. Please restart onboarding.</Alert>
           <button
@@ -61,7 +63,7 @@ export function BackupScreen() {
   }
 
   return (
-    <div className="w-[357px] h-[600px] flex flex-col bg-[var(--color-bg)]">
+    <div className="w-full h-full flex flex-col bg-[var(--color-bg)]">
       {/* Header with back button */}
       <div className="flex items-center justify-between h-16 px-4 py-3 border-b border-[var(--color-divider)] shrink-0">
         <button
@@ -231,6 +233,7 @@ export function BackupScreen() {
         ) : (
           <div className="flex gap-3">
             <button
+              type="button"
               onClick={handleCopyAll}
               disabled={copiedAll}
               className="flex-1 h-12 px-5 py-[15px] rounded-lg flex items-center justify-center gap-2 transition-opacity bg-[var(--color-surface-900)] text-[var(--color-text-primary)] hover:opacity-90 disabled:opacity-100"
@@ -246,6 +249,7 @@ export function BackupScreen() {
               {copiedAll ? 'Copied!' : 'Copy all'}
             </button>
             <button
+              type="button"
               onClick={handleContinue}
               disabled={!hasConfirmed}
               className={`flex-1 h-12 px-5 py-[15px] rounded-lg flex items-center justify-center transition-opacity ${

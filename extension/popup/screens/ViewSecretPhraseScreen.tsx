@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useStore } from '../store';
 import { ChevronLeftIcon } from '../components/icons/ChevronLeftIcon';
 import { CheckIcon } from '../components/icons/CheckIcon';
@@ -20,6 +20,13 @@ export function ViewSecretPhraseScreen() {
   // Get secret phrase from temporary store (set by KeySettingsPasswordScreen)
   const secretPhrase = onboardingMnemonic ? onboardingMnemonic.split(' ') : [];
 
+  useEffect(
+    () => () => {
+      setOnboardingMnemonic(null);
+    },
+    [setOnboardingMnemonic]
+  );
+
   function handleBack() {
     // Clear mnemonic from memory when leaving screen
     setOnboardingMnemonic(null);
@@ -31,14 +38,16 @@ export function ViewSecretPhraseScreen() {
   }
 
   async function handleCopySecretPhrase() {
-    if (onboardingMnemonic) {
-      try {
-        await navigator.clipboard.writeText(onboardingMnemonic);
-        setCopiedSeed(true);
-        setTimeout(() => setCopiedSeed(false), 2000);
-      } catch (err) {
-        console.error('Failed to copy secret phrase:', err);
-      }
+    if (!onboardingMnemonic) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(onboardingMnemonic);
+      setCopiedSeed(true);
+      setTimeout(() => setCopiedSeed(false), 2000);
+    } catch (error) {
+      console.error('Failed to copy secret phrase:', error);
     }
   }
 
@@ -55,9 +64,9 @@ export function ViewSecretPhraseScreen() {
       const keyfile = exportKeyfile(onboardingMnemonic);
       const timestamp = new Date().toISOString().split('T')[0];
       downloadKeyfile(keyfile, `nockchain-keyfile-${timestamp}.json`);
-    } catch (err) {
+    } catch (downloadError) {
       setError('Failed to export keyfile');
-      console.error(err);
+      console.error(downloadError);
     } finally {
       setIsExporting(false);
     }
@@ -65,7 +74,7 @@ export function ViewSecretPhraseScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col"
+      className="w-full h-full flex flex-col"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}
@@ -74,8 +83,10 @@ export function ViewSecretPhraseScreen() {
         style={{ backgroundColor: 'var(--color-bg)' }}
       >
         <button
+          type="button"
           className="w-8 h-8 flex items-center justify-center p-2 transition-opacity hover:opacity-70"
           onClick={handleBack}
+          aria-label="Back"
         >
           <ChevronLeftIcon className="w-5 h-5" />
         </button>
@@ -108,6 +119,7 @@ export function ViewSecretPhraseScreen() {
 
           {/* Download Keyfile Link */}
           <button
+            type="button"
             onClick={handleDownloadKeyfile}
             disabled={isExporting}
             className="font-sans font-medium text-sm tracking-[0.14px] leading-[18px] text-center underline hover:opacity-70 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
@@ -188,16 +200,17 @@ export function ViewSecretPhraseScreen() {
         style={{ borderTop: '1px solid var(--color-divider)', backgroundColor: 'var(--color-bg)' }}
       >
         <button
+          type="button"
           onClick={isRevealed ? handleCopySecretPhrase : handleReveal}
           disabled={copiedSeed}
-          className="w-full h-12 rounded-lg font-sans font-medium text-sm tracking-[0.14px] leading-[18px] transition-opacity hover:opacity-90 flex items-center justify-center gap-2"
+          className="w-full h-12 rounded-lg font-sans font-medium text-sm tracking-[0.14px] leading-[18px] transition-opacity hover:opacity-90 disabled:opacity-70 flex items-center justify-center gap-2"
           style={{
             backgroundColor: 'var(--color-primary)',
             color: '#000',
           }}
         >
           {copiedSeed && <CheckIcon className="w-5 h-5" />}
-          {!isRevealed ? 'Show secret phrase' : copiedSeed ? 'Copied!' : 'Copy Secret Phrase'}
+          {!isRevealed ? 'Show secret phrase' : copiedSeed ? 'Copied!' : 'Copy secret phrase'}
         </button>
       </div>
 

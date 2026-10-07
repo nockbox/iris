@@ -37,6 +37,7 @@ export function Popup() {
 
   // Handle approval requests from URL hash
   useApprovalDetection({
+    currentScreen,
     walletAddress: wallet.address,
     walletLocked: wallet.locked,
     setPendingConnectRequest,

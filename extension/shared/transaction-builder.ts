@@ -10,6 +10,7 @@ import { publicKeyToPKHDigest } from './address-encoding.js';
 import { base58 } from '@scure/base';
 import { DEFAULT_COINBASE_TIMELOCK_BLOCKS } from '@nockbox/iris-sdk';
 import { getEffectiveRpcConfig, getTxEngineSettingsForHeight } from './rpc-config.js';
+import type { TransactionContextSnapshot } from './rpc-config.js';
 import { ensureWasmInitialized } from './wasm-utils.js';
 import {
   createSimplePkhCondition,
@@ -19,20 +20,20 @@ import {
   parseDigestString,
 } from './spend-conditions.js';
 import { firstNameFromCondition } from './first-name-derivation.js';
+import { resolveBuilderFeeSummary } from './transaction-fee.js';
 
 type SpendConditionLike = wasm.SpendCondition;
 function noteFromProtobuf(protoNote: any): any {
   return wasm.noteFromProtobuf(protoNote);
 }
 
-async function createTxBuilder(blockHeight?: number): Promise<wasm.TxBuilder> {
+async function createTxBuilder(
+  blockHeight?: number,
+  txEngineSettings?: wasm.TxEngineSettings
+): Promise<wasm.TxBuilder> {
   const height = blockHeight ?? 0;
-  const settings = await getTxEngineSettingsForHeight(height);
+  const settings = txEngineSettings ?? (await getTxEngineSettingsForHeight(height));
   return new wasm.TxBuilder(settings);
-}
-
-function getFeeFromBuilder(builder: wasm.TxBuilder): number {
-  return Number(builder.calcFee());
 }
 
 function getTxIdCompat(nockchainTx: wasm.NockchainTx): string {
@@ -57,12 +58,15 @@ function isSpendConditionList(
  */
 export async function discoverSpendConditionForNote(
   senderPKH: string,
-  note: { nameFirst: string; originPage: number }
+  note: { nameFirst: string; originPage: number },
+  coinbaseTimelockBlocks?: number
 ): Promise<wasm.SpendCondition> {
   await ensureWasmInitialized();
 
-  const config = await getEffectiveRpcConfig();
-  const timelock = config.coinbaseTimelockBlocks ?? DEFAULT_COINBASE_TIMELOCK_BLOCKS;
+  const timelock =
+    coinbaseTimelockBlocks ??
+    (await getEffectiveRpcConfig()).coinbaseTimelockBlocks ??
+    DEFAULT_COINBASE_TIMELOCK_BLOCKS;
   const timelockBigInt = BigInt(timelock);
 
   const candidates: Array<{ name: string; condition: SpendConditionLike }> = [];
@@ -148,7 +152,11 @@ export interface TransactionParams {
   includeLockData: boolean;
   /** Current block height (for tx engine selection by activation height). If omitted, uses tx-engine-1. */
   blockHeight?: number;
+  /** Pre-resolved settings used to bind construction to one immutable config snapshot. */
+  txEngineSettings?: wasm.TxEngineSettings;
 }
+
+export type UnsignedTransactionParams = Omit<TransactionParams, 'privateKey'>;
 
 /**
  * Constructed transaction ready for broadcast
@@ -162,16 +170,15 @@ export interface ConstructedTransaction {
   nockchainTx: wasm.NockchainTx;
   /** Fee used in the transaction (in nicks) */
   feeUsed: number;
+  /** Minimum fee required by the transaction engine (in nicks) */
+  minimumFee: number;
 }
 
-/**
- * Build a complete Nockchain transaction using the new builder API
- *
- * @param params - Transaction parameters
- * @returns Constructed transaction ready for broadcast
- */
-export async function buildTransaction(params: TransactionParams): Promise<ConstructedTransaction> {
-  // Initialize both WASM modules
+async function prepareTransactionBuilder(params: UnsignedTransactionParams): Promise<{
+  builder: wasm.TxBuilder;
+  feeUsed: number;
+  minimumFee: number;
+}> {
   await ensureWasmInitialized();
 
   const {
@@ -181,17 +188,15 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     amount,
     fee,
     refundPKH,
-    privateKey,
     includeLockData,
     blockHeight,
+    txEngineSettings,
   } = params;
 
-  // Validate inputs
   if (notes.length === 0) {
     throw new Error('At least one note (UTXO) is required');
   }
 
-  // Calculate total available from notes (per-note assets are integral nicks from RPC)
   const totalAvailable = notes.reduce((sum, note) => sum + BigInt(Math.floor(note.assets)), 0n);
   const amountBn = nicksToBigInt(amount);
   const feeBn = fee !== undefined ? nicksToBigInt(fee) : 0n;
@@ -203,7 +208,6 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     );
   }
 
-  // Convert notes using Note.fromProtobuf() to preserve correct NoteData
   const wasmNotes = notes.map(note => {
     if (!note.protoNote) {
       throw new Error(
@@ -213,14 +217,11 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     return noteFromProtobuf(note.protoNote);
   });
 
-  // Create transaction builder with PKH digests (builder computes lock-roots)
-  // include_lock_data: false keeps note-data empty (0.5 NOCK fee component)
-  // Each note needs its own spend condition (array of conditions, one per note)
   const spendConditions = Array.isArray(spendCondition)
     ? isSpendConditionList(spendCondition)
-      ? spendCondition // Use provided array (one per note)
-      : notes.map(() => spendCondition) // Single condition applied to all notes
-    : notes.map(() => spendCondition); // Single condition applied to all notes
+      ? spendCondition
+      : notes.map(() => spendCondition)
+    : notes.map(() => spendCondition);
 
   if (spendConditions.length !== notes.length) {
     throw new Error(
@@ -228,40 +229,85 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
     );
   }
 
-  // New WASM API: constructor takes fee_per_word; blockHeight selects tx engine by activation height
-  const builder = await createTxBuilder(blockHeight);
+  const builder = await createTxBuilder(blockHeight, txEngineSettings);
+  try {
+    const locks: wasm.TxLock[] = spendConditions.map(sc => ({
+      lock: sc,
+      lock_sp_index: 0,
+    }));
+    builder.simpleSpend(
+      wasmNotes,
+      locks,
+      parseDigestString(recipientPKH),
+      amount as wasm.Nicks,
+      fee !== undefined ? (fee as wasm.Nicks) : null,
+      parseDigestString(refundPKH),
+      includeLockData
+    );
 
-  // New API: simpleSpend expects TxLock[] (lock + lock_sp_index), not SpendCondition[]
-  const locks: wasm.TxLock[] = spendConditions.map(sc => ({
-    lock: sc,
-    lock_sp_index: 0,
-  }));
-  builder.simpleSpend(
-    wasmNotes,
-    locks,
-    parseDigestString(recipientPKH),
-    amount as wasm.Nicks,
-    fee !== undefined ? (fee as wasm.Nicks) : null,
-    parseDigestString(refundPKH),
-    includeLockData
-  );
+    const { fee: feeUsed, minimumFee } = resolveBuilderFeeSummary(
+      builder.curFee(),
+      builder.calcFee(),
+      fee !== undefined
+    );
 
-  // Sign and validate the transaction
-  await builder.sign(privateKey);
-  builder.validate();
+    return { builder, feeUsed, minimumFee };
+  } catch (error) {
+    builder.free();
+    throw error;
+  }
+}
 
-  // Get the fee before building (for return value)
-  const feeUsed = getFeeFromBuilder(builder);
+/** Build an unsigned transaction without deriving or accessing a private key. */
+export async function buildUnsignedTransaction(
+  params: UnsignedTransactionParams
+): Promise<ConstructedTransaction> {
+  const { builder, feeUsed, minimumFee } = await prepareTransactionBuilder(params);
+  try {
+    const nockchainTx = builder.build();
+    return {
+      txId: getTxIdCompat(nockchainTx),
+      version: 1,
+      nockchainTx,
+      feeUsed,
+      minimumFee,
+    };
+  } finally {
+    builder.free();
+  }
+}
 
-  // Build the final transaction
-  const nockchainTx = builder.build();
+/**
+ * Build a complete Nockchain transaction using the new builder API
+ *
+ * @param params - Transaction parameters
+ * @returns Constructed transaction ready for broadcast
+ */
+export async function buildTransaction(params: TransactionParams): Promise<ConstructedTransaction> {
+  const { builder } = await prepareTransactionBuilder(params);
+  try {
+    await builder.sign(params.privateKey);
+    builder.validate();
 
-  return {
-    txId: getTxIdCompat(nockchainTx),
-    version: 1, // V1 only
-    nockchainTx,
-    feeUsed,
-  };
+    // Signing may change witness size. Report the actual assigned fee and the
+    // final minimum independently instead of conflating calcFee() with fee used.
+    const { fee: feeUsed, minimumFee } = resolveBuilderFeeSummary(
+      builder.curFee(),
+      builder.calcFee(),
+      params.fee !== undefined
+    );
+
+    const nockchainTx = builder.build();
+    return {
+      txId: getTxIdCompat(nockchainTx),
+      version: 1,
+      nockchainTx,
+      feeUsed,
+      minimumFee,
+    };
+  } finally {
+    builder.free();
+  }
 }
 
 /**
@@ -281,6 +327,48 @@ export async function buildTransaction(params: TransactionParams): Promise<Const
  * @param blockHeight - Current block height for tx engine selection (optional).
  * @returns Constructed transaction
  */
+function validatePaymentCandidates(notes: Note[], amount: Nicks, fee?: Nicks): void {
+  if (notes.length === 0) {
+    throw new Error('At least one note is required');
+  }
+
+  const totalAvailable = notes.reduce((sum, note) => sum + BigInt(Math.floor(note.assets)), 0n);
+  const totalNeeded = nicksToBigInt(amount) + nicksToBigInt(fee ?? ('0' as Nicks));
+  if (totalAvailable < totalNeeded) {
+    throw new Error(
+      `Insufficient funds: have ${totalAvailable} nicks across ${notes.length} notes, need ${totalNeeded}`
+    );
+  }
+}
+
+async function discoverSpendConditions(
+  notes: Note[],
+  senderPKH: string,
+  coinbaseTimelockBlocks?: number
+): Promise<SpendConditionLike[]> {
+  const spendConditions: SpendConditionLike[] = [];
+  for (let i = 0; i < notes.length; i++) {
+    const note = notes[i];
+    const spendCondition = await discoverSpendConditionForNote(
+      senderPKH,
+      {
+        nameFirst: note.nameFirst,
+        originPage: note.originPage,
+      },
+      coinbaseTimelockBlocks
+    );
+    const derivedFirstName = firstNameFromCondition(spendCondition);
+    if (derivedFirstName !== note.nameFirst) {
+      throw new Error(
+        `First-name mismatch for note ${i}! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
+          `Expected: ${note.nameFirst.slice(0, 20)}...`
+      );
+    }
+    spendConditions.push(spendCondition);
+  }
+  return spendConditions;
+}
+
 export async function buildMultiNotePayment(
   notes: Note[],
   recipientPKH: string,
@@ -289,50 +377,22 @@ export async function buildMultiNotePayment(
   privateKey: wasm.PrivateKey,
   fee?: Nicks,
   refundPKH?: string,
-  blockHeight?: number
+  blockHeight?: number,
+  context?: Pick<TransactionContextSnapshot, 'coinbaseTimelockBlocks' | 'txEngineSettings'>
 ): Promise<ConstructedTransaction> {
   // Initialize WASM
   await ensureWasmInitialized();
 
-  if (notes.length === 0) {
-    throw new Error('At least one note is required');
-  }
-
-  // Calculate total available from all notes
-  const totalAvailable = notes.reduce((sum, note) => sum + BigInt(Math.floor(note.assets)), 0n);
-  const totalNeeded = nicksToBigInt(amount) + nicksToBigInt(fee ?? ('0' as Nicks));
-
-  if (totalAvailable < totalNeeded) {
-    throw new Error(
-      `Insufficient funds: have ${totalAvailable} nicks across ${notes.length} notes, need ${totalNeeded}`
-    );
-  }
+  validatePaymentCandidates(notes, amount, fee);
 
   // Create sender's PKH digest string for change
   const senderPKH = publicKeyToPKHDigest(senderPublicKey);
 
-  // Discover the correct spend condition for each note
-  // Each note may have different spend conditions (e.g., some are coinbase with timelocks)
-  const spendConditions: SpendConditionLike[] = [];
-
-  for (let i = 0; i < notes.length; i++) {
-    const note = notes[i];
-    const spendCondition = await discoverSpendConditionForNote(senderPKH, {
-      nameFirst: note.nameFirst,
-      originPage: note.originPage,
-    });
-
-    // Sanity check: verify the derived first-name matches
-    const derivedFirstName = firstNameFromCondition(spendCondition);
-    if (derivedFirstName !== note.nameFirst) {
-      throw new Error(
-        `First-name mismatch for note ${i}! Computed: ${derivedFirstName.slice(0, 20)}..., ` +
-          `Expected: ${note.nameFirst.slice(0, 20)}...`
-      );
-    }
-
-    spendConditions.push(spendCondition);
-  }
+  const spendConditions = await discoverSpendConditions(
+    notes,
+    senderPKH,
+    context?.coinbaseTimelockBlocks
+  );
 
   // Use provided refundPKH or default to sender's PKH
   // For "send max", refundPKH = recipientPKH to sweep all funds to recipient
@@ -350,6 +410,44 @@ export async function buildMultiNotePayment(
     // include_lock_data: false for lower fees (0.5 NOCK per word saved)
     includeLockData: false,
     blockHeight,
+    txEngineSettings: context?.txEngineSettings,
+  });
+}
+
+/**
+ * Build the exact unsigned payment intent for a wallet account. This deliberately
+ * accepts the account PKH rather than key material so read-only dApp calls cannot
+ * derive or access a private key.
+ */
+export async function buildUnsignedMultiNotePayment(
+  notes: Note[],
+  recipientPKH: string,
+  amount: Nicks,
+  senderPKH: string,
+  fee?: Nicks,
+  refundPKH?: string,
+  blockHeight?: number,
+  context?: Pick<TransactionContextSnapshot, 'coinbaseTimelockBlocks' | 'txEngineSettings'>
+): Promise<ConstructedTransaction> {
+  await ensureWasmInitialized();
+
+  validatePaymentCandidates(notes, amount, fee);
+  const spendConditions = await discoverSpendConditions(
+    notes,
+    senderPKH,
+    context?.coinbaseTimelockBlocks
+  );
+
+  return buildUnsignedTransaction({
+    notes,
+    spendCondition: spendConditions,
+    recipientPKH,
+    amount,
+    fee,
+    refundPKH: refundPKH ?? senderPKH,
+    includeLockData: false,
+    blockHeight,
+    txEngineSettings: context?.txEngineSettings,
   });
 }
 

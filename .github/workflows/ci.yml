@@ -26,6 +26,9 @@ jobs:
       - name: TypeScript compilation check
         run: npm run typecheck
 
+      - name: Tests
+        run: npm test
+
       - name: Format check
         run: npm run format:check
 

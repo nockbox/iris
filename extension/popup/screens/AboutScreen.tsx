@@ -31,7 +31,7 @@ export function AboutScreen() {
 
   return (
     <div
-      className="w-[357px] h-[600px] flex flex-col overflow-y-auto font-sans"
+      className="w-full h-full flex flex-col overflow-y-auto font-sans"
       style={{ backgroundColor: 'var(--color-bg)', color: 'var(--color-text-primary)' }}
     >
       {/* Header */}
@@ -57,7 +57,7 @@ export function AboutScreen() {
       </header>
 
       {/* Content */}
-      <div className="flex flex-col items-center gap-6 px-4 py-2 h-[536px]">
+      <div className="flex flex-col items-center gap-6 px-4 py-2 flex-1 min-h-0">
         <div className="w-24 h-24 flex items-center justify-center flex-shrink-0">
           <img src={IrisLogo96} alt="Iris" className="w-24 h-24" />
         </div>

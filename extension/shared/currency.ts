@@ -25,6 +25,35 @@ export function nicksToBigInt(value: Nicks): bigint {
   return BigInt(trimmed);
 }
 
+/** Format an integer Nicks value exactly with optional thousands separators. */
+export function formatNicks(value: Nicks | string, useGrouping: boolean = true): string {
+  const digits = nicksToBigInt(String(value) as Nicks).toString();
+  return useGrouping ? digits.replace(/\B(?=(\d{3})+(?!\d))/g, ',') : digits;
+}
+
+/**
+ * Format an integer Nicks value as exact decimal NOCK without converting through Number.
+ * Since 65,536 is 2^16, at most 16 decimal places are required.
+ */
+export function formatNicksAsNock(value: Nicks | string, useGrouping: boolean = true): string {
+  const nicks = nicksToBigInt(String(value) as Nicks);
+  const divisor = BigInt(NOCK_TO_NICKS);
+  const whole = nicks / divisor;
+  const remainder = nicks % divisor;
+  const groupedWhole = formatNicks(whole.toString(), useGrouping);
+
+  if (remainder === 0n) {
+    return groupedWhole;
+  }
+
+  const decimalScale = 10n ** 16n;
+  const fractional = ((remainder * decimalScale) / divisor)
+    .toString()
+    .padStart(16, '0')
+    .replace(/0+$/, '');
+  return `${groupedWhole}.${fractional}`;
+}
+
 /**
  * Convert NOCK to whole NICK with proper rounding
  *

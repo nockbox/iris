@@ -16,7 +16,7 @@ export function V0MigrationIntroScreen() {
 
   return (
     <div
-      className="relative w-[357px] h-[600px] flex flex-col overflow-hidden"
+      className="relative w-full h-full flex flex-col overflow-hidden"
       style={{ backgroundColor: 'var(--color-bg)' }}
     >
       {/* Header - matches other migration screens */}

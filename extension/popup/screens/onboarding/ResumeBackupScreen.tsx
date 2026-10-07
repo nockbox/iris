@@ -52,7 +52,7 @@ export function ResumeBackupScreen() {
   }
 
   return (
-    <div className="relative w-[357px] h-[600px]" style={{ backgroundColor: 'var(--color-bg)' }}>
+    <div className="relative w-full h-full" style={{ backgroundColor: 'var(--color-bg)' }}>
       {/* Header */}
       <div
         className="flex items-center justify-between h-16 px-4 py-3"
@@ -88,7 +88,7 @@ export function ResumeBackupScreen() {
       </div>
 
       {/* Main content */}
-      <div className="flex flex-col justify-between h-[536px]">
+      <div className="flex flex-col justify-between flex-1 min-h-0">
         <div className="px-4 py-2 flex flex-col gap-6">
           <h1
             className="font-serif font-medium text-center"

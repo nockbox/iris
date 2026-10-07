@@ -13,14 +13,20 @@ import {
 import {
   ERROR_CODES,
   STORAGE_KEYS,
-  ACCOUNT_COLORS,
-  PRESET_WALLET_STYLES,
   NOCK_TO_NICKS,
   MAX_SUBWALLET_DISCOVERY_SCAN,
 } from './constants';
+import {
+  DEFAULT_WALLET_STYLE,
+  TOTAL_STYLE_COMBINATIONS,
+  getPresetWalletStyle,
+  normalizeIconStyleId,
+  type WalletStyle,
+} from './walletStyles';
 import { SubAccount, SeedAccount } from './types';
 import {
   buildMultiNotePayment,
+  buildUnsignedMultiNotePayment,
   discoverSpendConditionForNote,
   type Note,
 } from './transaction-builder';
@@ -34,7 +40,14 @@ import type {
   SyncStateStore,
   AccountSyncState,
 } from './types';
-import { getEffectiveRpcConfig, getEffectiveRpcEndpoint } from './rpc-config';
+import {
+  assertRpcNetworkIdentity,
+  defaultRpcConfig,
+  getEffectiveRpcConfig,
+  getEffectiveRpcEndpoint,
+  getRpcNetworkIdentity,
+  getTransactionContextSnapshot,
+} from './rpc-config';
 import { base58 } from '@scure/base';
 import { initWasmModules } from './wasm-utils';
 import {
@@ -42,6 +55,12 @@ import {
   fetchedToStoredNote,
   noteToStoredNote,
   generateNoteId,
+  reserveAvailableNotes,
+  releaseOwnedNoteReservations,
+  releaseUnownedOnChainReservations,
+  recoverInterruptedExactReservations,
+  stageExactTransactionReservation,
+  stageAdditionalTransactionReservation,
 } from './utxo-utils';
 import {
   computeUTXODiff,
@@ -51,10 +70,16 @@ import {
   areTransactionInputsSpent,
   matchChangeOutputs,
 } from './utxo-diff';
-import type { StoredNote, WalletTransaction, FetchedUTXO } from './types';
+import type {
+  BuiltSimpleTransaction,
+  StoredNote,
+  TransactionApprovalContext,
+  WalletTransaction,
+  FetchedUTXO,
+} from './types';
 import { assertNativeRawTx } from './sign-raw-tx-compat';
 import type { SignMessageResponse } from '@nockbox/iris-sdk';
-import type { Nicks } from '@nockbox/iris-sdk/wasm';
+import type { Digest, Nicks } from '@nockbox/iris-sdk/wasm';
 import { guard } from '@nockbox/iris-sdk/wasm';
 import { getTxEngineSettingsForHeight } from './rpc-config';
 import { getBothFirstNames } from './first-name-derivation';
@@ -69,6 +94,24 @@ import {
 import { buildBridgeTransaction, validateBridgeTransaction } from '@nockbox/iris-sdk';
 import { BRIDGE_CONFIG } from './bridge-config';
 import { rewriteInsufficientFeeErrorToDecimalNock } from './currency';
+import {
+  assertMatchingTransactionIntent,
+  buildWithAdvisoryFeeRetry,
+  resolveBuiltInputSelection,
+  resolveBuiltTransactionAmounts,
+} from './transaction-fee';
+import { SerializedTaskQueue } from './serialized-task-queue';
+
+type SendTransactionV2Options = {
+  /** Advisory fee for note selection only. WASM still calculates the actual fee. */
+  feeSelectionHint?: Nicks;
+  /** Account that was bound to the approval request. */
+  accountAddress?: string;
+};
+
+type BuiltSimpleTransactionWithContext = BuiltSimpleTransaction & {
+  transactionContext: TransactionApprovalContext;
+};
 
 async function txEngineSettings(blockHeight: number): Promise<wasm.TxEngineSettings> {
   return await getTxEngineSettingsForHeight(blockHeight);
@@ -250,15 +293,23 @@ interface VaultState {
   enc: EncryptedVault | null;
 }
 
-function feeEstimateUserFacingError(error: unknown, kind: 'fee' | 'max'): string {
+function feeEstimateUserFacingError(error: unknown, kind: 'fee' | 'max' | 'build'): string {
   const raw = error instanceof Error ? error.message : String(error);
   if (/digest|canonical|base58|iris-wasm|Digest guard/i.test(raw)) {
     return kind === 'max'
       ? 'Could not estimate the maximum send for that recipient. Use a valid Nockchain address.'
-      : 'Could not estimate the network fee for that recipient. Use a valid Nockchain address.';
+      : kind === 'build'
+        ? 'Could not build a transaction for that recipient. Use a valid Nockchain address.'
+        : 'Could not estimate the network fee for that recipient. Use a valid Nockchain address.';
   }
   const readable = rewriteInsufficientFeeErrorToDecimalNock(raw);
-  return (kind === 'max' ? 'Max send estimation failed: ' : 'Fee estimation failed: ') + readable;
+  const prefix =
+    kind === 'max'
+      ? 'Max send estimation failed: '
+      : kind === 'build'
+        ? 'Transaction build failed: '
+        : 'Fee estimation failed: ';
+  return prefix + readable;
 }
 
 /**
@@ -317,6 +368,48 @@ export class Vault {
   /** Serialize Nockblocks history refreshes per account (avoid overlapping background syncs). */
   private nockblocksHistoryRefreshChains = new Map<string, Promise<void>>();
 
+  /** Serialize full-account-blob writes so an older snapshot cannot win a race. */
+  private accountDataSaveQueue = new SerializedTaskQueue();
+
+  /** Invalidates queued writes when lock/reset begins. */
+  private accountDataEpoch = 0;
+
+  /** Password and cached-key unlocks share one admission slot. */
+  private unlockAttemptActive = false;
+
+  private beginUnlockAttempt(): (() => void) | null {
+    if (this.unlockAttemptActive || !this.state.locked) return null;
+    this.unlockAttemptActive = true;
+    let active = true;
+    return () => {
+      if (!active) return;
+      active = false;
+      this.unlockAttemptActive = false;
+    };
+  }
+
+  private currentUnlockResult():
+    | {
+        ok: boolean;
+        address: string;
+        accounts: SubAccount[];
+        currentAccount: SubAccount;
+        activeSeedSourceId: string | null;
+      }
+    | { error: string } {
+    const currentAccount = this.getCurrentAccount();
+    if (this.state.locked || !currentAccount) {
+      return { error: 'Unlock is already in progress' };
+    }
+    return {
+      ok: true,
+      address: currentAccount.address,
+      accounts: this.getAccounts(),
+      currentAccount,
+      activeSeedSourceId: this.getActiveSeedSourceId(),
+    };
+  }
+
   /** Cached balances per account (only stored in memory while unlocked) */
   private cachedBalances: Record<string, number> = {};
 
@@ -341,30 +434,43 @@ export class Vault {
     return (account?.index ?? -1) === 0;
   }
 
-  /** Returns a style (icon + color) not already used by any account across all seeds. */
-  private pickUnusedStyleGlobally(): { iconStyleId: number; iconColor: string } {
+  private clearDecryptedStateAfterFailedUnlock(): void {
+    this.state.locked = true;
+    this.state.accounts = [];
+    this.state.currentAccountIndex = 0;
+    this.mnemonic = null;
+    this.seedAccounts = [];
+    this.encryptionKey = null;
+    this.utxoStore = {};
+    this.walletTxStore = {};
+    this.accountSyncState = {};
+    this.cachedBalances = {};
+    this.nockblocksHistoryRefreshChains.clear();
+  }
+
+  /**
+   * Returns a style (icon + color) not already used by any account across all seeds.
+   *
+   * Walks the deterministic preset sequence (see `getPresetWalletStyle`) and
+   * returns the first combination still free, so new wallets get a varied but
+   * predictable look. Only once every combination is taken does it fall back
+   * to the default style.
+   */
+  private pickUnusedStyleGlobally(): WalletStyle {
     const allAccounts = this.seedAccounts.flatMap(seed => seed.accounts);
     const usedKeys = new Set(
       allAccounts.map(
-        a => `${a.iconStyleId ?? 1}-${a.iconColor ?? PRESET_WALLET_STYLES[0].iconColor}`
+        a =>
+          `${normalizeIconStyleId(a.iconStyleId)}-${a.iconColor ?? DEFAULT_WALLET_STYLE.iconColor}`
       )
     );
-    for (const preset of PRESET_WALLET_STYLES) {
-      const key = `${preset.iconStyleId}-${preset.iconColor}`;
-      if (!usedKeys.has(key)) {
-        return { iconStyleId: preset.iconStyleId, iconColor: preset.iconColor };
+    for (let i = 0; i < TOTAL_STYLE_COMBINATIONS; i++) {
+      const preset = getPresetWalletStyle(i);
+      if (!usedKeys.has(`${preset.iconStyleId}-${preset.iconColor}`)) {
+        return preset;
       }
     }
-    // All presets used: pick random until we find an unused combo
-    const styleIds = Array.from({ length: 15 }, (_, i) => i + 1);
-    const colors = [...ACCOUNT_COLORS];
-    for (let attempt = 0; attempt < 200; attempt++) {
-      const iconStyleId = styleIds[Math.floor(Math.random() * styleIds.length)];
-      const iconColor = colors[Math.floor(Math.random() * colors.length)];
-      const key = `${iconStyleId}-${iconColor}`;
-      if (!usedKeys.has(key)) return { iconStyleId, iconColor };
-    }
-    return { iconStyleId: 1, iconColor: PRESET_WALLET_STYLES[0].iconColor };
+    return { ...DEFAULT_WALLET_STYLE };
   }
 
   private createSeedAccountFromLegacy(mnemonic: string, legacyAccounts: SubAccount[]): SeedAccount {
@@ -462,8 +568,14 @@ export class Vault {
     );
   }
 
+  private getCurrentAccountUnchecked(): SubAccount | null {
+    const account = this.state.accounts[this.state.currentAccountIndex];
+    if (account && !account.hidden) return account;
+    return this.state.accounts.find(candidate => !candidate.hidden) || null;
+  }
+
   private getSigningMnemonicForCurrentAccount(): string | null {
-    const currentAccount = this.getCurrentAccount();
+    const currentAccount = this.getCurrentAccountUnchecked();
     const seedAccount = this.getSeedAccountForWallet(currentAccount);
     if (!seedAccount || seedAccount.type !== 'mnemonic') {
       return null;
@@ -530,6 +642,7 @@ export class Vault {
     password: string,
     mnemonic?: string
   ): Promise<{ ok: boolean; address: string; mnemonic: string } | { error: string }> {
+    const setupLifecycleEpoch = this.accountDataEpoch;
     // Generate or validate mnemonic
     const words = mnemonic ? mnemonic.trim() : generateMnemonic();
     if (mnemonic && !validateMnemonic(words)) {
@@ -537,8 +650,8 @@ export class Vault {
     }
 
     // Create first account (Wallet 1 at index 0)
-    // Use first preset style for consistent initial experience
-    const firstPreset = PRESET_WALLET_STYLES[0];
+    // Use the default style for consistent initial experience
+    const firstPreset = DEFAULT_WALLET_STYLE;
 
     const masterAddress = await deriveAddressFromMaster(words);
 
@@ -588,24 +701,37 @@ export class Vault {
       },
     };
 
-    // Only store encrypted vault and current account index
-    // Accounts are inside the encrypted vault, not in plaintext
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.ENCRYPTED_VAULT]: encData,
-      [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: 0,
-    });
+    try {
+      await this.accountDataSaveQueue.run(async () => {
+        if (setupLifecycleEpoch !== this.accountDataEpoch) {
+          throw new Error('Vault setup was cancelled because the wallet lifecycle changed');
+        }
 
-    // Keep wallet unlocked after setup for smooth onboarding UX
-    // Auto-lock timer will handle locking after inactivity
-    this.mnemonic = words;
-    this.encryptionKey = key; // Cache the key for account operations (rename, create, etc.)
-    this.seedAccounts = [firstSeedAccount];
-    this.state = {
-      locked: false,
-      accounts: [...firstSeedAccount.accounts],
-      currentAccountIndex: 0,
-      enc: encData,
-    };
+        // Only store encrypted vault and current account index. Setup shares
+        // the lifecycle persistence queue so a later reset is guaranteed to
+        // clear this write, even when PBKDF/encryption is still in flight.
+        await chrome.storage.local.set({
+          [STORAGE_KEYS.ENCRYPTED_VAULT]: encData,
+          [STORAGE_KEYS.CURRENT_ACCOUNT_INDEX]: 0,
+        });
+        if (setupLifecycleEpoch !== this.accountDataEpoch) {
+          throw new Error('Vault setup was cancelled because the wallet lifecycle changed');
+        }
+
+        // Keep wallet unlocked after setup for smooth onboarding UX.
+        this.mnemonic = words;
+        this.encryptionKey = key;
+        this.seedAccounts = [firstSeedAccount];
+        this.state = {
+          locked: false,
+          accounts: [...firstSeedAccount.accounts],
+          currentAccountIndex: 0,
+          enc: encData,
+        };
+      });
+    } catch {
+      return { error: ERROR_CODES.LOCKED };
+    }
 
     return { ok: true, address: firstSeedAccount.accounts[0].address, mnemonic: words };
   }
@@ -623,144 +749,189 @@ export class Vault {
       }
     | { error: string }
   > {
-    const stored = await chrome.storage.local.get([
-      STORAGE_KEYS.ENCRYPTED_VAULT,
-      STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA,
-      STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
-      STORAGE_KEYS.UTXO_STORE, // For legacy migration check
-      STORAGE_KEYS.WALLET_TX_STORE, // For legacy migration check
-      STORAGE_KEYS.CACHED_BALANCES, // For legacy migration check
-    ]);
-    // Change to let to allow reassignment if migrating
-    let enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
-    const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as
-      | EncryptedAccountDataBlob
-      | undefined;
-    const currentAccountIndex =
-      (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
-
-    if (!enc) {
-      return { error: ERROR_CODES.NO_VAULT };
+    const releaseUnlockAttempt = this.beginUnlockAttempt();
+    if (!releaseUnlockAttempt) {
+      return this.currentUnlockResult();
     }
-
     try {
-      // Re-derive key using stored KDF parameters (critical for forward compatibility)
-      const { key } = await deriveKeyPBKDF2(
-        password,
-        new Uint8Array(enc.kdf.salt),
-        enc.kdf.iterations,
-        enc.kdf.hash
-      );
+      const unlockLifecycleEpoch = this.accountDataEpoch;
+      let decryptedStateInstalled = false;
+      // Never load an older blob while a save from the previous unlocked session
+      // is still completing.
+      await this.accountDataSaveQueue.drain();
+      if (unlockLifecycleEpoch !== this.accountDataEpoch) {
+        return { error: ERROR_CODES.LOCKED };
+      }
+      const stored = await chrome.storage.local.get([
+        STORAGE_KEYS.ENCRYPTED_VAULT,
+        STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA,
+        STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
+        STORAGE_KEYS.UTXO_STORE, // For legacy migration check
+        STORAGE_KEYS.WALLET_TX_STORE, // For legacy migration check
+        STORAGE_KEYS.CACHED_BALANCES, // For legacy migration check
+      ]);
+      // Change to let to allow reassignment if migrating
+      let enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
+      const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as
+        | EncryptedAccountDataBlob
+        | undefined;
+      const currentAccountIndex =
+        (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
 
-      // Decrypt the vault
-      const pt = await decryptGCM(
-        key,
-        new Uint8Array(enc.cipher.iv),
-        new Uint8Array(enc.cipher.ct)
-      ).catch(() => null);
-
-      if (!pt) {
-        return { error: ERROR_CODES.BAD_PASSWORD };
+      if (!enc) {
+        return { error: ERROR_CODES.NO_VAULT };
       }
 
-      const decoded = this.decodeVaultPayload(pt);
-      this.seedAccounts = decoded.seedAccounts;
-      this.rebuildFlatAccounts();
+      try {
+        // Re-derive key using stored KDF parameters (critical for forward compatibility)
+        const { key } = await deriveKeyPBKDF2(
+          password,
+          new Uint8Array(enc.kdf.salt),
+          enc.kdf.iterations,
+          enc.kdf.hash
+        );
 
-      // Load account data from separate encrypted blob
-      let utxoStore: UTXOStore = {};
-      let walletTxStore: WalletTxStore = {};
-      let cachedBalances: Record<string, number> = {};
-      let accountSyncState: SyncStateStore = {};
-      let loadedFromEncrypted = false;
-
-      if (encAccountData) {
-        const accountDataPt = await decryptGCM(
+        // Decrypt the vault
+        const pt = await decryptGCM(
           key,
-          new Uint8Array(encAccountData.cipher.iv),
-          new Uint8Array(encAccountData.cipher.ct)
+          new Uint8Array(enc.cipher.iv),
+          new Uint8Array(enc.cipher.ct)
         ).catch(() => null);
 
-        if (accountDataPt) {
-          const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
-          utxoStore = accountData.utxoStore || {};
-          for (const key in utxoStore) {
-            // 0, null, undefined
-            if (utxoStore[key].blockHeight == null) {
-              console.log('[Vault] Clearing old UTXO store with no blockHeight');
-              delete utxoStore[key];
+        if (!pt) {
+          return { error: ERROR_CODES.BAD_PASSWORD };
+        }
+
+        const decoded = this.decodeVaultPayload(pt);
+        const decodedAccounts = decoded.seedAccounts.flatMap(seedAccount => seedAccount.accounts);
+
+        // Load account data from separate encrypted blob
+        let utxoStore: UTXOStore = {};
+        let walletTxStore: WalletTxStore = {};
+        let cachedBalances: Record<string, number> = {};
+        let accountSyncState: SyncStateStore = {};
+        let loadedFromEncrypted = false;
+
+        if (encAccountData) {
+          const accountDataPt = await decryptGCM(
+            key,
+            new Uint8Array(encAccountData.cipher.iv),
+            new Uint8Array(encAccountData.cipher.ct)
+          ).catch(() => null);
+
+          if (accountDataPt) {
+            const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
+            utxoStore = accountData.utxoStore || {};
+            for (const key in utxoStore) {
+              // 0, null, undefined
+              if (utxoStore[key].blockHeight == null) {
+                console.log('[Vault] Clearing old UTXO store with no blockHeight');
+                delete utxoStore[key];
+              }
             }
+            walletTxStore = accountData.walletTxStore || {};
+            accountSyncState = accountData.accountSyncState || {};
+            cachedBalances = accountData.cachedBalances || {};
+            loadedFromEncrypted = true;
           }
-          walletTxStore = accountData.walletTxStore || {};
-          accountSyncState = accountData.accountSyncState || {};
-          cachedBalances = accountData.cachedBalances || {};
-          loadedFromEncrypted = true;
         }
-      }
 
-      // Migration: fallback from legacy unencrypted stores
-      if (!loadedFromEncrypted) {
-        const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
-        const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as
-          | WalletTxStore
-          | undefined;
-        const legacyCachedBalances = stored[STORAGE_KEYS.CACHED_BALANCES] as
-          | Record<string, number>
-          | undefined;
+        // Migration: fallback from legacy unencrypted stores
+        if (!loadedFromEncrypted) {
+          const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
+          const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as
+            | WalletTxStore
+            | undefined;
+          const legacyCachedBalances = stored[STORAGE_KEYS.CACHED_BALANCES] as
+            | Record<string, number>
+            | undefined;
 
-        utxoStore = legacyUtxoStore || {};
-        walletTxStore = legacyWalletTxStore || {};
-        cachedBalances = legacyCachedBalances || {};
-      }
+          utxoStore = legacyUtxoStore || {};
+          walletTxStore = legacyWalletTxStore || {};
+          cachedBalances = legacyCachedBalances || {};
+        }
 
-      this.encryptionKey = key;
-      this.utxoStore = utxoStore;
-      this.walletTxStore = walletTxStore;
-      this.accountSyncState = accountSyncState;
-      this.cachedBalances = cachedBalances;
+        // A later lock/reset wins over this slow decrypt. Commit all decrypted
+        // state synchronously only if the lifecycle epoch is still current.
+        if (unlockLifecycleEpoch !== this.accountDataEpoch) {
+          return { error: ERROR_CODES.LOCKED };
+        }
+        this.seedAccounts = decoded.seedAccounts;
+        this.encryptionKey = key;
+        this.utxoStore = utxoStore;
+        this.walletTxStore = walletTxStore;
+        this.accountSyncState = accountSyncState;
+        this.cachedBalances = cachedBalances;
 
-      const resolvedIndex =
-        currentAccountIndex >= 0 && currentAccountIndex < this.state.accounts.length
-          ? currentAccountIndex
-          : 0;
-      this.state = {
-        locked: false,
-        accounts: this.state.accounts,
-        currentAccountIndex: resolvedIndex,
-        enc,
-      };
-      this.mnemonic = this.getSigningMnemonicForCurrentAccount();
+        const resolvedIndex =
+          currentAccountIndex >= 0 && currentAccountIndex < decodedAccounts.length
+            ? currentAccountIndex
+            : 0;
+        this.state = {
+          // Keep decrypted state unpublished until recovery/migration durability
+          // work has completed successfully.
+          locked: true,
+          accounts: decodedAccounts,
+          currentAccountIndex: resolvedIndex,
+          enc,
+        };
+        decryptedStateInstalled = true;
+        this.mnemonic = this.getSigningMnemonicForCurrentAccount();
+        const recoveredInterruptedExactTransactions = this.recoverInterruptedExactTransactions();
 
-      const currentAccount = this.state.accounts[resolvedIndex] || this.state.accounts[0];
+        const currentAccount = this.state.accounts[resolvedIndex] || this.state.accounts[0];
 
-      // Persist legacy payload migration + legacy store migration
-      if (decoded.migrated) {
-        await this.saveAccountsToVault();
-      }
-      if (!loadedFromEncrypted) {
-        const hasData =
-          Object.keys(utxoStore).length > 0 ||
-          Object.keys(walletTxStore).length > 0 ||
-          Object.keys(cachedBalances).length > 0 ||
-          Object.keys(accountSyncState).length > 0;
-        if (hasData) {
+        // Persist legacy payload migration + legacy store migration
+        if (decoded.migrated) {
+          await this.saveAccountsToVault();
+          if (unlockLifecycleEpoch !== this.accountDataEpoch) {
+            return { error: ERROR_CODES.LOCKED };
+          }
+        }
+        if (!loadedFromEncrypted) {
+          const hasData =
+            Object.keys(utxoStore).length > 0 ||
+            Object.keys(walletTxStore).length > 0 ||
+            Object.keys(cachedBalances).length > 0 ||
+            Object.keys(accountSyncState).length > 0;
+          if (hasData) {
+            await this.saveAccountData();
+            if (unlockLifecycleEpoch !== this.accountDataEpoch) {
+              return { error: ERROR_CODES.LOCKED };
+            }
+            await chrome.storage.local.remove([
+              STORAGE_KEYS.UTXO_STORE,
+              STORAGE_KEYS.WALLET_TX_STORE,
+              STORAGE_KEYS.CACHED_BALANCES,
+            ]);
+          }
+        } else if (recoveredInterruptedExactTransactions) {
           await this.saveAccountData();
-          await chrome.storage.local.remove([
-            STORAGE_KEYS.UTXO_STORE,
-            STORAGE_KEYS.WALLET_TX_STORE,
-            STORAGE_KEYS.CACHED_BALANCES,
-          ]);
         }
+        if (unlockLifecycleEpoch !== this.accountDataEpoch) {
+          return { error: ERROR_CODES.LOCKED };
+        }
+        this.state.locked = false;
+        return {
+          ok: true,
+          address: currentAccount?.address || '',
+          accounts: this.state.accounts,
+          currentAccount,
+          activeSeedSourceId: this.getSeedAccountForWallet(currentAccount)?.id || null,
+        };
+      } catch (err) {
+        if (decryptedStateInstalled) {
+          this.clearDecryptedStateAfterFailedUnlock();
+        }
+        return {
+          error:
+            decryptedStateInstalled || unlockLifecycleEpoch !== this.accountDataEpoch
+              ? ERROR_CODES.LOCKED
+              : ERROR_CODES.BAD_PASSWORD,
+        };
       }
-      return {
-        ok: true,
-        address: currentAccount?.address || '',
-        accounts: this.state.accounts,
-        currentAccount,
-        activeSeedSourceId: this.getSeedAccountForWallet(currentAccount)?.id || null,
-      };
-    } catch (err) {
-      return { error: ERROR_CODES.BAD_PASSWORD };
+    } finally {
+      releaseUnlockAttempt();
     }
   }
 
@@ -777,124 +948,160 @@ export class Vault {
       }
     | { error: string }
   > {
-    const stored = await chrome.storage.local.get([
-      STORAGE_KEYS.ENCRYPTED_VAULT,
-      STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA,
-      STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
-      STORAGE_KEYS.UTXO_STORE,
-      STORAGE_KEYS.WALLET_TX_STORE,
-      STORAGE_KEYS.CACHED_BALANCES,
-    ]);
-    const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
-    const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as
-      | EncryptedAccountDataBlob
-      | undefined;
-    const currentAccountIndex =
-      (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
-
-    if (!enc) {
-      return { error: ERROR_CODES.NO_VAULT };
+    const releaseUnlockAttempt = this.beginUnlockAttempt();
+    if (!releaseUnlockAttempt) {
+      return this.currentUnlockResult();
     }
+    try {
+      const unlockLifecycleEpoch = this.accountDataEpoch;
+      await this.accountDataSaveQueue.drain();
+      if (unlockLifecycleEpoch !== this.accountDataEpoch) {
+        return { error: ERROR_CODES.LOCKED };
+      }
+      const stored = await chrome.storage.local.get([
+        STORAGE_KEYS.ENCRYPTED_VAULT,
+        STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA,
+        STORAGE_KEYS.CURRENT_ACCOUNT_INDEX,
+        STORAGE_KEYS.UTXO_STORE,
+        STORAGE_KEYS.WALLET_TX_STORE,
+        STORAGE_KEYS.CACHED_BALANCES,
+      ]);
+      const enc = stored[STORAGE_KEYS.ENCRYPTED_VAULT] as EncryptedVault | undefined;
+      const encAccountData = stored[STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA] as
+        | EncryptedAccountDataBlob
+        | undefined;
+      const currentAccountIndex =
+        (stored[STORAGE_KEYS.CURRENT_ACCOUNT_INDEX] as number | undefined) || 0;
 
-    const pt = await decryptGCM(
-      key,
-      new Uint8Array(enc.cipher.iv),
-      new Uint8Array(enc.cipher.ct)
-    ).catch(() => null);
+      if (!enc) {
+        return { error: ERROR_CODES.NO_VAULT };
+      }
 
-    if (!pt) {
-      return { error: ERROR_CODES.BAD_PASSWORD };
-    }
-
-    const decoded = this.decodeVaultPayload(pt);
-    this.seedAccounts = decoded.seedAccounts;
-    this.rebuildFlatAccounts();
-
-    let utxoStore: UTXOStore = {};
-    let walletTxStore: WalletTxStore = {};
-    let cachedBalances: Record<string, number> = {};
-    let accountSyncState: SyncStateStore = {};
-    let loadedFromEncrypted = false;
-
-    if (encAccountData) {
-      const accountDataPt = await decryptGCM(
+      const pt = await decryptGCM(
         key,
-        new Uint8Array(encAccountData.cipher.iv),
-        new Uint8Array(encAccountData.cipher.ct)
+        new Uint8Array(enc.cipher.iv),
+        new Uint8Array(enc.cipher.ct)
       ).catch(() => null);
-      if (accountDataPt) {
-        const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
-        utxoStore = accountData.utxoStore || {};
-        for (const utxoKey in utxoStore) {
-          if (utxoStore[utxoKey].blockHeight == null) {
-            console.log('[Vault] Clearing old UTXO store with no blockHeight');
-            delete utxoStore[utxoKey];
+
+      if (!pt) {
+        return { error: ERROR_CODES.BAD_PASSWORD };
+      }
+
+      const decoded = this.decodeVaultPayload(pt);
+      const decodedAccounts = decoded.seedAccounts.flatMap(seedAccount => seedAccount.accounts);
+
+      let utxoStore: UTXOStore = {};
+      let walletTxStore: WalletTxStore = {};
+      let cachedBalances: Record<string, number> = {};
+      let accountSyncState: SyncStateStore = {};
+      let loadedFromEncrypted = false;
+
+      if (encAccountData) {
+        const accountDataPt = await decryptGCM(
+          key,
+          new Uint8Array(encAccountData.cipher.iv),
+          new Uint8Array(encAccountData.cipher.ct)
+        ).catch(() => null);
+        if (accountDataPt) {
+          const accountData = JSON.parse(accountDataPt) as EncryptedAccountData;
+          utxoStore = accountData.utxoStore || {};
+          for (const utxoKey in utxoStore) {
+            if (utxoStore[utxoKey].blockHeight == null) {
+              console.log('[Vault] Clearing old UTXO store with no blockHeight');
+              delete utxoStore[utxoKey];
+            }
+          }
+          walletTxStore = accountData.walletTxStore || {};
+          accountSyncState = accountData.accountSyncState || {};
+          cachedBalances = accountData.cachedBalances || {};
+          loadedFromEncrypted = true;
+        }
+      }
+
+      if (!loadedFromEncrypted) {
+        const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
+        const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as
+          | WalletTxStore
+          | undefined;
+        const legacyCachedBalances = stored[STORAGE_KEYS.CACHED_BALANCES] as
+          | Record<string, number>
+          | undefined;
+
+        utxoStore = legacyUtxoStore || {};
+        walletTxStore = legacyWalletTxStore || {};
+        cachedBalances = legacyCachedBalances || {};
+      }
+
+      if (unlockLifecycleEpoch !== this.accountDataEpoch) {
+        return { error: ERROR_CODES.LOCKED };
+      }
+      this.seedAccounts = decoded.seedAccounts;
+      this.encryptionKey = key;
+      this.utxoStore = utxoStore;
+      this.walletTxStore = walletTxStore;
+      this.accountSyncState = accountSyncState;
+      this.cachedBalances = cachedBalances;
+
+      const resolvedIndex =
+        currentAccountIndex >= 0 && currentAccountIndex < decodedAccounts.length
+          ? currentAccountIndex
+          : 0;
+
+      this.state = {
+        locked: true,
+        accounts: decodedAccounts,
+        currentAccountIndex: resolvedIndex,
+        enc,
+      };
+      this.mnemonic = this.getSigningMnemonicForCurrentAccount();
+      try {
+        const recoveredInterruptedExactTransactions = this.recoverInterruptedExactTransactions();
+
+        const currentAccount = this.state.accounts[resolvedIndex] || this.state.accounts[0];
+        if (decoded.migrated) {
+          await this.saveAccountsToVault();
+          if (unlockLifecycleEpoch !== this.accountDataEpoch) {
+            return { error: ERROR_CODES.LOCKED };
           }
         }
-        walletTxStore = accountData.walletTxStore || {};
-        accountSyncState = accountData.accountSyncState || {};
-        cachedBalances = accountData.cachedBalances || {};
-        loadedFromEncrypted = true;
+        if (!loadedFromEncrypted) {
+          const hasData =
+            Object.keys(this.utxoStore).length > 0 ||
+            Object.keys(this.walletTxStore).length > 0 ||
+            Object.keys(this.cachedBalances).length > 0 ||
+            Object.keys(this.accountSyncState).length > 0;
+          if (hasData) {
+            await this.saveAccountData();
+            if (unlockLifecycleEpoch !== this.accountDataEpoch) {
+              return { error: ERROR_CODES.LOCKED };
+            }
+            await chrome.storage.local.remove([
+              STORAGE_KEYS.UTXO_STORE,
+              STORAGE_KEYS.WALLET_TX_STORE,
+              STORAGE_KEYS.CACHED_BALANCES,
+            ]);
+          }
+        } else if (recoveredInterruptedExactTransactions) {
+          await this.saveAccountData();
+        }
+        if (unlockLifecycleEpoch !== this.accountDataEpoch) {
+          return { error: ERROR_CODES.LOCKED };
+        }
+        this.state.locked = false;
+        return {
+          ok: true,
+          address: currentAccount?.address || '',
+          accounts: this.state.accounts,
+          currentAccount,
+          activeSeedSourceId: this.getSeedAccountForWallet(currentAccount)?.id || null,
+        };
+      } catch {
+        this.clearDecryptedStateAfterFailedUnlock();
+        return { error: ERROR_CODES.LOCKED };
       }
+    } finally {
+      releaseUnlockAttempt();
     }
-
-    if (!loadedFromEncrypted) {
-      const legacyUtxoStore = stored[STORAGE_KEYS.UTXO_STORE] as UTXOStore | undefined;
-      const legacyWalletTxStore = stored[STORAGE_KEYS.WALLET_TX_STORE] as WalletTxStore | undefined;
-      const legacyCachedBalances = stored[STORAGE_KEYS.CACHED_BALANCES] as
-        | Record<string, number>
-        | undefined;
-
-      utxoStore = legacyUtxoStore || {};
-      walletTxStore = legacyWalletTxStore || {};
-      cachedBalances = legacyCachedBalances || {};
-    }
-
-    this.encryptionKey = key;
-    this.utxoStore = utxoStore;
-    this.walletTxStore = walletTxStore;
-    this.accountSyncState = accountSyncState;
-    this.cachedBalances = cachedBalances;
-
-    const resolvedIndex =
-      currentAccountIndex >= 0 && currentAccountIndex < this.state.accounts.length
-        ? currentAccountIndex
-        : 0;
-
-    this.state = {
-      locked: false,
-      accounts: this.state.accounts,
-      currentAccountIndex: resolvedIndex,
-      enc,
-    };
-    this.mnemonic = this.getSigningMnemonicForCurrentAccount();
-
-    const currentAccount = this.state.accounts[resolvedIndex] || this.state.accounts[0];
-    if (decoded.migrated) {
-      await this.saveAccountsToVault();
-    }
-    if (!loadedFromEncrypted) {
-      const hasData =
-        Object.keys(this.utxoStore).length > 0 ||
-        Object.keys(this.walletTxStore).length > 0 ||
-        Object.keys(this.cachedBalances).length > 0 ||
-        Object.keys(this.accountSyncState).length > 0;
-      if (hasData) {
-        await this.saveAccountData();
-        await chrome.storage.local.remove([
-          STORAGE_KEYS.UTXO_STORE,
-          STORAGE_KEYS.WALLET_TX_STORE,
-          STORAGE_KEYS.CACHED_BALANCES,
-        ]);
-      }
-    }
-    return {
-      ok: true,
-      address: currentAccount?.address || '',
-      accounts: this.state.accounts,
-      currentAccount,
-      activeSeedSourceId: this.getSeedAccountForWallet(currentAccount)?.id || null,
-    };
   }
 
   /**
@@ -910,36 +1117,42 @@ export class Vault {
    * Requires wallet to be unlocked (encryptionKey must be in memory)
    */
   private async saveAccountsToVault(): Promise<void> {
-    if (!this.state.enc || !this.encryptionKey) {
-      throw new Error('Cannot save accounts: vault is locked or not initialized');
-    }
+    const epoch = this.accountDataEpoch;
+    await this.accountDataSaveQueue.run(async () => {
+      if (epoch !== this.accountDataEpoch || !this.state.enc || !this.encryptionKey) {
+        throw new Error('Cannot save accounts: vault is locked or lifecycle changed');
+      }
 
-    // Re-encrypt seed accounts + child accounts together
-    const vaultPayload: VaultPayloadV2 = {
-      version: 2,
-      seedAccounts: this.seedAccounts,
-    };
-    const payloadJson = JSON.stringify(vaultPayload);
-    const { iv, ct } = await encryptGCM(this.encryptionKey, new TextEncoder().encode(payloadJson));
+      // Capture the latest account list only when this ordered task executes.
+      const vaultPayload: VaultPayloadV2 = {
+        version: 2,
+        seedAccounts: this.seedAccounts,
+      };
+      const payloadJson = JSON.stringify(vaultPayload);
+      const { iv, ct } = await encryptGCM(
+        this.encryptionKey,
+        new TextEncoder().encode(payloadJson)
+      );
+      if (epoch !== this.accountDataEpoch || !this.state.enc) {
+        throw new Error('Cannot save accounts: vault lifecycle changed');
+      }
 
-    // Update the encrypted vault with new IV and ciphertext
-    const encData: EncryptedVault = {
-      version: 1,
-      kdf: this.state.enc.kdf, // Reuse same KDF parameters (salt, iterations)
-      cipher: {
-        alg: 'AES-GCM',
-        iv: Array.from(iv),
-        ct: Array.from(ct),
-      },
-    };
+      const encData: EncryptedVault = {
+        version: 1,
+        kdf: this.state.enc.kdf,
+        cipher: {
+          alg: 'AES-GCM',
+          iv: Array.from(iv),
+          ct: Array.from(ct),
+        },
+      };
 
-    // Save updated vault to storage
-    await chrome.storage.local.set({
-      [STORAGE_KEYS.ENCRYPTED_VAULT]: encData,
+      await chrome.storage.local.set({ [STORAGE_KEYS.ENCRYPTED_VAULT]: encData });
+      if (epoch !== this.accountDataEpoch) {
+        throw new Error('Cannot save accounts: vault lifecycle changed');
+      }
+      this.state.enc = encData;
     });
-
-    // Update in-memory state
-    this.state.enc = encData;
   }
 
   /**
@@ -947,16 +1160,20 @@ export class Vault {
    */
   async lock(): Promise<{ ok: boolean }> {
     this.state.locked = true;
-    // Clear sensitive data from memory for security
-    this.state.accounts = []; // Clear accounts to enforce "no addresses while locked"
-    this.mnemonic = null;
-    this.seedAccounts = [];
-    this.encryptionKey = null;
-    this.utxoStore = {};
-    this.walletTxStore = {};
-    this.accountSyncState = {};
-    this.cachedBalances = {};
-    this.nockblocksHistoryRefreshChains.clear();
+    this.accountDataEpoch += 1;
+    await this.accountDataSaveQueue.run(async () => {
+      // Clear sensitive data only after any already-running encrypted write has
+      // settled. Queued writes from the old epoch fail before taking a snapshot.
+      this.state.accounts = []; // Clear accounts to enforce "no addresses while locked"
+      this.mnemonic = null;
+      this.seedAccounts = [];
+      this.encryptionKey = null;
+      this.utxoStore = {};
+      this.walletTxStore = {};
+      this.accountSyncState = {};
+      this.cachedBalances = {};
+      this.nockblocksHistoryRefreshChains.clear();
+    });
     return { ok: true };
   }
 
@@ -964,24 +1181,28 @@ export class Vault {
    * Resets/deletes the wallet completely (clears all data)
    */
   async reset(): Promise<{ ok: boolean }> {
-    // Clear all storage
-    await chrome.storage.local.clear();
+    this.state.locked = true;
+    this.accountDataEpoch += 1;
+    await this.accountDataSaveQueue.run(async () => {
+      // Ordered after every already-running account-data write so none can
+      // recreate ENCRYPTED_ACCOUNT_DATA after the clear.
+      await chrome.storage.local.clear();
 
-    // Reset in-memory state
-    this.state = {
-      locked: true,
-      accounts: [],
-      currentAccountIndex: 0,
-      enc: null,
-    };
-    this.mnemonic = null;
-    this.seedAccounts = [];
-    this.encryptionKey = null; // Clear encryption key as well
-    this.utxoStore = {};
-    this.walletTxStore = {};
-    this.accountSyncState = {};
-    this.cachedBalances = {};
-    this.nockblocksHistoryRefreshChains.clear();
+      this.state = {
+        locked: true,
+        accounts: [],
+        currentAccountIndex: 0,
+        enc: null,
+      };
+      this.mnemonic = null;
+      this.seedAccounts = [];
+      this.encryptionKey = null; // Clear encryption key as well
+      this.utxoStore = {};
+      this.walletTxStore = {};
+      this.accountSyncState = {};
+      this.cachedBalances = {};
+      this.nockblocksHistoryRefreshChains.clear();
+    });
 
     return { ok: true };
   }
@@ -997,13 +1218,10 @@ export class Vault {
    * Gets the currently selected sub-account from the flattened account list.
    */
   getCurrentAccount(): SubAccount | null {
+    if (this.state.locked) return null;
     // currentAccountIndex refers to the flattened `state.accounts` array position,
     // not the per-seed derivation index on SubAccount.index.
-    const account = this.state.accounts[this.state.currentAccountIndex];
-    if (account && !account.hidden) return account;
-    // Safety net: if the stored index points at a hidden account (e.g. after a
-    // hide operation left a stale index), fall back to the first visible account.
-    return this.state.accounts.find(a => !a.hidden) || null;
+    return this.getCurrentAccountUnchecked();
   }
 
   /**
@@ -1014,11 +1232,16 @@ export class Vault {
     return account?.address || '';
   }
 
+  /** Whether the selected account has local key material available for signing. */
+  canCurrentAccountSignLocally(): boolean {
+    return !this.state.locked && this.getSigningMnemonicForCurrentAccount() !== null;
+  }
+
   /**
    * Returns the flattened sub-account list across all seed sources.
    */
   getAccounts(): SubAccount[] {
-    return this.state.accounts;
+    return this.state.locked ? [] : this.state.accounts;
   }
 
   /**
@@ -1033,6 +1256,7 @@ export class Vault {
    * Gets top-level seed/external account sources (mnemonic removed)
    */
   getSeedSources(): Array<Omit<SeedAccount, 'mnemonic'>> {
+    if (this.state.locked) return [];
     return this.seedAccounts.map(({ mnemonic: _mnemonic, ...seed }) => seed);
   }
 
@@ -1206,6 +1430,7 @@ export class Vault {
    * This is intentional - better privacy, addresses not accessible without password
    */
   async getAddressSafe(): Promise<string> {
+    if (this.state.locked) return '';
     // If unlocked, return from memory
     if (this.state.accounts.length > 0) {
       const currentAccount =
@@ -1268,6 +1493,31 @@ export class Vault {
     );
   }
 
+  /** Heal exact sends interrupted before their signed transaction id was persisted. */
+  private recoverInterruptedExactTransactions(): boolean {
+    let changed = false;
+    const accountAddresses = new Set([
+      ...Object.keys(this.utxoStore),
+      ...Object.keys(this.walletTxStore),
+    ]);
+    for (const accountAddress of accountAddresses) {
+      const accountStore = this.utxoStore[accountAddress];
+      const transactions = this.walletTxStore[accountAddress] ?? [];
+      const recovered = recoverInterruptedExactReservations(
+        accountStore?.notes ?? [],
+        transactions,
+        accountAddress
+      );
+      if (recovered.released > 0 && accountStore) {
+        accountStore.version += 1;
+      }
+      if (recovered.failed > 0) {
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
   /**
    * Get only available (spendable) notes for an account
    */
@@ -1300,7 +1550,7 @@ export class Vault {
    * This blob changes frequently - on every transaction and sync.
    * All data saved atomically to prevent inconsistency.
    */
-  async saveAccountData(): Promise<void> {
+  private async persistAccountDataSnapshot(): Promise<void> {
     if (!this.encryptionKey) {
       throw new Error('Cannot save account data: vault is locked or not initialized');
     }
@@ -1325,6 +1575,19 @@ export class Vault {
     };
 
     await chrome.storage.local.set({ [STORAGE_KEYS.ENCRYPTED_ACCOUNT_DATA]: encData });
+  }
+
+  async saveAccountData(): Promise<void> {
+    // The payload is captured inside the queued task, not when the caller
+    // enqueues it. This prevents a slow older encryption/write from overwriting
+    // a newer mutation to another account in the same encrypted blob.
+    const epoch = this.accountDataEpoch;
+    await this.accountDataSaveQueue.run(async () => {
+      if (epoch !== this.accountDataEpoch) {
+        throw new Error('Account data save was cancelled because the vault lifecycle changed');
+      }
+      await this.persistAccountDataSnapshot();
+    });
   }
 
   // ============================================================================
@@ -1379,23 +1642,12 @@ export class Vault {
       throw new Error(`No UTXO store for account ${accountAddress}`);
     }
 
-    const noteIdSet = new Set(noteIds);
-    let lockedCount = 0;
-
-    for (const note of this.utxoStore[accountAddress].notes) {
-      if (noteIdSet.has(note.noteId)) {
-        if (note.state !== 'available') {
-          throw new Error(`Cannot lock note ${note.noteId}: state is ${note.state}`);
-        }
-        note.state = 'in_flight';
-        note.pendingTxId = walletTxId;
-        lockedCount++;
-      }
-    }
-
-    if (lockedCount !== noteIds.length) {
-      throw new Error(`Failed to lock all notes: expected ${noteIds.length}, found ${lockedCount}`);
-    }
+    reserveAvailableNotes(
+      this.utxoStore[accountAddress].notes,
+      accountAddress,
+      noteIds,
+      walletTxId
+    );
 
     this.utxoStore[accountAddress].version += 1;
 
@@ -1426,17 +1678,21 @@ export class Vault {
    * Release in_flight notes back to available (on tx failure)
    * Automatically persists to encrypted storage
    */
-  async releaseInFlightNotes(accountAddress: string, noteIds: string[]): Promise<void> {
+  async releaseInFlightNotes(
+    accountAddress: string,
+    noteIds: string[],
+    walletTxId: string
+  ): Promise<void> {
     if (!this.utxoStore[accountAddress]) return;
 
-    const noteIdSet = new Set(noteIds);
+    const released = releaseOwnedNoteReservations(
+      this.utxoStore[accountAddress].notes,
+      accountAddress,
+      noteIds,
+      walletTxId
+    );
 
-    for (const note of this.utxoStore[accountAddress].notes) {
-      if (noteIdSet.has(note.noteId) && note.state === 'in_flight') {
-        note.state = 'available';
-        delete note.pendingTxId;
-      }
-    }
+    if (released === 0) return;
 
     this.utxoStore[accountAddress].version += 1;
 
@@ -1520,9 +1776,173 @@ export class Vault {
   }
 
   private capWalletTransactions(accountAddress: string): void {
-    if (this.walletTxStore[accountAddress]?.length > 1000) {
-      this.walletTxStore[accountAddress] = this.walletTxStore[accountAddress].slice(0, 1000);
-    }
+    const transactions = this.walletTxStore[accountAddress];
+    if (!transactions || transactions.length <= 1000) return;
+
+    const isNonterminal = (transaction: WalletTransaction) =>
+      transaction.status === 'created' ||
+      transaction.status === 'broadcast_pending' ||
+      transaction.status === 'mempool_seen' ||
+      transaction.status === 'broadcasted_unconfirmed';
+    const pendingCount = transactions.filter(isNonterminal).length;
+    let terminalBudget = Math.max(0, 1000 - pendingCount);
+    const retained = transactions.filter(transaction => {
+      if (isNonterminal(transaction)) return true;
+      if (terminalBudget === 0) return false;
+      terminalBudget -= 1;
+      return true;
+    });
+
+    // Keep the same array reference so an in-progress staged transaction can
+    // restore it on persistence failure.
+    transactions.splice(0, transactions.length, ...retained);
+  }
+
+  /** Reserve inputs and add history in one encrypted account-data snapshot. */
+  private async reserveNotesAndCreateWalletTransaction(
+    accountAddress: string,
+    noteIds: readonly string[],
+    walletTx: WalletTransaction
+  ): Promise<void> {
+    const epoch = this.accountDataEpoch;
+    await this.accountDataSaveQueue.run(async () => {
+      if (epoch !== this.accountDataEpoch || this.state.locked) {
+        throw new Error('Transaction reservation was cancelled because the vault locked');
+      }
+      const accountStore = this.utxoStore[accountAddress];
+      if (!accountStore) {
+        throw new Error(`No UTXO store for account ${accountAddress}`);
+      }
+
+      const hadTransactionStore = Boolean(this.walletTxStore[accountAddress]);
+      const transactions = (this.walletTxStore[accountAddress] ??= []);
+      const previousTransactions = [...transactions];
+      const previousVersion = accountStore.version;
+      const staged = stageExactTransactionReservation(
+        accountStore.notes,
+        transactions,
+        accountAddress,
+        noteIds,
+        walletTx
+      );
+      accountStore.version += 1;
+      this.sortWalletTransactions(accountAddress);
+      this.capWalletTransactions(accountAddress);
+      const evictedTransactions = previousTransactions.filter(
+        transaction => !transactions.includes(transaction)
+      );
+
+      try {
+        await this.persistAccountDataSnapshot();
+      } catch (error) {
+        staged.rollback();
+        for (const evicted of evictedTransactions) {
+          if (!transactions.some(transaction => transaction.id === evicted.id)) {
+            transactions.push(evicted);
+          }
+        }
+        this.sortWalletTransactions(accountAddress);
+        accountStore.version = previousVersion;
+        if (!hadTransactionStore && transactions.length === 0) {
+          delete this.walletTxStore[accountAddress];
+        }
+        throw error;
+      }
+    });
+  }
+
+  /** Add owner-bound reservations to an existing history record in one snapshot. */
+  private async reserveAdditionalTransactionNotes(
+    accountAddress: string,
+    noteIds: readonly string[],
+    walletTxId: string
+  ): Promise<void> {
+    if (noteIds.length === 0) return;
+    const epoch = this.accountDataEpoch;
+    await this.accountDataSaveQueue.run(async () => {
+      if (epoch !== this.accountDataEpoch || this.state.locked) {
+        throw new Error('Transaction reservation was cancelled because the vault locked');
+      }
+      const accountStore = this.utxoStore[accountAddress];
+      const transaction = this.walletTxStore[accountAddress]?.find(tx => tx.id === walletTxId);
+      if (!accountStore || !transaction) {
+        throw new Error('Transaction reservation history is unavailable');
+      }
+      const previousVersion = accountStore.version;
+      const staged = stageAdditionalTransactionReservation(
+        accountStore.notes,
+        transaction,
+        accountAddress,
+        noteIds
+      );
+      accountStore.version += 1;
+      try {
+        await this.persistAccountDataSnapshot();
+      } catch (error) {
+        staged.rollback();
+        accountStore.version = previousVersion;
+        throw error;
+      }
+    });
+  }
+
+  /** Release an unsubmitted exact send and fail its history in one snapshot. */
+  private async failUnsubmittedExactTransaction(
+    accountAddress: string,
+    noteIds: readonly string[],
+    walletTxId: string
+  ): Promise<void> {
+    const epoch = this.accountDataEpoch;
+    await this.accountDataSaveQueue.run(async () => {
+      if (epoch !== this.accountDataEpoch || this.state.locked) {
+        throw new Error('Transaction cleanup was cancelled because the vault locked');
+      }
+      const accountStore = this.utxoStore[accountAddress];
+      const transactions = this.walletTxStore[accountAddress];
+      if (!accountStore || !transactions) return;
+
+      const ownedNotes = accountStore.notes.filter(
+        note =>
+          noteIds.includes(note.noteId) &&
+          note.accountAddress === accountAddress &&
+          note.state === 'in_flight' &&
+          note.pendingTxId === walletTxId
+      );
+      const transaction = transactions.find(candidate => candidate.id === walletTxId);
+      const previousStatus = transaction?.status;
+      const previousUpdatedAt = transaction?.updatedAt;
+      const previousVersion = accountStore.version;
+
+      const released = releaseOwnedNoteReservations(
+        accountStore.notes,
+        accountAddress,
+        noteIds,
+        walletTxId
+      );
+      if (released > 0) accountStore.version += 1;
+      if (transaction) {
+        transaction.status = 'failed';
+        transaction.updatedAt = Date.now();
+        this.sortWalletTransactions(accountAddress);
+      }
+      if (released === 0 && !transaction) return;
+
+      try {
+        await this.persistAccountDataSnapshot();
+      } catch (error) {
+        for (const note of ownedNotes) {
+          note.state = 'in_flight';
+          note.pendingTxId = walletTxId;
+        }
+        accountStore.version = previousVersion;
+        if (transaction && previousStatus && transaction.status === 'failed') {
+          transaction.status = previousStatus;
+          transaction.updatedAt = previousUpdatedAt ?? transaction.updatedAt;
+          this.sortWalletTransactions(accountAddress);
+        }
+        throw error;
+      }
+    });
   }
 
   private findWalletTransactionIndex(
@@ -1557,6 +1977,48 @@ export class Vault {
       accountAddress,
       lastSyncedAt: updates.lastSyncedAt ?? Date.now(),
     };
+  }
+
+  private assertAccountSyncedForNetwork(
+    accountAddress: string,
+    currentNetworkIdentity: string
+  ): void {
+    const syncState = this.getAccountSyncState(accountAddress);
+    if (syncState.utxoSyncInProgress) {
+      throw new Error('Wallet data sync was interrupted; sync again before transacting');
+    }
+    assertRpcNetworkIdentity(syncState.rpcNetworkIdentity, currentNetworkIdentity);
+  }
+
+  private assertAccountOperationCurrent(accountAddress: string, lifecycleEpoch: number): void {
+    if (
+      this.state.locked ||
+      lifecycleEpoch !== this.accountDataEpoch ||
+      !this.state.accounts.some(account => account.address === accountAddress)
+    ) {
+      throw new Error('Wallet lifecycle changed during account sync');
+    }
+  }
+
+  private async persistCompletedAccountSync(
+    accountAddress: string,
+    updates: Partial<AccountSyncState>
+  ): Promise<void> {
+    this.setAccountSyncState(accountAddress, { ...updates, utxoSyncInProgress: false });
+    try {
+      await this.saveAccountData();
+    } catch (error) {
+      // The durable snapshot remains fenced from the initial in-progress save;
+      // keep the in-memory copy fenced too after a failed final commit.
+      this.setAccountSyncState(accountAddress, { utxoSyncInProgress: true });
+      throw error;
+    }
+  }
+
+  async accountNeedsSyncForCurrentNetwork(accountAddress: string): Promise<boolean> {
+    const currentIdentity = getRpcNetworkIdentity(await getEffectiveRpcConfig());
+    const state = this.getAccountSyncState(accountAddress);
+    return state.utxoSyncInProgress === true || state.rpcNetworkIdentity !== currentIdentity;
   }
 
   async updateAccountSyncState(
@@ -1952,7 +2414,10 @@ export class Vault {
     };
   }
 
-  private async refreshPendingTransactionStatuses(accountAddress: string): Promise<number> {
+  private async refreshPendingTransactionStatuses(
+    accountAddress: string,
+    assertCurrent: () => void = () => undefined
+  ): Promise<number> {
     if (!isNockblocksConfigured()) {
       return 0;
     }
@@ -1964,6 +2429,7 @@ export class Vault {
 
     const client = createNockblocksClient();
     const ownFirstNames = await this.getOwnFirstNameSet(accountAddress);
+    assertCurrent();
     let confirmedCount = 0;
 
     for (const tx of pendingTxs) {
@@ -1980,6 +2446,7 @@ export class Vault {
       if (shouldCheckMempool) {
         try {
           const mempoolTx = await client.getMempoolTransactionByTxid(trackingId);
+          assertCurrent();
           mempoolSeenAt = mempoolTx
             ? (mempoolTx.heardAtTimestamp || Math.floor(now / 1000)) * 1000
             : tx.mempoolSeenAt;
@@ -2004,6 +2471,7 @@ export class Vault {
 
       try {
         const confirmedTx = await client.getTransactionByTxid(trackingId);
+        assertCurrent();
         if (!confirmedTx) {
           await this.updateWalletTransaction(accountAddress, tx.id, {
             lastConfirmationCheckAt: now,
@@ -2069,7 +2537,7 @@ export class Vault {
     accountAddress: string,
     ownFirstNames: Set<string>,
     client: ReturnType<typeof createNockblocksClient>,
-    opts?: { maxPages?: number }
+    opts?: { maxPages?: number; assertCurrent?: () => void }
   ): Promise<{ ingested: number; abortedEmptyFirstPage: boolean }> {
     const limit = 1000;
     let offset = 0;
@@ -2082,6 +2550,7 @@ export class Vault {
         limit,
         offset,
       });
+      opts?.assertCurrent?.();
       if (historyTransactions.length === 0) {
         return { ingested, abortedEmptyFirstPage: offset === 0 && !seenNonemptyPage };
       }
@@ -2110,7 +2579,7 @@ export class Vault {
 
   private async syncConfirmedHistory(
     accountAddress: string,
-    opts?: { retryAddressIndexOnEmptyPage?: boolean }
+    opts?: { retryAddressIndexOnEmptyPage?: boolean; assertCurrent?: () => void }
   ): Promise<number> {
     if (!isNockblocksConfigured()) {
       return 0;
@@ -2119,7 +2588,9 @@ export class Vault {
     const client = createNockblocksClient();
     const syncState = this.getAccountSyncState(accountAddress);
     const ownFirstNames = await this.getOwnFirstNameSet(accountAddress);
+    opts?.assertCurrent?.();
     const tip = await client.getTip();
+    opts?.assertCurrent?.();
     const maxIncrementalHistoryBlocks = 500;
     const lastHistorySyncedTip = syncState.lastHistorySyncedTip ?? 0;
     const historyTipGap = Math.max(tip.height - lastHistorySyncedTip, 0);
@@ -2129,15 +2600,18 @@ export class Vault {
       let ingestResult = await this.ingestNockblocksTransactionsByAddress(
         accountAddress,
         ownFirstNames,
-        client
+        client,
+        { assertCurrent: opts?.assertCurrent }
       );
 
       if (ingestResult.abortedEmptyFirstPage && opts?.retryAddressIndexOnEmptyPage) {
         await new Promise<void>(resolve => setTimeout(resolve, 1500));
+        opts?.assertCurrent?.();
         ingestResult = await this.ingestNockblocksTransactionsByAddress(
           accountAddress,
           ownFirstNames,
-          client
+          client,
+          { assertCurrent: opts?.assertCurrent }
         );
       }
 
@@ -2153,7 +2627,9 @@ export class Vault {
         lastHistorySyncedTip: tip.height,
         lastSyncedHeight: Math.max(syncState.lastSyncedHeight, tip.height),
       });
+      opts?.assertCurrent?.();
       await this.saveAccountData();
+      opts?.assertCurrent?.();
 
       return syncedCount;
     }
@@ -2166,6 +2642,7 @@ export class Vault {
 
     for (let i = 0; i < heights.length; i += 25) {
       const blocks = await client.getBlocksByHeight(heights.slice(i, i + 25));
+      opts?.assertCurrent?.();
       for (const block of blocks) {
         for (const transaction of block.transactions) {
           const walletTx = this.buildWalletTransactionFromChainTransaction(
@@ -2194,7 +2671,7 @@ export class Vault {
         accountAddress,
         ownFirstNames,
         client,
-        { maxPages: 50 }
+        { maxPages: 50, assertCurrent: opts?.assertCurrent }
       );
       syncedCount += reconcile.ingested;
     }
@@ -2204,7 +2681,9 @@ export class Vault {
       lastHistorySyncedTip: tip.height,
       lastSyncedHeight: Math.max(syncState.lastSyncedHeight, tip.height),
     });
+    opts?.assertCurrent?.();
     await this.saveAccountData();
+    opts?.assertCurrent?.();
 
     return syncedCount;
   }
@@ -2216,7 +2695,7 @@ export class Vault {
    */
   private async refreshNockblocksHistoryAfterUtxoSync(
     accountAddress: string,
-    opts?: { retryAddressIndexOnEmptyPage?: boolean }
+    opts?: { retryAddressIndexOnEmptyPage?: boolean; assertCurrent?: () => void }
   ): Promise<void> {
     if (!isNockblocksConfigured()) {
       return;
@@ -2224,9 +2703,15 @@ export class Vault {
 
     await this.enqueueNockblocksHistoryRefresh(accountAddress, async () => {
       try {
-        await this.refreshPendingTransactionStatuses(accountAddress);
+        opts?.assertCurrent?.();
+        await this.refreshPendingTransactionStatuses(accountAddress, opts?.assertCurrent);
+        opts?.assertCurrent?.();
         await this.syncConfirmedHistory(accountAddress, opts);
+        opts?.assertCurrent?.();
       } catch (error) {
+        // Lifecycle invalidation must abort the parent sync, not be downgraded
+        // to an optional indexer warning.
+        opts?.assertCurrent?.();
         console.warn('[Vault] Nockblocks history refresh failed:', error);
       }
     });
@@ -2239,7 +2724,10 @@ export class Vault {
    * @param accountAddress - Account to sync
    * @returns Summary of what changed
    */
-  async syncAccountUTXOs(accountAddress: string): Promise<{
+  async syncAccountUTXOs(
+    accountAddress: string,
+    options: { skipHistory?: boolean } = {}
+  ): Promise<{
     newIncoming: number;
     newChange: number;
     spent: number;
@@ -2249,32 +2737,143 @@ export class Vault {
     if (this.state.locked) {
       throw new Error('Vault is locked');
     }
+    const syncLifecycleEpoch = this.accountDataEpoch;
+    this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
 
-    const endpoint = await getEffectiveRpcEndpoint();
-    const rpcClient = createBrowserClient(endpoint);
+    const syncConfig = await getEffectiveRpcConfig();
+    this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+    const syncNetworkIdentity = getRpcNetworkIdentity(syncConfig);
+    const rpcClient = createBrowserClient(syncConfig.rpcUrl);
 
     const syncResult = await withAccountLock(accountAddress, async () => {
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
       // 1. Fetch current UTXOs from chain
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
       const blockHeight = balanceResult.blockHeight;
       const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
       const fetchedUTXOs = chainNotes.map(n => this.noteToFetchedUTXO(n));
 
+      // Never apply data fetched from an endpoint after settings have moved to
+      // another network. If settings change immediately after this check, the
+      // old identity remains attached and subsequent builds still fail closed.
+      const currentNetworkIdentity = getRpcNetworkIdentity(await getEffectiveRpcConfig());
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+      if (currentNetworkIdentity !== syncNetworkIdentity) {
+        throw new Error('RPC network changed during sync; sync again');
+      }
+
+      const priorSyncState = this.getAccountSyncState(accountAddress);
+      const legacyDefaultNetwork =
+        priorSyncState.rpcNetworkIdentity === undefined &&
+        syncNetworkIdentity === getRpcNetworkIdentity(defaultRpcConfig);
+      if (priorSyncState.rpcNetworkIdentity !== syncNetworkIdentity && !legacyDefaultNetwork) {
+        const transactions = this.getWalletTransactions(accountAddress);
+        const nonterminalTransactions = transactions.filter(
+          tx =>
+            tx.status === 'created' ||
+            tx.status === 'broadcast_pending' ||
+            tx.status === 'mempool_seen' ||
+            tx.status === 'broadcasted_unconfirmed'
+        );
+        const provablyUnsubmittedIds = new Set(
+          nonterminalTransactions
+            .filter(
+              tx =>
+                tx.status === 'created' &&
+                Boolean(tx.exactIntentId || tx.locallyManagedSubmission) &&
+                !tx.txHash &&
+                !tx.trackingTxId
+            )
+            .map(tx => tx.id)
+        );
+        const hasAmbiguousTransaction = nonterminalTransactions.some(
+          tx => !provablyUnsubmittedIds.has(tx.id)
+        );
+        const hasAmbiguousReservation = this.getAccountNotes(accountAddress).some(
+          note =>
+            note.state === 'in_flight' &&
+            (!note.pendingTxId || !provablyUnsubmittedIds.has(note.pendingTxId))
+        );
+        if (hasAmbiguousTransaction || hasAmbiguousReservation) {
+          throw new Error(
+            'This account has a transaction pending on the previously selected network; switch back before changing networks'
+          );
+        }
+
+        // A legacy or different-network cache cannot be diffed against this
+        // endpoint: doing so could falsely confirm transactions or reserve old
+        // notes. Install a fresh snapshot in one encrypted write instead.
+        const replacementNotes = fetchedUTXOs.map(note =>
+          fetchedToStoredNote(note, accountAddress, 'available')
+        );
+        const previousVersion = this.utxoStore[accountAddress]?.version ?? 0;
+        this.utxoStore[accountAddress] = {
+          notes: replacementNotes,
+          version: previousVersion + 1,
+          blockHeight,
+        };
+        for (const transaction of transactions) {
+          // Preserve terminal history byte-for-byte. The sync-state flag below
+          // keeps those old-network records out of future change matching.
+          if (provablyUnsubmittedIds.has(transaction.id)) {
+            transaction.status = 'failed';
+            transaction.updatedAt = Date.now();
+          }
+        }
+        this.cachedBalances[accountAddress] = balanceResult.totalNock;
+        await this.persistCompletedAccountSync(accountAddress, {
+          rpcNetworkIdentity: syncNetworkIdentity,
+          excludeTerminalHistoryFromChangeDetection: true,
+          lastSyncedHeight: blockHeight,
+        });
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+        return {
+          newIncoming: 0,
+          newChange: 0,
+          spent: 0,
+          confirmed: 0,
+          expired: 0,
+        };
+      }
+
+      // If this multi-write reconciliation is interrupted, builds must not use
+      // the partial snapshot. The final height/provenance commit clears it.
+      this.setAccountSyncState(accountAddress, { utxoSyncInProgress: true });
+      await this.saveAccountData();
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+
       // 2. Get local state (from in-memory encrypted store)
       const localNotes = this.getAccountNotes(accountAddress);
+      const releasedOrphanReservations = releaseUnownedOnChainReservations(
+        localNotes,
+        this.getWalletTransactions(accountAddress),
+        accountAddress,
+        new Set(fetchedUTXOs.map(note => note.noteId))
+      );
+      if (releasedOrphanReservations > 0 && this.utxoStore[accountAddress]) {
+        this.utxoStore[accountAddress].version += 1;
+        await this.saveAccountData();
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+      }
       const pendingTxs = this.getPendingOutgoingTransactions(accountAddress);
-      const allOutgoingTxs = this.getAllOutgoingTransactions(accountAddress);
+      const allOutgoingTxs = priorSyncState.excludeTerminalHistoryFromChangeDetection
+        ? pendingTxs
+        : this.getAllOutgoingTransactions(accountAddress);
 
       // 3. Compute diff (pass all outgoing txs for change detection)
       const diff = computeUTXODiff(localNotes, fetchedUTXOs, pendingTxs, allOutgoingTxs);
 
       // 4. Process spent notes
       if (diff.nowSpent.length > 0) {
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
         const spentNoteIds = diff.nowSpent.map(n => n.noteId);
         await this.markNotesSpent(accountAddress, spentNoteIds);
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
 
         // Check if any pending transactions are now confirmed
         for (const tx of pendingTxs) {
+          this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
           if (areTransactionInputsSpent(tx, diff.nowSpent)) {
             // Find change outputs for this transaction
             const changeNoteIds = matchChangeOutputs(tx, diff.newUTXOs, diff.isChangeMap);
@@ -2284,6 +2883,7 @@ export class Vault {
               expectedChangeNoteIds: changeNoteIds,
               confirmationSource: tx.confirmationSource || 'utxo_fallback',
             });
+            this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
           }
         }
       }
@@ -2312,7 +2912,9 @@ export class Vault {
 
       // Save new notes
       if (newStoredNotes.length > 0) {
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
         await this.saveNotes(accountAddress, newStoredNotes, blockHeight);
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
       }
 
       // 5b. Check for pending transactions whose inputs are ALREADY spent
@@ -2329,6 +2931,7 @@ export class Vault {
         );
 
         for (const tx of stillPendingTxs) {
+          this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
           if (!tx.inputNoteIds || tx.inputNoteIds.length === 0) continue;
 
           const allInputsSpent = tx.inputNoteIds.every(noteId => spentNoteIds.has(noteId));
@@ -2338,6 +2941,7 @@ export class Vault {
               status: 'confirmed',
               confirmationSource: tx.confirmationSource || 'utxo_fallback',
             });
+            this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
             confirmedFromPreviousSpent++;
           }
         }
@@ -2348,34 +2952,58 @@ export class Vault {
       const expiredTxs = findExpiredTransactions(allTxs, Vault.TX_EXPIRY_MS);
 
       for (const expiredTx of expiredTxs) {
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
         if (expiredTx.inputNoteIds && expiredTx.inputNoteIds.length > 0) {
-          await this.releaseInFlightNotes(accountAddress, expiredTx.inputNoteIds);
+          await this.releaseInFlightNotes(accountAddress, expiredTx.inputNoteIds, expiredTx.id);
+          this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
         }
 
         await this.updateWalletTransaction(accountAddress, expiredTx.id, {
           status: 'expired',
         });
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
       }
 
       // 7. Handle failed transactions
       const failedTxs = findFailedTransactions(allTxs, currentNotes);
 
       for (const failedTx of failedTxs) {
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
         if (failedTx.inputNoteIds && failedTx.inputNoteIds.length > 0) {
-          await this.releaseInFlightNotes(accountAddress, failedTx.inputNoteIds);
+          await this.releaseInFlightNotes(accountAddress, failedTx.inputNoteIds, failedTx.id);
+          this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
         }
 
         await this.updateWalletTransaction(accountAddress, failedTx.id, {
           status: 'failed',
         });
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
       }
 
       // 8. Cleanup old spent notes to prevent storage bloat
       await this.removeSpentNotes(accountAddress);
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
 
       const confirmedFromNewSpent = pendingTxs.filter(tx =>
         areTransactionInputsSpent(tx, diff.nowSpent)
       ).length;
+
+      // Persist provenance and tip even when the chain returned no new notes.
+      if (!this.utxoStore[accountAddress]) {
+        this.utxoStore[accountAddress] = { notes: [], version: 0, blockHeight };
+      } else if (this.utxoStore[accountAddress].blockHeight !== blockHeight) {
+        this.utxoStore[accountAddress].blockHeight = blockHeight;
+        this.utxoStore[accountAddress].version += 1;
+      }
+      if (getRpcNetworkIdentity(await getEffectiveRpcConfig()) !== syncNetworkIdentity) {
+        throw new Error('RPC network changed during sync; sync again');
+      }
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+      await this.persistCompletedAccountSync(accountAddress, {
+        rpcNetworkIdentity: syncNetworkIdentity,
+        lastSyncedHeight: Math.max(priorSyncState.lastSyncedHeight, blockHeight),
+      });
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
 
       return {
         newIncoming,
@@ -2386,11 +3014,15 @@ export class Vault {
       };
     });
 
+    if (options.skipHistory) return syncResult;
+
     // Await outside account lock (slow Nockblocks I/O). Must complete before returning
     // from sync so the MV3 service worker stays alive until history is ingested.
+    this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
     const hasLocalNotes = this.getAccountNotes(accountAddress).length > 0;
     await this.refreshNockblocksHistoryAfterUtxoSync(accountAddress, {
       retryAddressIndexOnEmptyPage: hasLocalNotes,
+      assertCurrent: () => this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch),
     });
     return syncResult;
   }
@@ -2443,30 +3075,53 @@ export class Vault {
     if (this.state.locked) {
       throw new Error('Vault is locked');
     }
+    const syncLifecycleEpoch = this.accountDataEpoch;
+    this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
 
-    const endpoint = await getEffectiveRpcEndpoint();
-    const rpcClient = createBrowserClient(endpoint);
+    const syncConfig = await getEffectiveRpcConfig();
+    this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+    const syncNetworkIdentity = getRpcNetworkIdentity(syncConfig);
+    const rpcClient = createBrowserClient(syncConfig.rpcUrl);
 
     return withAccountLock(accountAddress, async () => {
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
       // Check if already initialized
       const existingNotes = this.getAccountNotes(accountAddress);
-      if (existingNotes.length > 0) {
+      if (
+        existingNotes.length > 0 &&
+        this.getAccountSyncState(accountAddress).rpcNetworkIdentity === syncNetworkIdentity
+      ) {
         return;
       }
 
       // Fetch current UTXOs from chain
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
       const blockHeight = balanceResult.blockHeight;
       const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
+      if (getRpcNetworkIdentity(await getEffectiveRpcConfig()) !== syncNetworkIdentity) {
+        throw new Error('RPC network changed during sync; sync again');
+      }
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+      this.setAccountSyncState(accountAddress, { utxoSyncInProgress: true });
+      await this.saveAccountData();
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
 
       // Convert to stored notes (all available, no incoming tx records on first init)
       const storedNotes: StoredNote[] = chainNotes.map(note =>
         noteToStoredNote(note, accountAddress, 'available')
       );
 
-      // Save notes
-      if (storedNotes.length > 0) {
-        await this.saveNotes(accountAddress, storedNotes, blockHeight);
+      this.setAccountSyncState(accountAddress, {
+        rpcNetworkIdentity: syncNetworkIdentity,
+        utxoSyncInProgress: false,
+      });
+      try {
+        await this.replaceAccountNotes(accountAddress, storedNotes, blockHeight);
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+      } catch (error) {
+        this.setAccountSyncState(accountAddress, { utxoSyncInProgress: true });
+        throw error;
       }
     });
   }
@@ -2481,19 +3136,38 @@ export class Vault {
     if (this.state.locked) {
       throw new Error('Vault is locked');
     }
+    const syncLifecycleEpoch = this.accountDataEpoch;
+    this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
 
-    const endpoint = await getEffectiveRpcEndpoint();
-    const rpcClient = createBrowserClient(endpoint);
+    const syncConfig = await getEffectiveRpcConfig();
+    this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+    const syncNetworkIdentity = getRpcNetworkIdentity(syncConfig);
+    const rpcClient = createBrowserClient(syncConfig.rpcUrl);
 
     return withAccountLock(accountAddress, async () => {
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
       // Fetch current UTXOs from chain (first-name only)
       const balanceResult = await queryV1Balance(accountAddress, rpcClient);
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
       const blockHeight = balanceResult.blockHeight;
       const chainNotes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
       const fetchedUTXOs = chainNotes.map(n => this.noteToFetchedUTXO(n));
+      if (getRpcNetworkIdentity(await getEffectiveRpcConfig()) !== syncNetworkIdentity) {
+        throw new Error('RPC network changed during sync; sync again');
+      }
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+      this.setAccountSyncState(accountAddress, { utxoSyncInProgress: true });
+      await this.saveAccountData();
+      this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
 
       // Get existing notes to preserve pending state
       const existingNotes = this.getAccountNotes(accountAddress);
+      releaseUnownedOnChainReservations(
+        existingNotes,
+        this.getWalletTransactions(accountAddress),
+        accountAddress,
+        new Set(fetchedUTXOs.map(note => note.noteId))
+      );
 
       // Build map of note IDs that are currently in pending transactions
       const pendingNoteIds = new Map<string, { state: StoredNote['state']; txId: string }>();
@@ -2525,7 +3199,17 @@ export class Vault {
 
       // Replace all notes (but keep pending state)
       // Note: Full replacement, not a merge - clears notes not on chain
-      await this.replaceAccountNotes(accountAddress, newStoredNotes, blockHeight);
+      this.setAccountSyncState(accountAddress, {
+        rpcNetworkIdentity: syncNetworkIdentity,
+        utxoSyncInProgress: false,
+      });
+      try {
+        await this.replaceAccountNotes(accountAddress, newStoredNotes, blockHeight);
+        this.assertAccountOperationCurrent(accountAddress, syncLifecycleEpoch);
+      } catch (error) {
+        this.setAccountSyncState(accountAddress, { utxoSyncInProgress: true });
+        throw error;
+      }
     });
   }
 
@@ -2551,9 +3235,14 @@ export class Vault {
     if (!masterForSeed || masterForSeed.hidden) {
       return { ok: true, added: 0 };
     }
+    const discoveryLifecycleEpoch = this.accountDataEpoch;
+    const assertDiscoveryCurrent = () =>
+      this.assertAccountOperationCurrent(masterForSeed.address, discoveryLifecycleEpoch);
 
     await initWasmModules();
+    assertDiscoveryCurrent();
     const endpoint = await getEffectiveRpcEndpoint();
+    assertDiscoveryCurrent();
     const rpcClient = createBrowserClient(endpoint);
 
     const seedOrdinal = this.getSeedOrdinal(seedAccount.id);
@@ -2604,6 +3293,7 @@ export class Vault {
             indexes.slice(i, i + discoveryQueryConcurrency).map(queryDiscoveryIndex)
           ))
         );
+        assertDiscoveryCurrent();
       }
 
       for (const result of discoveryResults) {
@@ -2629,10 +3319,12 @@ export class Vault {
     let added = 0;
 
     for (let j = 1; j <= lastWithBalance; j++) {
+      assertDiscoveryCurrent();
       if (existingIndices.has(j)) continue;
 
       const { iconStyleId, iconColor } = this.pickUnusedStyleGlobally();
       const address = discoveredAddressByIndex.get(j) ?? (await deriveAddress(mnemonic, j));
+      assertDiscoveryCurrent();
       const newAccount: SubAccount = {
         name: this.getDefaultChildWalletName(seedOrdinal, j),
         address,
@@ -2647,6 +3339,7 @@ export class Vault {
     }
 
     if (added > 0) {
+      assertDiscoveryCurrent();
       seedAccount.accounts.sort((a, b) => a.index - b.index);
       this.rebuildFlatAccounts();
 
@@ -2660,7 +3353,9 @@ export class Vault {
       this.cachedBalances = merged;
 
       await this.saveAccountsToVault();
+      assertDiscoveryCurrent();
       await this.saveAccountData();
+      assertDiscoveryCurrent();
     }
 
     return { ok: true, added };
@@ -2797,7 +3492,7 @@ export class Vault {
    */
   async updateAccountStyling(
     address: string,
-    iconStyleId: number,
+    iconStyleId: number | string,
     iconColor: string
   ): Promise<{ ok: boolean } | { error: string }> {
     if (this.state.locked) {
@@ -2809,7 +3504,7 @@ export class Vault {
       return { error: ERROR_CODES.BAD_ADDRESS };
     }
 
-    this.state.accounts[index].iconStyleId = iconStyleId;
+    this.state.accounts[index].iconStyleId = normalizeIconStyleId(iconStyleId);
     this.state.accounts[index].iconColor = iconColor;
 
     // Save accounts to encrypted vault
@@ -2942,27 +3637,43 @@ export class Vault {
    * Derives the account's private key and signs the message digest
    * @returns Canonical API v1 signature response
    */
-  async signMessage(params: unknown): Promise<SignMessageResponse> {
+  async signMessage(params: unknown, accountAddress?: string): Promise<SignMessageResponse> {
     if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
-    // Initialize WASM modules
-    await initWasmModules();
-
     const msg = (Array.isArray(params) ? params[0] : params) ?? '';
     const msgString = String(msg);
 
+    // Capture and bind the account before the first await so a concurrent account
+    // switch cannot change which key signs an already-approved message.
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      throw new Error('No account selected');
+    }
+    if (accountAddress && currentAccount.address !== accountAddress) {
+      throw new Error('Signing account changed after approval');
+    }
+    const signingLifecycleEpoch = this.accountDataEpoch;
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
       throw new Error('Current account is external and cannot sign locally');
     }
 
+    // Initialize WASM modules
+    await initWasmModules();
+    if (
+      this.state.locked ||
+      this.accountDataEpoch !== signingLifecycleEpoch ||
+      this.getCurrentAccount()?.address !== currentAccount.address
+    ) {
+      throw new Error('Signing account changed after approval');
+    }
+
     // Derive the account's private key based on derivation method
     const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
-    const currentAccount = this.getCurrentAccount();
     // Use the account's own index, not currentAccountIndex (accounts may be reordered)
-    const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
+    const childIndex = currentAccount.index;
     const accountKey = this.isMasterAccount(currentAccount)
       ? masterKey // Use master key directly for master-derived accounts
       : masterKey.deriveChild(childIndex); // Use child derivation for slip10 accounts
@@ -3117,98 +3828,156 @@ export class Vault {
   }
 
   /**
-   * Estimate transaction fee by building (but not broadcasting) a tx via WASM
-   * Uses the same path as real sends (buildMultiNotePayment) so it's SW-safe
-   *
-   * @param to - Recipient PKH address (base58-encoded)
-   * @param amount - Amount in nicks
-   * @returns Estimated fee in nicks, or { error } if estimation fails
+   * Build a complete unsigned V1 payment snapshot without reserving inputs,
+   * writing history, or deriving private key material.
    */
-  async estimateTransactionFee(
+  async buildSimpleTransaction(
     to: string,
-    amount: Nicks
-  ): Promise<{ fee: number } | { error: string }> {
+    amount: Nicks,
+    fee?: Nicks
+  ): Promise<BuiltSimpleTransactionWithContext | { error: string }> {
     if (this.state.locked) {
       return { error: ERROR_CODES.LOCKED };
     }
 
-    const currentAccount = this.getCurrentAccount();
-    if (!currentAccount) {
+    const capturedAccount = this.getCurrentAccount();
+    if (!capturedAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
     }
-    const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
-    if (!signingMnemonic) {
-      return { error: 'Current account is external and cannot sign locally' };
-    }
-
+    const capturedLifecycleEpoch = this.accountDataEpoch;
     try {
-      // Initialize WASM modules (same as sign/send)
-      await initWasmModules();
-
-      // Derive keys
-      const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
-      const childIndex = currentAccount.index ?? this.state.currentAccountIndex;
-      const accountKey = this.isMasterAccount(currentAccount)
-        ? masterKey
-        : masterKey.deriveChild(childIndex);
-
-      if (!accountKey.privateKey || !accountKey.publicKey) {
-        if (!this.isMasterAccount(currentAccount)) {
-          accountKey.free();
-        }
-        masterKey.free();
-        return { error: 'Cannot estimate fee: keys unavailable' };
-      }
-
-      const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
-
-      try {
-        const endpoint = await getEffectiveRpcEndpoint();
-        const rpcClient = createBrowserClient(endpoint);
-        const balanceResult = await queryV1Balance(currentAccount.address, rpcClient);
-
-        if (balanceResult.utxoCount === 0) {
-          return { error: 'No UTXOs available. Your wallet may have zero balance.' };
+      return await withAccountLock(capturedAccount.address, async () => {
+        if (
+          this.state.locked ||
+          this.accountDataEpoch !== capturedLifecycleEpoch ||
+          this.getCurrentAccount()?.address !== capturedAccount.address
+        ) {
+          throw new Error('Selected account changed while transaction was being built');
         }
 
-        const notes = [...balanceResult.simpleNotes, ...balanceResult.coinbaseNotes];
-        const blockHeight = balanceResult.blockHeight;
+        await initWasmModules();
 
-        // Sort UTXOs largest to smallest (WASM will select which ones to use)
-        const sortedNotes = [...notes].sort((a, b) => b.assets - a.assets);
-
-        // Convert ALL notes to transaction builder format
-        // WASM will automatically select the optimal inputs
-        const txBuilderNotes = await Promise.all(
-          sortedNotes.map(note => convertNoteForTxBuilder(note, currentAccount.address))
+        const blockHeight = this.getAccountBlockHeight(capturedAccount.address);
+        const transactionContext = await getTransactionContextSnapshot(blockHeight);
+        this.assertAccountSyncedForNetwork(
+          capturedAccount.address,
+          transactionContext.networkIdentity
         );
 
-        // Build a tx with fee = undefined → WASM auto-calculates using DEFAULT_FEE_PER_WORD
-        // The builder calculates the exact fee needed
-        const constructedTx = await buildMultiNotePayment(
-          txBuilderNotes,
+        const availableStoredNotes = this.getAvailableNotes(capturedAccount.address);
+        if (availableStoredNotes.length === 0) {
+          throw new Error('No available UTXOs.');
+        }
+
+        // Supply all available notes to WASM and reconcile the exact subset it
+        // commits in the resulting transaction. The wallet, never the dApp,
+        // chooses inputs and always sends change back to this account.
+        const candidates = [...availableStoredNotes].sort((a, b) => b.assets - a.assets);
+        const constructedTx = await buildUnsignedMultiNotePayment(
+          candidates.map(convertStoredNoteForTxBuilder),
           to,
           amount,
-          accountKey.publicKey,
-          privateKey,
-          undefined, // let WASM auto-calc
-          undefined,
-          blockHeight
+          capturedAccount.address,
+          fee,
+          capturedAccount.address,
+          blockHeight,
+          transactionContext
         );
 
-        // Get the calculated fee from the builder
-        return { fee: constructedTx.feeUsed };
-      } finally {
-        privateKey.free();
-        if (!this.isMasterAccount(currentAccount)) {
-          accountKey.free();
+        if (
+          constructedTx.nockchainTx.version !== 1 ||
+          !guard.isNockchainTx(constructedTx.nockchainTx)
+        ) {
+          throw new Error('Simple transactions must use the V1 transaction format');
         }
-        masterKey.free();
-      }
+        const rawTx = wasm.nockchainTxToRawTx(constructedTx.nockchainTx);
+        if (!guard.isRawTxV1(rawTx)) {
+          throw new Error('Simple transactions must use the V1 transaction format');
+        }
+
+        const builtInputNoteIds = wasm
+          .rawTxInputNames(rawTx)
+          .map(name => generateNoteId(String(name.first), String(name.last)));
+        const builtSelection = resolveBuiltInputSelection(candidates, builtInputNoteIds);
+        const candidatesById = new Map(candidates.map(note => [note.noteId, note]));
+        const selectedNativeNotes = builtSelection.inputNoteIds.map(noteId => {
+          const storedNote = candidatesById.get(noteId);
+          if (!storedNote?.protoNote) {
+            throw new Error('Selected input is missing its native note data');
+          }
+          const nativeNote = wasm.noteFromProtobuf(storedNote.protoNote);
+          if (!guard.isNoteV1(nativeNote)) {
+            throw new Error('Simple transactions require V1 input notes');
+          }
+          return nativeNote;
+        });
+
+        const outputs = wasm.rawTxOutputs(rawTx, blockHeight, transactionContext.txEngineSettings);
+        if (outputs.some(output => !guard.isNoteV1(output))) {
+          throw new Error('Simple transactions require V1 output notes');
+        }
+
+        const actualAmounts = resolveBuiltTransactionAmounts(
+          builtSelection.selectedTotal,
+          amount,
+          constructedTx.feeUsed
+        );
+        const intentId = String(wasm.spendsV1Hash(constructedTx.nockchainTx.spends)) as Digest;
+
+        // Async WASM/config work can outlive an account switch or lock. Fail
+        // closed before returning note-level wallet data to the caller.
+        if (
+          this.state.locked ||
+          this.accountDataEpoch !== capturedLifecycleEpoch ||
+          this.getCurrentAccount()?.address !== capturedAccount.address
+        ) {
+          throw new Error('Selected account changed while transaction was being built');
+        }
+        const currentTransactionContext = await getTransactionContextSnapshot(blockHeight);
+        if (currentTransactionContext.fingerprint !== transactionContext.fingerprint) {
+          throw new Error('Transaction network settings changed while the transaction was built');
+        }
+        this.assertAccountSyncedForNetwork(
+          capturedAccount.address,
+          currentTransactionContext.networkIdentity
+        );
+        if (
+          this.state.locked ||
+          this.accountDataEpoch !== capturedLifecycleEpoch ||
+          this.getCurrentAccount()?.address !== capturedAccount.address
+        ) {
+          throw new Error('Selected account changed while transaction was being built');
+        }
+
+        return {
+          tx: constructedTx.nockchainTx,
+          notes: selectedNativeNotes,
+          outputs,
+          intentId,
+          accountAddress: capturedAccount.address as Digest,
+          blockHeight,
+          to: to as Digest,
+          amount,
+          inputTotal: String(builtSelection.selectedTotal) as Nicks,
+          fee: String(actualAmounts.fee) as Nicks,
+          minimumFee: String(constructedTx.minimumFee) as Nicks,
+          change: String(actualAmounts.expectedChange) as Nicks,
+          transactionContext,
+        };
+      });
     } catch (error) {
-      console.error('[Vault] Fee estimation failed:', error);
-      return { error: feeEstimateUserFacingError(error, 'fee') };
+      console.error('[Vault] Unsigned transaction build failed:', error);
+      return { error: feeEstimateUserFacingError(error, 'build') };
     }
+  }
+
+  /** Legacy wallet-UI projection; the public SDK now owns the build primitive. */
+  async estimateTransactionFee(
+    to: string,
+    amount: Nicks
+  ): Promise<{ fee: number } | { error: string }> {
+    const result = await this.buildSimpleTransaction(to, amount);
+    return 'error' in result ? result : { fee: Number(result.fee) };
   }
 
   /**
@@ -3241,7 +4010,6 @@ export class Vault {
     if (!signingMnemonic) {
       return { error: 'Current account is external and cannot sign locally' };
     }
-
     try {
       // Initialize WASM modules
       await initWasmModules();
@@ -3265,8 +4033,13 @@ export class Vault {
 
       try {
         // Get available (not in-flight) notes from in-memory UTXO store
-        const notes = this.getAvailableNotes(currentAccount.address);
         const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+        const transactionContext = await getTransactionContextSnapshot(blockHeight);
+        this.assertAccountSyncedForNetwork(
+          currentAccount.address,
+          transactionContext.networkIdentity
+        );
+        const notes = this.getAvailableNotes(currentAccount.address);
 
         if (notes.length === 0) {
           return { error: 'No spendable UTXOs available.' };
@@ -3438,6 +4211,265 @@ export class Vault {
   }
 
   /**
+   * Reserve, sign, and broadcast the exact unsigned intent that was reviewed.
+   * No replacement inputs are selected if the snapshot has gone stale.
+   */
+  async sendBuiltSimpleTransaction(
+    build: BuiltSimpleTransaction,
+    to: string,
+    transactionContext: TransactionApprovalContext,
+    origin: WalletTransaction['origin'] = 'provider_send',
+    authorizationStillValid: () => boolean = () => true
+  ): Promise<
+    { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
+  > {
+    if (this.state.locked) {
+      return { error: ERROR_CODES.LOCKED };
+    }
+
+    const capturedAccount = this.getCurrentAccount();
+    if (!capturedAccount) {
+      return { error: ERROR_CODES.NO_ACCOUNT };
+    }
+    if (capturedAccount.address !== build.accountAddress) {
+      return { error: 'Signing account changed after approval' };
+    }
+    if (to !== build.to) {
+      return { error: 'Transaction recipient changed after approval' };
+    }
+    if (!this.getSigningMnemonicForCurrentAccount()) {
+      return { error: 'Current account is external and cannot sign locally' };
+    }
+    const capturedLifecycleEpoch = this.accountDataEpoch;
+
+    return withAccountLock(capturedAccount.address, async () => {
+      const walletTxId = crypto.randomUUID();
+      let selectedNoteIds: string[] = [];
+      let notesReserved = false;
+      let broadcastAttempted = false;
+      let historyCreated = false;
+
+      try {
+        if (
+          this.state.locked ||
+          this.accountDataEpoch !== capturedLifecycleEpoch ||
+          this.getCurrentAccount()?.address !== build.accountAddress
+        ) {
+          throw new Error('Signing account changed after approval');
+        }
+        if (!authorizationStillValid()) {
+          throw new Error('Request authorization changed after approval');
+        }
+
+        await initWasmModules();
+        if (build.tx.version !== 1 || !guard.isNockchainTx(build.tx)) {
+          throw new Error('Approved transaction is not a V1 transaction');
+        }
+
+        const rawTx = wasm.nockchainTxToRawTx(build.tx);
+        if (!guard.isRawTxV1(rawTx)) {
+          throw new Error('Approved transaction is not a V1 transaction');
+        }
+        assertMatchingTransactionIntent(build.intentId, String(wasm.spendsV1Hash(build.tx.spends)));
+        if (String(wasm.rawTxTotalFees(rawTx)) !== build.fee) {
+          throw new Error('Transaction fee changed after approval');
+        }
+
+        const builtInputNoteIds = wasm
+          .rawTxInputNames(rawTx)
+          .map(name => generateNoteId(String(name.first), String(name.last)));
+        const availableNotes = this.getAvailableNotes(build.accountAddress);
+        let builtSelection: ReturnType<typeof resolveBuiltInputSelection>;
+        try {
+          builtSelection = resolveBuiltInputSelection(availableNotes, builtInputNoteIds);
+        } catch {
+          throw new Error('Transaction inputs changed; rebuild required');
+        }
+        if (String(builtSelection.selectedTotal) !== build.inputTotal) {
+          throw new Error('Transaction input values changed; rebuild required');
+        }
+        selectedNoteIds = builtSelection.inputNoteIds;
+
+        const amounts = resolveBuiltTransactionAmounts(
+          builtSelection.selectedTotal,
+          build.amount,
+          Number(build.fee)
+        );
+        if (String(amounts.fee) !== build.fee || String(amounts.expectedChange) !== build.change) {
+          throw new Error('Transaction amounts changed after approval');
+        }
+
+        // Reject an already-stale approval before creating any reservation or
+        // history. Height changes within one activation band remain valid.
+        const currentHeight = this.getAccountBlockHeight(build.accountAddress);
+        const preReservationContext = await getTransactionContextSnapshot(currentHeight);
+        if (preReservationContext.fingerprint !== transactionContext.fingerprint) {
+          throw new Error('Transaction network settings changed; rebuild required');
+        }
+        this.assertAccountSyncedForNetwork(
+          build.accountAddress,
+          transactionContext.networkIdentity
+        );
+
+        // Perform the final account/lock check immediately before the atomic
+        // reservation. reserveAvailableNotes preflights every input first.
+        if (
+          this.state.locked ||
+          this.accountDataEpoch !== capturedLifecycleEpoch ||
+          this.getCurrentAccount()?.address !== build.accountAddress
+        ) {
+          throw new Error('Signing account changed after approval');
+        }
+        if (!authorizationStillValid()) {
+          throw new Error('Request authorization changed after approval');
+        }
+        const walletTx: WalletTransaction = {
+          id: walletTxId,
+          accountAddress: build.accountAddress,
+          direction: 'outgoing',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          status: 'created',
+          origin,
+          exactIntentId: build.intentId,
+          inputNoteIds: selectedNoteIds,
+          recipient: to,
+          amount: Number(build.amount),
+          fee: Number(build.fee),
+          expectedChange: Number(build.change),
+        };
+        await this.reserveNotesAndCreateWalletTransaction(
+          build.accountAddress,
+          selectedNoteIds,
+          walletTx
+        );
+        notesReserved = true;
+        historyCreated = true;
+
+        // Re-evaluate after the durable reservation snapshot, then sign with
+        // the settings captured by the reviewed build rather than refetching.
+        const preSignHeight = this.getAccountBlockHeight(build.accountAddress);
+        const preSignContext = await getTransactionContextSnapshot(preSignHeight);
+        if (preSignContext.fingerprint !== transactionContext.fingerprint) {
+          throw new Error('Transaction network settings changed; rebuild required');
+        }
+        if (
+          this.state.locked ||
+          this.accountDataEpoch !== capturedLifecycleEpoch ||
+          this.getCurrentAccount()?.address !== build.accountAddress
+        ) {
+          throw new Error('Signing account changed after approval');
+        }
+        if (!authorizationStillValid()) {
+          throw new Error('Request authorization changed after approval');
+        }
+
+        const signedTx = await this.signRawTx({
+          rawTx,
+          blockHeight: build.blockHeight,
+          accountAddress: build.accountAddress,
+          txEngineSettings: transactionContext.txEngineSettings,
+        });
+        if (signedTx.version !== 1 || !guard.isNockchainTx(signedTx)) {
+          throw new Error('Signed transaction is not a V1 transaction');
+        }
+        assertMatchingTransactionIntent(build.intentId, String(wasm.spendsV1Hash(signedTx.spends)));
+        if (
+          this.state.locked ||
+          this.accountDataEpoch !== capturedLifecycleEpoch ||
+          this.getCurrentAccount()?.address !== build.accountAddress
+        ) {
+          throw new Error('Signing account changed after approval');
+        }
+
+        const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
+        if (!guard.isRawTxV1(signedRawTx)) {
+          throw new Error('Signed transaction is not a V1 transaction');
+        }
+        if (String(wasm.rawTxTotalFees(signedRawTx)) !== build.fee) {
+          throw new Error('Signed transaction fee does not match the approved transaction');
+        }
+
+        const protobufTx = wasm.rawTxToProtobuf(signedRawTx);
+        const signedTxId = String(signedRawTx.id);
+        walletTx.txHash = signedTxId;
+        walletTx.trackingTxId = signedTxId;
+        walletTx.status = 'broadcast_pending';
+        await this.updateWalletTransaction(build.accountAddress, walletTxId, {
+          txHash: signedTxId,
+          trackingTxId: signedTxId,
+          status: 'broadcast_pending',
+        });
+
+        // This is the final async check before submission. Construct the client
+        // from this exact snapshot and do not refetch config after it succeeds.
+        const rpcClient = createBrowserClient(transactionContext.rpcUrl);
+        const liveHeight = await rpcClient.getCurrentBlockHeight();
+        if (!Number.isSafeInteger(liveHeight) || liveHeight <= 0) {
+          throw new Error('Could not verify the current network height; rebuild required');
+        }
+        const submissionContext = await getTransactionContextSnapshot(liveHeight);
+        if (
+          submissionContext.fingerprint !== transactionContext.fingerprint ||
+          (submissionContext.nextTxEngineActivationHeight !== undefined &&
+            submissionContext.nextTxEngineActivationHeight <= liveHeight + 1)
+        ) {
+          throw new Error('Transaction network settings changed; rebuild required');
+        }
+        if (
+          this.state.locked ||
+          this.accountDataEpoch !== capturedLifecycleEpoch ||
+          this.getCurrentAccount()?.address !== build.accountAddress
+        ) {
+          throw new Error('Signing account changed after approval');
+        }
+        if (!authorizationStillValid()) {
+          throw new Error('Request authorization changed after approval');
+        }
+        // Once submission begins, a network error is ambiguous: the node may
+        // have accepted the transaction. Preserve reservations and pending
+        // history so normal reconciliation can determine the outcome.
+        broadcastAttempted = true;
+        await rpcClient.sendTransaction(protobufTx);
+
+        walletTx.status = 'broadcasted_unconfirmed';
+        await this.updateWalletTransaction(build.accountAddress, walletTxId, {
+          txHash: signedTxId,
+          trackingTxId: signedTxId,
+          status: 'broadcasted_unconfirmed',
+          lastMempoolCheckAt: Date.now(),
+          lastConfirmationCheckAt: 0,
+        });
+
+        return { txId: signedTxId, walletTx, broadcasted: true };
+      } catch (error) {
+        if (!broadcastAttempted && notesReserved && selectedNoteIds.length > 0) {
+          try {
+            if (historyCreated) {
+              await this.failUnsubmittedExactTransaction(
+                build.accountAddress,
+                selectedNoteIds,
+                walletTxId
+              );
+            } else {
+              await this.releaseInFlightNotes(build.accountAddress, selectedNoteIds, walletTxId);
+            }
+          } catch (releaseError) {
+            console.error('[Vault] Failed to release exact transaction inputs:', releaseError);
+          }
+        }
+
+        const rawMsg = error instanceof Error ? error.message : String(error);
+        return {
+          error: broadcastAttempted
+            ? `Transaction submission status is unknown: ${rewriteInsufficientFeeErrorToDecimalNock(rawMsg)}`
+            : `Transaction failed: ${rewriteInsufficientFeeErrorToDecimalNock(rawMsg)}`,
+        };
+      }
+    });
+  }
+
+  /**
    * Build, sign, and broadcast a transaction using UTXO store
    * This is the new preferred method for sending transactions
    *
@@ -3449,6 +4481,8 @@ export class Vault {
    * @param fee - Fee in nicks (optional, WASM will calculate if not provided)
    * @param sendMax - If true, sweep all available UTXOs to recipient (no change back)
    * @param priceUsdAtTime - USD price per NOCK at time of transaction (for historical display)
+   * @param options.feeSelectionHint - Advisory fee used only to choose enough notes
+   * @param options.accountAddress - Account bound to an external approval request
    * @returns Transaction result with txId and wallet transaction record
    */
   async sendTransactionV2(
@@ -3457,7 +4491,8 @@ export class Vault {
     fee?: Nicks,
     sendMax?: boolean,
     priceUsdAtTime?: number,
-    origin: WalletTransaction['origin'] = 'popup_send'
+    origin: WalletTransaction['origin'] = 'popup_send',
+    options: SendTransactionV2Options = {}
   ): Promise<
     { txId: string; walletTx: WalletTransaction; broadcasted: boolean } | { error: string }
   > {
@@ -3469,16 +4504,22 @@ export class Vault {
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
     }
+    if (options.accountAddress && currentAccount.address !== options.accountAddress) {
+      return { error: 'Signing account changed after approval' };
+    }
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
       return { error: 'Current account is external and cannot sign locally' };
     }
+    const capturedLifecycleEpoch = this.accountDataEpoch;
 
     // Use account lock to prevent race conditions
     return withAccountLock(currentAccount.address, async () => {
       // Generate wallet transaction ID upfront
       const walletTxId = crypto.randomUUID();
       let selectedNoteIds: string[] = [];
+      let notesReserved = false;
+      let broadcastAttempted = false;
 
       try {
         // Initialize WASM modules
@@ -3506,14 +4547,37 @@ export class Vault {
           const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
           const blockHeight = this.getAccountBlockHeight(currentAccount.address);
 
+          const transactionContext = await getTransactionContextSnapshot(blockHeight);
+          this.assertAccountSyncedForNetwork(
+            currentAccount.address,
+            transactionContext.networkIdentity
+          );
+          if (
+            this.state.locked ||
+            this.accountDataEpoch !== capturedLifecycleEpoch ||
+            this.getCurrentAccount()?.address !== currentAccount.address
+          ) {
+            throw new Error('Signing account changed while the transaction was prepared');
+          }
+
           if (availableStoredNotes.length === 0) {
             return { error: 'No available UTXOs.' };
           }
 
-          const totalAvailable = availableStoredNotes.reduce((sum, n) => sum + n.assets, 0);
-
-          // 2. Estimate fee if not provided (rough estimate: 2 NOCK should cover most cases)
-          const estimatedFeeNum = fee !== undefined ? Number(fee) : 2 * NOCK_TO_NICKS;
+          // 2. Choose enough notes using the exact override, an advisory estimate, or the
+          // legacy fallback. Only `fee` is forwarded to WASM as an exact fee override.
+          const amountNum = Number(amount);
+          const selectionFeeNicks = fee ?? options.feeSelectionHint;
+          const selectionFeeNum =
+            selectionFeeNicks !== undefined ? Number(selectionFeeNicks) : 2 * NOCK_TO_NICKS;
+          if (
+            !Number.isSafeInteger(amountNum) ||
+            amountNum < 0 ||
+            !Number.isSafeInteger(selectionFeeNum) ||
+            selectionFeeNum < 0
+          ) {
+            return { error: 'Amount or fee exceeds the supported Nicks range' };
+          }
 
           let selectedStoredNotes: typeof availableStoredNotes;
           let expectedChange: number;
@@ -3524,7 +4588,10 @@ export class Vault {
             expectedChange = 0; // All goes to recipient (minus fee)
           } else {
             // NORMAL: Select only notes needed for amount + fee
-            const targetAmount = Number(amount) + estimatedFeeNum;
+            const targetAmount = amountNum + selectionFeeNum;
+            if (!Number.isSafeInteger(targetAmount)) {
+              return { error: 'Amount plus fee exceeds the supported Nicks range' };
+            }
             const selected = selectNotesForAmount(availableStoredNotes, targetAmount);
 
             if (!selected) {
@@ -3535,16 +4602,10 @@ export class Vault {
 
             selectedStoredNotes = selected;
             const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
-            expectedChange = selectedTotal - Number(amount) - estimatedFeeNum;
+            expectedChange = selectedTotal - amountNum - selectionFeeNum;
           }
 
           selectedNoteIds = selectedStoredNotes.map(n => n.noteId);
-          const selectedTotal = selectedStoredNotes.reduce((sum, n) => sum + n.assets, 0);
-
-          // 4. Mark notes as in_flight BEFORE building transaction
-          await this.markNotesInFlight(currentAccount.address, selectedNoteIds, walletTxId);
-
-          // 5. Create wallet transaction record (status: created)
           const walletTx: WalletTransaction = {
             id: walletTxId,
             accountAddress: currentAccount.address,
@@ -3554,58 +4615,169 @@ export class Vault {
             priceUsdAtTime,
             status: 'created',
             origin,
+            locallyManagedSubmission: true,
             inputNoteIds: selectedNoteIds,
             recipient: to,
-            amount: Number(amount),
-            fee: estimatedFeeNum,
+            amount: amountNum,
+            fee: selectionFeeNum,
             expectedChange: expectedChange > 0 ? expectedChange : 0,
           };
-          await this.addWalletTransaction(walletTx);
-
-          // 6. Convert stored notes to transaction builder format
-          const sortedStoredNotes = [...selectedStoredNotes].sort((a, b) => b.assets - a.assets);
-          const txBuilderNotes = sortedStoredNotes.map(convertStoredNoteForTxBuilder);
-
-          const endpoint = await getEffectiveRpcEndpoint();
-          const rpcClient = createBrowserClient(endpoint);
+          if (
+            this.state.locked ||
+            this.accountDataEpoch !== capturedLifecycleEpoch ||
+            this.getCurrentAccount()?.address !== currentAccount.address
+          ) {
+            throw new Error('Signing account changed while the transaction was prepared');
+          }
+          // Reserve inputs and create their owner history atomically.
+          await this.reserveNotesAndCreateWalletTransaction(
+            currentAccount.address,
+            selectedNoteIds,
+            walletTx
+          );
+          notesReserved = true;
 
           // For sendMax: set refundPKH = recipient so all funds go to recipient (sweep)
           const refundAddress = sendMax ? to : undefined;
 
-          const constructedTx = await buildMultiNotePayment(
-            txBuilderNotes,
-            to,
-            amount,
-            accountKey.publicKey,
-            privateKey,
-            fee,
-            refundAddress,
-            blockHeight
+          // 6. Build with the approval estimate as a selection hint. If WASM's actual
+          // fee needs more value, reserve the remaining locally-available notes and
+          // retry once. Explicit-fee requests never take this path.
+          const allowAdvisoryRetry =
+            !sendMax && fee === undefined && options.feeSelectionHint !== undefined;
+          const buildAttempt = await buildWithAdvisoryFeeRetry({
+            initialCandidates: selectedStoredNotes,
+            retryCandidates: allowAdvisoryRetry ? availableStoredNotes : selectedStoredNotes,
+            allowRetry: allowAdvisoryRetry,
+            beforeRetry: async retryCandidates => {
+              const retryNoteIds = retryCandidates.map(note => note.noteId);
+              const initiallyReserved = new Set(selectedNoteIds);
+              const additionalNoteIds = retryNoteIds.filter(
+                noteId => !initiallyReserved.has(noteId)
+              );
+
+              // Assign before awaiting so the outer failure path releases every note
+              // even if persistence fails after partially reserving the retry set.
+              selectedNoteIds = retryNoteIds;
+              if (additionalNoteIds.length > 0) {
+                await this.reserveAdditionalTransactionNotes(
+                  currentAccount.address,
+                  additionalNoteIds,
+                  walletTxId
+                );
+              }
+            },
+            build: async candidates => {
+              const txBuilderNotes = [...candidates]
+                .sort((a, b) => b.assets - a.assets)
+                .map(convertStoredNoteForTxBuilder);
+              return await buildMultiNotePayment(
+                txBuilderNotes,
+                to,
+                amount,
+                accountKey.publicKey,
+                privateKey,
+                fee,
+                refundAddress,
+                blockHeight,
+                transactionContext
+              );
+            },
+          });
+          const constructedTx = buildAttempt.result;
+
+          const builtRawTx = wasm.nockchainTxToRawTx(constructedTx.nockchainTx);
+          const builtInputNoteIds = wasm
+            .rawTxInputNames(builtRawTx)
+            .map(name => generateNoteId(String(name.first), String(name.last)));
+          const builtSelection = resolveBuiltInputSelection(
+            buildAttempt.candidates,
+            builtInputNoteIds
           );
 
-          // 7. Broadcast transaction
+          // Retry candidates are reservations, not necessarily transaction inputs.
+          // Release anything WASM did not select before broadcasting.
+          const builtInputSet = new Set(builtSelection.inputNoteIds);
+          const unusedReservedNoteIds = selectedNoteIds.filter(
+            noteId => !builtInputSet.has(noteId)
+          );
+          if (unusedReservedNoteIds.length > 0) {
+            await this.releaseInFlightNotes(
+              currentAccount.address,
+              unusedReservedNoteIds,
+              walletTxId
+            );
+          }
+          selectedNoteIds = builtSelection.inputNoteIds;
+
+          const actualAmounts = resolveBuiltTransactionAmounts(
+            builtSelection.selectedTotal,
+            amount,
+            constructedTx.feeUsed,
+            sendMax
+          );
+
+          const protobufTx = wasm.rawTxToProtobuf(builtRawTx);
+          const signedTxId = String(builtRawTx.id);
+
+          // Persist the signed identifier before submission so a network error
+          // remains reconcilable rather than releasing potentially spent inputs.
+          walletTx.inputNoteIds = selectedNoteIds;
+          walletTx.fee = actualAmounts.fee;
+          walletTx.expectedChange = actualAmounts.expectedChange;
+          walletTx.txHash = signedTxId;
+          walletTx.trackingTxId = signedTxId;
+          walletTx.status = 'broadcast_pending';
           await this.updateWalletTransaction(currentAccount.address, walletTxId, {
             status: 'broadcast_pending',
+            inputNoteIds: selectedNoteIds,
+            fee: actualAmounts.fee,
+            expectedChange: actualAmounts.expectedChange,
+            txHash: signedTxId,
+            trackingTxId: signedTxId,
           });
-          const protobufTx = nockchainTxToProtobuf(constructedTx.nockchainTx);
+
+          const rpcClient = createBrowserClient(transactionContext.rpcUrl);
+          const liveHeight = await rpcClient.getCurrentBlockHeight();
+          if (!Number.isSafeInteger(liveHeight) || liveHeight <= 0) {
+            throw new Error('Could not verify the current network height; rebuild required');
+          }
+          const submissionContext = await getTransactionContextSnapshot(liveHeight);
+          if (
+            submissionContext.fingerprint !== transactionContext.fingerprint ||
+            (submissionContext.nextTxEngineActivationHeight !== undefined &&
+              submissionContext.nextTxEngineActivationHeight <= liveHeight + 1)
+          ) {
+            throw new Error('Transaction network settings changed; rebuild required');
+          }
+          this.assertAccountSyncedForNetwork(
+            currentAccount.address,
+            submissionContext.networkIdentity
+          );
+          if (
+            this.state.locked ||
+            this.accountDataEpoch !== capturedLifecycleEpoch ||
+            this.getCurrentAccount()?.address !== currentAccount.address
+          ) {
+            throw new Error('Signing account changed while the transaction was built');
+          }
+          broadcastAttempted = true;
           await rpcClient.sendTransaction(protobufTx);
 
           // 8. Update tx status to broadcasted
-          walletTx.fee = constructedTx.feeUsed;
-          walletTx.txHash = constructedTx.txId;
-          walletTx.trackingTxId = constructedTx.txId;
           walletTx.status = 'broadcasted_unconfirmed';
           await this.updateWalletTransaction(currentAccount.address, walletTxId, {
-            fee: constructedTx.feeUsed,
-            txHash: constructedTx.txId,
-            trackingTxId: constructedTx.txId,
+            fee: actualAmounts.fee,
+            expectedChange: actualAmounts.expectedChange,
+            txHash: signedTxId,
+            trackingTxId: signedTxId,
             status: 'broadcasted_unconfirmed',
             lastMempoolCheckAt: Date.now(),
             lastConfirmationCheckAt: 0,
           });
 
           return {
-            txId: constructedTx.txId,
+            txId: signedTxId,
             walletTx,
             broadcasted: true,
           };
@@ -3620,14 +4792,13 @@ export class Vault {
       } catch (error) {
         console.error('[Vault V2] Transaction failed:', error);
 
-        // Release in_flight notes on failure
-        // Using in-memory method + immediate persist (restore spendability)
-        if (selectedNoteIds.length > 0) {
+        if (!broadcastAttempted && notesReserved && selectedNoteIds.length > 0) {
           try {
-            await this.releaseInFlightNotes(currentAccount.address, selectedNoteIds);
-            await this.updateWalletTransaction(currentAccount.address, walletTxId, {
-              status: 'failed',
-            });
+            await this.failUnsubmittedExactTransaction(
+              currentAccount.address,
+              selectedNoteIds,
+              walletTxId
+            );
           } catch (releaseError) {
             console.error('[Vault V2] Error releasing notes:', releaseError);
           }
@@ -3635,7 +4806,9 @@ export class Vault {
 
         const rawMsg = error instanceof Error ? error.message : String(error);
         return {
-          error: `Transaction failed: ${rewriteInsufficientFeeErrorToDecimalNock(rawMsg)}`,
+          error: broadcastAttempted
+            ? `Transaction submission status is unknown: ${rewriteInsufficientFeeErrorToDecimalNock(rawMsg)}`
+            : `Transaction failed: ${rewriteInsufficientFeeErrorToDecimalNock(rawMsg)}`,
         };
       }
     });
@@ -3660,8 +4833,15 @@ export class Vault {
     estimatedFeeNum: number;
     expectedChangeNicks: bigint;
     txEngineSettings: Awaited<ReturnType<typeof getTxEngineSettingsForHeight>>;
+    blockHeight: number;
+    transactionContext: Awaited<ReturnType<typeof getTransactionContextSnapshot>>;
   }> {
+    const capturedLifecycleEpoch = this.accountDataEpoch;
     await initWasmModules();
+
+    const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+    const transactionContext = await getTransactionContextSnapshot(blockHeight);
+    this.assertAccountSyncedForNetwork(currentAccount.address, transactionContext.networkIdentity);
 
     const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
     if (availableStoredNotes.length === 0) {
@@ -3695,10 +4875,14 @@ export class Vault {
     const spendConditions = await Promise.all(
       sortedStoredNotes.map(async n => {
         try {
-          return await discoverSpendConditionForNote(senderPKH, {
-            nameFirst: n.nameFirst,
-            originPage: n.originPage,
-          });
+          return await discoverSpendConditionForNote(
+            senderPKH,
+            {
+              nameFirst: n.nameFirst,
+              originPage: n.originPage,
+            },
+            transactionContext.coinbaseTimelockBlocks
+          );
         } catch {
           throw new Error(
             `Spend condition discovery failed for note ${n.noteId} (${n.nameFirst.slice(0, 16)}...)`
@@ -3707,8 +4891,7 @@ export class Vault {
       })
     );
 
-    const blockHeight = this.getAccountBlockHeight(currentAccount.address);
-    const txEngineSettings = await getTxEngineSettingsForHeight(blockHeight);
+    const txEngineSettings = transactionContext.txEngineSettings;
 
     let bridgeResult: Awaited<ReturnType<typeof buildBridgeTransaction>>;
     try {
@@ -3745,6 +4928,18 @@ export class Vault {
     if (!validation.valid) {
       throw new Error(validation.error ?? 'Bridge transaction validation failed');
     }
+    const currentContext = await getTransactionContextSnapshot(blockHeight);
+    if (currentContext.fingerprint !== transactionContext.fingerprint) {
+      throw new Error('Transaction network settings changed while the bridge was built');
+    }
+    this.assertAccountSyncedForNetwork(currentAccount.address, currentContext.networkIdentity);
+    if (
+      this.state.locked ||
+      this.accountDataEpoch !== capturedLifecycleEpoch ||
+      this.getCurrentAccount()?.address !== currentAccount.address
+    ) {
+      throw new Error('Selected account changed while the bridge was built');
+    }
 
     return {
       bridgeResult,
@@ -3757,6 +4952,8 @@ export class Vault {
       estimatedFeeNum: builtFeeNum,
       expectedChangeNicks,
       txEngineSettings,
+      blockHeight,
+      transactionContext,
     };
   }
 
@@ -3764,7 +4961,12 @@ export class Vault {
     buildCtx: Awaited<ReturnType<Vault['buildBridgeTransactionContext']>>
   ): Promise<void> {
     const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
-    const signedTx = await this.signRawTx({ rawTx });
+    const signedTx = await this.signRawTx({
+      rawTx,
+      blockHeight: buildCtx.blockHeight,
+      accountAddress: buildCtx.refundPkh,
+      txEngineSettings: buildCtx.txEngineSettings,
+    });
     const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
     if (!guard.isRawTxV1(signedRawTx)) {
       throw new Error('Bridge transaction must be version 1');
@@ -3810,6 +5012,10 @@ export class Vault {
     }
 
     try {
+      const maxBridgeContext = await getTransactionContextSnapshot(
+        this.getAccountBlockHeight(currentAccount.address)
+      );
+      this.assertAccountSyncedForNetwork(currentAccount.address, maxBridgeContext.networkIdentity);
       const availableStoredNotes = this.getAvailableNotes(currentAccount.address);
       const totalAvailable = availableStoredNotes.reduce((sum, n) => sum + n.assets, 0);
       const minBridgeAmount = Number(BRIDGE_CONFIG.minAmountNicks);
@@ -3877,14 +5083,33 @@ export class Vault {
     currentAccount: SubAccount,
     walletTxId: string,
     buildCtx: Awaited<ReturnType<Vault['buildBridgeTransactionContext']>>,
-    walletTx: WalletTransaction
+    walletTx: WalletTransaction,
+    capturedLifecycleEpoch: number
   ): Promise<{ txId: string; walletTx: WalletTransaction; broadcasted: boolean }> {
-    await this.markNotesInFlight(currentAccount.address, buildCtx.selectedNoteIds, walletTxId);
-    await this.addWalletTransaction(walletTx);
+    let notesReserved = false;
+    let broadcastAttempted = false;
 
     try {
+      if (
+        this.state.locked ||
+        this.accountDataEpoch !== capturedLifecycleEpoch ||
+        this.getCurrentAccount()?.address !== currentAccount.address
+      ) {
+        throw new Error('Signing account changed while the bridge was built');
+      }
+      await this.reserveNotesAndCreateWalletTransaction(
+        currentAccount.address,
+        buildCtx.selectedNoteIds,
+        walletTx
+      );
+      notesReserved = true;
       const rawTx = wasm.nockchainTxToRawTx(buildCtx.bridgeResult.transaction);
-      const signedTx = await this.signRawTx({ rawTx });
+      const signedTx = await this.signRawTx({
+        rawTx,
+        blockHeight: buildCtx.blockHeight,
+        accountAddress: currentAccount.address,
+        txEngineSettings: buildCtx.txEngineSettings,
+      });
       const signedRawTx = wasm.nockchainTxToRawTx(signedTx);
       if (!guard.isRawTxV1(signedRawTx)) {
         throw new Error('Bridge transaction must be version 1');
@@ -3904,13 +5129,40 @@ export class Vault {
       if (!validation.valid) {
         throw new Error(validation.error ?? 'Bridge transaction validation failed');
       }
-      const rpcEndpoint = await getEffectiveRpcEndpoint();
-      const rpcClient = createBrowserClient(rpcEndpoint);
-      await rpcClient.sendTransaction(signedProtobufTx);
-
       walletTx.fee = Number(buildCtx.bridgeResult.fee);
       walletTx.txHash = signedTxId;
       walletTx.trackingTxId = signedTxId;
+      walletTx.status = 'broadcast_pending';
+      await this.updateWalletTransaction(currentAccount.address, walletTxId, {
+        fee: walletTx.fee,
+        txHash: signedTxId,
+        trackingTxId: signedTxId,
+        status: 'broadcast_pending',
+      });
+
+      const rpcClient = createBrowserClient(buildCtx.transactionContext.rpcUrl);
+      const liveHeight = await rpcClient.getCurrentBlockHeight();
+      if (!Number.isSafeInteger(liveHeight) || liveHeight <= 0) {
+        throw new Error('Could not verify the current network height; rebuild required');
+      }
+      const submissionContext = await getTransactionContextSnapshot(liveHeight);
+      if (
+        submissionContext.fingerprint !== buildCtx.transactionContext.fingerprint ||
+        (submissionContext.nextTxEngineActivationHeight !== undefined &&
+          submissionContext.nextTxEngineActivationHeight <= liveHeight + 1)
+      ) {
+        throw new Error('Transaction network settings changed; rebuild required');
+      }
+      this.assertAccountSyncedForNetwork(currentAccount.address, submissionContext.networkIdentity);
+      if (this.state.locked || this.getCurrentAccount()?.address !== currentAccount.address) {
+        throw new Error('Signing account changed while the bridge was built');
+      }
+      if (capturedLifecycleEpoch !== this.accountDataEpoch) {
+        throw new Error('Wallet lifecycle changed while the bridge was built');
+      }
+      broadcastAttempted = true;
+      await rpcClient.sendTransaction(signedProtobufTx);
+
       walletTx.status = 'broadcasted_unconfirmed';
       await this.updateWalletTransaction(currentAccount.address, walletTxId, {
         fee: walletTx.fee,
@@ -3925,17 +5177,21 @@ export class Vault {
         broadcasted: true,
       };
     } catch (error) {
-      if (buildCtx.selectedNoteIds.length > 0) {
+      if (!broadcastAttempted && notesReserved && buildCtx.selectedNoteIds.length > 0) {
         try {
-          await this.releaseInFlightNotes(currentAccount.address, buildCtx.selectedNoteIds);
-          await this.updateWalletTransaction(currentAccount.address, walletTxId, {
-            status: 'failed',
-          });
+          await this.failUnsubmittedExactTransaction(
+            currentAccount.address,
+            buildCtx.selectedNoteIds,
+            walletTxId
+          );
         } catch (releaseError) {
           console.error('[Vault] Error releasing notes:', releaseError);
         }
       }
-      throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        broadcastAttempted ? `Transaction submission status is unknown: ${message}` : message
+      );
     }
   }
 
@@ -4004,6 +5260,7 @@ export class Vault {
     if (!currentAccount) {
       return { error: ERROR_CODES.NO_ACCOUNT };
     }
+    const capturedLifecycleEpoch = this.accountDataEpoch;
 
     return withAccountLock(currentAccount.address, async () => {
       const walletTxId = crypto.randomUUID();
@@ -4024,6 +5281,7 @@ export class Vault {
           updatedAt: Date.now(),
           priceUsdAtTime,
           status: 'created',
+          locallyManagedSubmission: true,
           inputNoteIds: buildCtx.selectedNoteIds,
           recipient: destinationAddress,
           amount: Number(amountNicks),
@@ -4036,7 +5294,8 @@ export class Vault {
           currentAccount,
           walletTxId,
           buildCtx,
-          walletTx
+          walletTx,
+          capturedLifecycleEpoch
         );
       } catch (error) {
         console.error('[Vault] Bridge transaction failed:', error);
@@ -4054,26 +5313,49 @@ export class Vault {
    * @param params - Transaction parameters with raw tx
    * @returns Signed transaction in canonical NockchainTx form
    */
-  async signRawTx(params: { rawTx: wasm.RawTx }): Promise<wasm.NockchainTx> {
+  async signRawTx(params: {
+    rawTx: wasm.RawTx;
+    blockHeight?: number;
+    accountAddress?: string;
+    txEngineSettings?: wasm.TxEngineSettings;
+    transactionContextFingerprint?: string;
+    authorizationStillValid?: () => boolean;
+  }): Promise<wasm.NockchainTx> {
     if (this.state.locked) {
       throw new Error('Wallet is locked');
     }
 
-    // Initialize WASM modules
-    await initWasmModules();
-
     const { rawTx } = params;
     assertNativeRawTx(rawTx);
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      throw new Error('No account selected');
+    }
+    if (params.accountAddress && currentAccount.address !== params.accountAddress) {
+      throw new Error('Signing account changed after approval');
+    }
+    const signingLifecycleEpoch = this.accountDataEpoch;
 
     const signingMnemonic = this.getSigningMnemonicForCurrentAccount();
     if (!signingMnemonic) {
       throw new Error('Current account is external and cannot sign locally');
     }
 
+    // Cold WASM initialization is asynchronous; do not let a later lifecycle
+    // become the baseline for an approval captured in the old session.
+    await initWasmModules();
+    if (
+      this.state.locked ||
+      this.accountDataEpoch !== signingLifecycleEpoch ||
+      this.getCurrentAccount()?.address !== currentAccount.address
+    ) {
+      throw new Error('Signing account changed after approval');
+    }
+
     // Derive the account's private key
     const masterKey = wasm.deriveMasterKeyFromMnemonic(signingMnemonic, '');
-    const currentAccount = this.getCurrentAccount();
-    const childIndex = currentAccount?.index ?? this.state.currentAccountIndex;
+    const childIndex = currentAccount.index;
     const accountKey = this.isMasterAccount(currentAccount)
       ? masterKey
       : masterKey.deriveChild(childIndex);
@@ -4088,22 +5370,39 @@ export class Vault {
 
     const privateKey = wasm.PrivateKey.fromBytes(accountKey.privateKey);
 
-    const endpoint = await getEffectiveRpcEndpoint();
-    const rpcClient = createBrowserClient(endpoint);
-
     try {
-      // Use block height from latest balance (max originPage of current account's notes)
-      const blockHeight = currentAccount
-        ? this.getAccountBlockHeight(currentAccount.address)
-        : await rpcClient.getCurrentBlockHeight();
-
-      const settings = await txEngineSettings(blockHeight);
+      // Use the same account block height as the approval descriptor.
+      const blockHeight = params.blockHeight ?? this.getAccountBlockHeight(currentAccount.address);
+      const settings = params.txEngineSettings ?? (await txEngineSettings(blockHeight));
       if (!guard.isRawTxV1(rawTx)) {
         throw new Error('Only v1 raw transactions are supported');
       }
       const builder = wasm.TxBuilder.fromRawTx(rawTx, settings);
       try {
         await builder.sign(privateKey);
+
+        if (
+          this.state.locked ||
+          this.accountDataEpoch !== signingLifecycleEpoch ||
+          this.getCurrentAccount()?.address !== currentAccount.address
+        ) {
+          throw new Error('Signing account changed after approval');
+        }
+
+        if (params.transactionContextFingerprint) {
+          const currentContext = await getTransactionContextSnapshot(blockHeight);
+          if (currentContext.fingerprint !== params.transactionContextFingerprint) {
+            throw new Error('Transaction network settings changed after approval');
+          }
+        }
+        if (
+          this.state.locked ||
+          this.accountDataEpoch !== signingLifecycleEpoch ||
+          this.getCurrentAccount()?.address !== currentAccount.address ||
+          (params.authorizationStillValid && !params.authorizationStillValid())
+        ) {
+          throw new Error('Signing account or authorization changed after approval');
+        }
 
         // Validate before build (surfaces missing unlocks, fee, balanced spends)
         builder.validate();
@@ -4146,5 +5445,98 @@ export class Vault {
       console.error('Failed to compute outputs:', err);
       throw err;
     }
+  }
+
+  /**
+   * Build the trusted review model for a dApp-supplied raw transaction.
+   *
+   * Input names come from the raw transaction and are resolved exclusively against
+   * the selected account's encrypted UTXO store. DApp-supplied note metadata is
+   * intentionally ignored so it cannot influence the approval display.
+   */
+  async describeRawTxForApproval(rawTx: wasm.RawTx): Promise<{
+    transactionId: string;
+    signingIntentId: string;
+    totalFee: Nicks;
+    blockHeight: number;
+    accountAddress: string;
+    inputs: unknown[];
+    inputsVerified: boolean;
+    inputCount: number;
+    outputs: unknown[];
+    transactionContext: Awaited<ReturnType<typeof getTransactionContextSnapshot>>;
+  }> {
+    if (this.state.locked) {
+      throw new Error('Wallet is locked');
+    }
+
+    await initWasmModules();
+    assertNativeRawTx(rawTx);
+    if (!guard.isRawTxV1(rawTx)) {
+      throw new Error('Only v1 raw transactions are supported');
+    }
+
+    const currentAccount = this.getCurrentAccount();
+    if (!currentAccount) {
+      throw new Error('No account selected');
+    }
+
+    const blockHeight = this.getAccountBlockHeight(currentAccount.address);
+    const transactionContext = await getTransactionContextSnapshot(blockHeight);
+    this.assertAccountSyncedForNetwork(currentAccount.address, transactionContext.networkIdentity);
+
+    const inputNames = wasm.rawTxInputNames(rawTx);
+    if (inputNames.length === 0) {
+      throw new Error('Transaction has no inputs');
+    }
+
+    const availableNotes = new Map(
+      this.getAvailableNotes(currentAccount.address).map(note => [note.noteId, note])
+    );
+    const resolvedInputs = inputNames.map(name => {
+      const noteId = generateNoteId(String(name.first), String(name.last));
+      const storedNote = availableNotes.get(noteId);
+      return storedNote?.protoNote;
+    });
+    const inputsVerified = resolvedInputs.every(input => input !== undefined);
+    const inputs = inputsVerified ? resolvedInputs : [];
+
+    // Keep output derivation on the exact transaction-engine settings used by signRawTx.
+    const settings = transactionContext.txEngineSettings;
+    const outputs = wasm
+      .rawTxOutputs(rawTx, blockHeight, settings)
+      .map(output => wasm.noteToProtobuf(output));
+    const intentBuilder = wasm.TxBuilder.fromRawTx(rawTx, settings);
+    let signingIntentId: string;
+    try {
+      // Rebuilding splits witness data from spends. Hashing those witnessless
+      // spends produces an intent ID that remains stable as signatures are added.
+      signingIntentId = String(wasm.spendsV1Hash(intentBuilder.build().spends));
+    } finally {
+      intentBuilder.free();
+    }
+
+    const currentContext = await getTransactionContextSnapshot(blockHeight);
+    if (
+      currentContext.fingerprint !== transactionContext.fingerprint ||
+      this.state.locked ||
+      this.getCurrentAccount()?.address !== currentAccount.address
+    ) {
+      throw new Error('Transaction review context changed while it was being prepared');
+    }
+    this.assertAccountSyncedForNetwork(currentAccount.address, currentContext.networkIdentity);
+
+    return {
+      transactionId: String(wasm.rawTxId(rawTx)),
+      signingIntentId,
+      totalFee: String(wasm.rawTxTotalFees(rawTx)) as Nicks,
+      blockHeight,
+      accountAddress: currentAccount.address,
+      inputs,
+      inputsVerified,
+      inputCount: inputNames.length,
+      outputs,
+      transactionContext,
+    };
   }
 }
