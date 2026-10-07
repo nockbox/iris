@@ -70,7 +70,7 @@ class NockProvider implements InjectedNockchain {
           reject(
             new Error(
               'Extension is not responding.' +
-              'If you just reloaded the extension, you need to refresh this page.'
+                'If you just reloaded the extension, you need to refresh this page.'
             )
           );
         }, args.timeout);
