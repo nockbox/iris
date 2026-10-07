@@ -5,7 +5,7 @@
  * NOTE: This file runs in the MAIN world and cannot use any imports or Chrome APIs
  */
 
-import { InjectedNockchain, RpcRequest } from '@nockbox/iris-sdk';
+import { InjectedNockchain, RpcRequest, RPC_API_VERSION } from '@nockbox/iris-sdk';
 import { version } from '../../package.json';
 
 // Inline constant to avoid imports
@@ -70,7 +70,7 @@ class NockProvider implements InjectedNockchain {
           reject(
             new Error(
               'Extension is not responding.' +
-                'If you just reloaded the extension, you need to refresh this page.'
+              'If you just reloaded the extension, you need to refresh this page.'
             )
           );
         }, args.timeout);
@@ -84,6 +84,7 @@ class NockProvider implements InjectedNockchain {
 const provider = new NockProvider();
 (provider as InjectedNockchain).provider = 'iris';
 (provider as InjectedNockchain).version = version;
+(provider as InjectedNockchain).api = RPC_API_VERSION;
 (window as any).nockchain = provider;
 
 // Announce provider availability
